@@ -2,6 +2,7 @@ from agents import Agent
 
 from agentie.models.provider import get_model
 from agentie.tools.basic_tools import get_current_utc_time
+from agentie.tools.file_tools import write_text_file
 from agentie.tools.web_tools import search_web
 
 
@@ -16,6 +17,7 @@ Rules:
 - Prefer using tools over guessing when a tool can provide the answer.
 - Use web search for current, recent, changing, or externally verifiable information.
 - When using web search, ground the answer in the returned results and include useful source URLs when relevant.
+- Use the file-writing tool when the user asks you to save, create, or export text or markdown locally.
 - Keep answers concise unless the user asks for detail.
 - If an action would be irreversible or externally consequential, do not perform
   it without an explicit approval mechanism. More approval tools will be added in
@@ -28,5 +30,5 @@ def build_assistant() -> Agent:
         name="Agentie Assistant",
         instructions=SYSTEM_INSTRUCTIONS,
         model=get_model(),
-        tools=[get_current_utc_time, search_web],
+        tools=[get_current_utc_time, search_web, write_text_file],
     )
