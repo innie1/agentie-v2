@@ -15,13 +15,14 @@ from agentie.core.file_service import MAX_FILE_BYTES, run_action, save_upload
 from agentie.core.local_router import route_local_actions
 from agentie.core.memory_store import add_message
 from agentie.core.pdf_service import try_pdf_request
+from agentie.core.reference_router import remember_active_from_card, try_active_reference
 from agentie.core.runner import run_agent
 from agentie.tools import local_utility_tools as local_utils
 from agentie.tools.approval_tools import resolve_approval
 from agentie.tools.advanced_utility_tools import SCHEDULES
 from agentie.tools.productivity_tools import REMINDERS
 
-app = FastAPI(title="Agentie API", version="1.2.0", description="Local-first Agentie runtime with persistent memory, local PDF creation, uploads, cards, and conversational routing")
+app = FastAPI(title="Agentie API", version="1.3.0", description="Local-first Agentie runtime with persistent memory, active-object references, local PDF creation, uploads, cards, and conversational routing")
 FRONTEND_DIR = Path(__file__).parent / "frontend"
 FRONTEND_FILE = FRONTEND_DIR / "index.html"
 CARDS_JS = FRONTEND_DIR / "cards.js"
@@ -62,6 +63,12 @@ def _save(path: Path, value) -> None:
     path.write_text(json.dumps(value, indent=2, ensure_ascii=False), encoding="utf-8")
 
 
+def _record_local(session_id: str, user_message: str, assistant_message: str, card: dict[str, Any] | None, agent_type: str, routed_by: str) -> None:
+    add_message(session_id, "user", user_message, {"agent_type": agent_type, "routed_by": routed_by})
+    add_message(session_id, "assistant", assistant_message, {"agent_type": agent_type, "routed_by": routed_by})
+    remember_active_from_card(session_id, card)
+
+
 def _schedule_due(item: dict, now: datetime) -> bool:
     if item.get("status") != "active": return False
     cadence = str(item.get("cadence", "")).lower(); hhmm = item.get("time_hhmm") or "09:00"
@@ -69,9 +76,9 @@ def _schedule_due(item: dict, now: datetime) -> bool:
     except Exception: hour, minute = 9, 0
     last_raw = item.get("last_fired_at"); last = datetime.fromisoformat(last_raw) if last_raw else None
     if cadence.startswith("every "):
-        m = re.match(r"every\s+(\d+(?:\.\d+)?)\s*(minutes?|hours?)", cadence)
-        if not m: return False
-        seconds = float(m.group(1)) * (3600 if m.group(2).startswith("hour") else 60)
+        match = re.match(r"every\s+(\d+(?:\.\d+)?)\s*(minutes?|hours?)", cadence)
+        if not match: return False
+        seconds = float(match.group(1)) * (3600 if match.group(2).startswith("hour") else 60)
         base = last or datetime.fromisoformat(item.get("created_at"))
         if base.tzinfo and now.tzinfo is None: now = now.astimezone(base.tzinfo)
         return (now - base).total_seconds() >= seconds
@@ -109,7 +116,9 @@ def _refresh_timer_cards(results: list[dict]) -> None:
         if not timer_id or seconds <= 0: continue
         refreshed = local_utils._restart_timer(timer_id, seconds)
         if refreshed:
-            card["status"] = refreshed.get("status", "running"); card["due_at"] = refreshed.get("due_at"); card["duration_seconds"] = seconds
+            card["status"] = refreshed.get("status", "running")
+            card["due_at"] = refreshed.get("due_at")
+            card["duration_seconds"] = seconds
 
 
 def _multi_card(results: list[dict], extra_message: str | None = None) -> dict:
@@ -118,11 +127,16 @@ def _multi_card(results: list[dict], extra_message: str | None = None) -> dict:
     return {"type": "multi", "items": items}
 
 
+def _result_summary(results: list[dict], fallback: str = "") -> str:
+    messages = [str(item.get("message", "")).strip() for item in results if str(item.get("message", "")).strip()]
+    return "\n".join(messages) or fallback
+
+
 @app.get("/")
 async def chat_ui():
     if not FRONTEND_FILE.exists(): raise HTTPException(status_code=404, detail="Frontend not found.")
     html = FRONTEND_FILE.read_text(encoding="utf-8")
-    html += '\n<script src="/cards.js?v=120"></script>\n<script src="/events.js?v=120"></script>\n<script src="/upload.js?v=120"></script>\n'
+    html += '\n<script src="/cards.js?v=130"></script>\n<script src="/events.js?v=130"></script>\n<script src="/upload.js?v=130"></script>\n'
     return HTMLResponse(html, headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"})
 
 
@@ -146,7 +160,7 @@ async def upload_js():
 
 @app.get("/health")
 async def health() -> dict[str, str]:
-    return {"status":"ok","service":"agentie-v2","version":"1.2.0"}
+    return {"status":"ok","service":"agentie-v2","version":"1.3.0"}
 
 
 @app.post("/files/upload")
@@ -159,8 +173,7 @@ async def file_upload(file: UploadFile = File(...)) -> dict[str, Any]:
     except HTTPException: raise
     except ValueError as exc: raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc: raise HTTPException(status_code=500, detail=f"Upload failed: {exc}") from exc
-    finally:
-        await file.close()
+    finally: await file.close()
 
 
 @app.post("/files/{filename}/action")
@@ -179,8 +192,7 @@ async def poll_local_events() -> dict[str, Any]:
     reminders = _load(REMINDERS, []); changed = False
     for item in reminders:
         if item.get("status") != "scheduled": continue
-        try:
-            due = datetime.fromisoformat(item.get("due_at")); due = due.astimezone() if due.tzinfo else due.astimezone()
+        try: due = datetime.fromisoformat(item.get("due_at")).astimezone()
         except Exception: continue
         if due <= now:
             events.append({"message":f"Reminder: {item.get('text','')}","card":{"type":"reminder",**item}})
@@ -205,20 +217,25 @@ async def agent_run(request: AgentRequest, http_request: Request) -> AgentRespon
     try:
         session_key = request.session_id or f"{http_request.client.host if http_request.client else 'local'}:{request.agent_type}"
 
-        # PDF generation is deterministic and local. Resolve references such as
-        # "this" or "the previous answer" from persisted conversation memory
-        # before any LLM/provider call is considered.
+        # Resolve follow-ups against the most recent local object before asking a model.
+        reference_result = try_active_reference(session_key, request.message)
+        if reference_result is not None:
+            message = str(reference_result.get("message", "")); card = reference_result.get("card")
+            _record_local(session_key, request.message, message, card, request.agent_type, "active_reference")
+            return AgentResponse(message=message, result=message, card=card, agent_type=request.agent_type, routed_by="active_reference")
+
+        # PDF generation is deterministic and local and always takes precedence over LLM fallback.
         pdf_result = try_pdf_request(session_key, request.message)
         if pdf_result is not None:
-            message = str(pdf_result.get("message", ""))
-            add_message(session_key, "user", request.message, {"agent_type": request.agent_type, "routed_by": "local_pdf"})
-            add_message(session_key, "assistant", message, {"agent_type": request.agent_type, "routed_by": "local_pdf", "file": (pdf_result.get("card") or {}).get("name")})
-            return AgentResponse(message=message, result=message, card=pdf_result.get("card"), agent_type=request.agent_type, routed_by="local_pdf")
+            message = str(pdf_result.get("message", "")); card = pdf_result.get("card")
+            _record_local(session_key, request.message, message, card, request.agent_type, "local_pdf")
+            return AgentResponse(message=message, result=message, card=card, agent_type=request.agent_type, routed_by="local_pdf")
 
         followup = consume_followup(session_key, request.message); effective_message = request.message
         if followup:
             if followup.get("cancelled") or not followup.get("command"):
                 message = str(followup.get("message", ""))
+                _record_local(session_key, request.message, message, None, request.agent_type, "clarification")
                 return AgentResponse(message=message, result=message, card=None, agent_type=request.agent_type, routed_by="clarification")
             effective_message = str(followup["command"])
 
@@ -234,13 +251,19 @@ async def agent_run(request: AgentRequest, http_request: Request) -> AgentRespon
         if local_results and not unresolved:
             _refresh_timer_cards(local_results)
             if clarification_message:
-                return AgentResponse(message="", result=clarification_message, card=_multi_card(local_results, clarification_message), agent_type=request.agent_type, routed_by="clarification")
+                card = _multi_card(local_results, clarification_message); summary = _result_summary(local_results, clarification_message)
+                _record_local(session_key, request.message, summary, card, request.agent_type, "clarification")
+                return AgentResponse(message="", result=clarification_message, card=card, agent_type=request.agent_type, routed_by="clarification")
             if len(local_results) == 1:
-                item = local_results[0]; message = str(item.get("message", ""))
-                return AgentResponse(message=message, result=message, card=item.get("card"), agent_type=request.agent_type, routed_by="local")
-            return AgentResponse(message="", result="", card=_multi_card(local_results), agent_type=request.agent_type, routed_by="local")
+                item = local_results[0]; message = str(item.get("message", "")); card = item.get("card")
+                _record_local(session_key, request.message, message, card, request.agent_type, "local")
+                return AgentResponse(message=message, result=message, card=card, agent_type=request.agent_type, routed_by="local")
+            card = _multi_card(local_results); summary = _result_summary(local_results)
+            _record_local(session_key, request.message, summary, card, request.agent_type, "local")
+            return AgentResponse(message="", result="", card=card, agent_type=request.agent_type, routed_by="local")
 
         if not local_results and clarification_message and not unresolved:
+            _record_local(session_key, request.message, clarification_message, None, request.agent_type, "clarification")
             return AgentResponse(message=clarification_message, result=clarification_message, card=None, agent_type=request.agent_type, routed_by="clarification")
 
         if local_results and unresolved:
@@ -249,9 +272,12 @@ async def agent_run(request: AgentRequest, http_request: Request) -> AgentRespon
             except Exception as exc: llm_result = "I completed the other actions, but I couldn't process: " + "; ".join(unresolved) + f". ({exc})"
             if clarification_message: llm_result = (llm_result + "\n\n" + clarification_message).strip()
             _refresh_timer_cards(local_results)
-            return AgentResponse(message="", result=llm_result, card=_multi_card(local_results, llm_result), agent_type=request.agent_type, routed_by="hybrid")
+            card = _multi_card(local_results, llm_result)
+            remember_active_from_card(session_key, card)
+            return AgentResponse(message="", result=llm_result, card=card, agent_type=request.agent_type, routed_by="hybrid")
 
         if clarification_message and unresolved:
+            _record_local(session_key, request.message, clarification_message, None, request.agent_type, "clarification")
             return AgentResponse(message=clarification_message, result=clarification_message, card=None, agent_type=request.agent_type, routed_by="clarification")
 
         result = await run_agent(effective_message, request.agent_type, session_key)
