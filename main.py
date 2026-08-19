@@ -4,7 +4,7 @@ from typing import Any
 
 import uvicorn
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, HTMLResponse
 from pydantic import BaseModel, Field
 
 from agentie.core.local_router import try_local_command
@@ -14,11 +14,13 @@ from agentie.tools.approval_tools import resolve_approval
 
 app = FastAPI(
     title="Agentie API",
-    version="0.5.0",
+    version="0.6.0",
     description="Python-first Agentie runtime with local-first routing and inline UI cards",
 )
 
-FRONTEND_FILE = Path(__file__).parent / "frontend" / "index.html"
+FRONTEND_DIR = Path(__file__).parent / "frontend"
+FRONTEND_FILE = FRONTEND_DIR / "index.html"
+CARDS_JS = FRONTEND_DIR / "cards.js"
 
 
 class AgentRequest(BaseModel):
@@ -42,12 +44,22 @@ class ApprovalDecision(BaseModel):
 async def chat_ui():
     if not FRONTEND_FILE.exists():
         raise HTTPException(status_code=404, detail="Frontend not found.")
-    return FileResponse(FRONTEND_FILE, media_type="text/html")
+    html = FRONTEND_FILE.read_text(encoding="utf-8")
+    if 'src="/cards.js"' not in html:
+        html += '\n<script src="/cards.js"></script>\n'
+    return HTMLResponse(html)
+
+
+@app.get("/cards.js")
+async def cards_js():
+    if not CARDS_JS.exists():
+        raise HTTPException(status_code=404, detail="Card renderer not found.")
+    return FileResponse(CARDS_JS, media_type="application/javascript")
 
 
 @app.get("/health")
 async def health() -> dict[str, str]:
-    return {"status": "ok", "service": "agentie-v2", "version": "0.5.0"}
+    return {"status": "ok", "service": "agentie-v2", "version": "0.6.0"}
 
 
 @app.post("/agent/run", response_model=AgentResponse)
