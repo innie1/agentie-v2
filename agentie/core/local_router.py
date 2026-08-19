@@ -1,4 +1,3 @@
-import json
 import re
 import time
 from datetime import datetime, timedelta
@@ -26,6 +25,17 @@ def _duration_seconds(message: str) -> float | None:
     return value
 
 
+def _pretty_duration(seconds: float) -> str:
+    if seconds % 3600 == 0:
+        value = int(seconds // 3600)
+        return f"{value} hour" + ("s" if value != 1 else "")
+    if seconds % 60 == 0:
+        value = int(seconds // 60)
+        return f"{value} minute" + ("s" if value != 1 else "")
+    value = int(seconds) if seconds.is_integer() else seconds
+    return f"{value} second" + ("s" if value != 1 else "")
+
+
 def _weather(location: str) -> dict:
     q = urlencode({"name": location[:120], "count": 1, "language": "en", "format": "json"})
     geo = utilities._fetch_json(f"https://geocoding-api.open-meteo.com/v1/search?{q}")
@@ -45,20 +55,37 @@ def _weather(location: str) -> dict:
     current = data.get("current", {})
     daily = data.get("daily", {})
     return {
+        "type": "weather",
         "location": f"{place.get('name')}, {place.get('country', '')}".strip(", "),
         "temperature_c": current.get("temperature_2m"),
         "feels_like_c": current.get("apparent_temperature"),
+        "weather_code": current.get("weather_code"),
         "wind_kmh": current.get("wind_speed_10m"),
         "high_c": (daily.get("temperature_2m_max") or [None])[0],
         "low_c": (daily.get("temperature_2m_min") or [None])[0],
         "rain_chance_percent": (daily.get("precipitation_probability_max") or [None])[0],
+        "source": "Open-Meteo",
     }
 
 
-def try_local_command(message: str) -> str | None:
+def _stopwatch_card() -> dict:
+    with utilities._STOPWATCH_LOCK:
+        elapsed = utilities._STOPWATCH["elapsed"]
+        running = utilities._STOPWATCH["running"]
+        if running:
+            elapsed += time.monotonic() - utilities._STOPWATCH["started_at"]
+    return {
+        "type": "stopwatch",
+        "status": "running" if running else "paused",
+        "elapsed_seconds": round(elapsed, 3),
+        "client_started_at_ms": int(time.time() * 1000) if running else None,
+    }
+
+
+def try_local_command(message: str) -> dict | None:
     """Handle deterministic utility requests without calling an LLM.
 
-    Returns None when the request is not confidently recognized as a local command.
+    Returns a structured chat payload or None when the request is not confidently recognized.
     """
     text = " ".join(message.strip().split())
     lower = text.lower()
@@ -68,29 +95,47 @@ def try_local_command(message: str) -> str | None:
         if seconds is None:
             return None
         if seconds <= 0 or seconds > 7 * 24 * 3600:
-            return "Timer must be between 1 second and 7 days."
+            return {"message": "Timer must be between 1 second and 7 days.", "card": None}
         item = utilities._create_timer(seconds, "Timer", "timer")
-        return f"Timer set for {seconds:g} seconds. ID: {item['id']}."
+        return {
+            "message": f"Timer set for {_pretty_duration(seconds)}.",
+            "card": {
+                "type": "timer",
+                "id": item["id"],
+                "status": item["status"],
+                "duration_seconds": seconds,
+                "due_at": item["due_at"],
+            },
+        }
 
     alarm_match = re.search(r"\b(?:set\s+)?(?:an\s+)?alarm\b.*?\b(\d{1,2}):(\d{2})\b", lower)
     if alarm_match:
         hour, minute = map(int, alarm_match.groups())
         if hour > 23 or minute > 59:
-            return "That alarm time is invalid. Use 24-hour time such as 14:30."
+            return {"message": "That alarm time is invalid. Use 24-hour time such as 14:30.", "card": None}
         now = datetime.now()
         due = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
         if due <= now:
             due += timedelta(days=1)
         item = utilities._create_timer((due - now).total_seconds(), "Alarm", "alarm")
-        return f"Alarm set for {due.strftime('%Y-%m-%d %H:%M')}. ID: {item['id']}."
+        return {
+            "message": f"Alarm set for {due.strftime('%H:%M')}.",
+            "card": {
+                "type": "alarm",
+                "id": item["id"],
+                "status": item["status"],
+                "due_at": item["due_at"],
+                "display_time": due.strftime("%H:%M"),
+                "display_date": due.strftime("%Y-%m-%d"),
+            },
+        }
 
     if "start stopwatch" in lower or lower == "start the stopwatch":
         with utilities._STOPWATCH_LOCK:
-            if utilities._STOPWATCH["running"]:
-                return "Stopwatch is already running."
-            utilities._STOPWATCH["running"] = True
-            utilities._STOPWATCH["started_at"] = time.monotonic()
-        return "Stopwatch started."
+            if not utilities._STOPWATCH["running"]:
+                utilities._STOPWATCH["running"] = True
+                utilities._STOPWATCH["started_at"] = time.monotonic()
+        return {"message": "Stopwatch started.", "card": _stopwatch_card()}
 
     if any(phrase in lower for phrase in ("pause stopwatch", "stop stopwatch", "pause the stopwatch", "stop the stopwatch")):
         with utilities._STOPWATCH_LOCK:
@@ -98,34 +143,33 @@ def try_local_command(message: str) -> str | None:
                 utilities._STOPWATCH["elapsed"] += time.monotonic() - utilities._STOPWATCH["started_at"]
                 utilities._STOPWATCH["running"] = False
                 utilities._STOPWATCH["started_at"] = None
-            elapsed = utilities._STOPWATCH["elapsed"]
-        return f"Stopwatch paused at {elapsed:.2f} seconds."
+        return {"message": "Stopwatch paused.", "card": _stopwatch_card()}
 
     if "reset stopwatch" in lower or "reset the stopwatch" in lower:
         with utilities._STOPWATCH_LOCK:
             utilities._STOPWATCH.update({"running": False, "started_at": None, "elapsed": 0.0})
-        return "Stopwatch reset."
+        return {"message": "Stopwatch reset.", "card": _stopwatch_card()}
 
     if any(phrase in lower for phrase in ("stopwatch status", "stopwatch time", "how long on the stopwatch")):
-        with utilities._STOPWATCH_LOCK:
-            elapsed = utilities._STOPWATCH["elapsed"]
-            if utilities._STOPWATCH["running"]:
-                elapsed += time.monotonic() - utilities._STOPWATCH["started_at"]
-            running = utilities._STOPWATCH["running"]
-        return f"Stopwatch: {elapsed:.2f} seconds; running={running}."
+        return {"message": "Here’s your stopwatch.", "card": _stopwatch_card()}
 
     weather_match = re.search(r"\bweather\s+(?:in|for|at)\s+(.+?)[?.!]*$", text, re.IGNORECASE)
     if weather_match:
         location = weather_match.group(1).strip()
         try:
-            data = _weather(location)
+            card = _weather(location)
         except Exception as exc:
-            return f"Weather lookup failed: {exc}"
-        summary = (
-            f"{data['location']}: {data['temperature_c']}°C, feels like {data['feels_like_c']}°C. "
-            f"High {data['high_c']}°C, low {data['low_c']}°C, rain chance {data['rain_chance_percent']}%."
-        )
-        utilities._popup("Agentie Weather", summary)
-        return summary + " Source: Open-Meteo (no API key)."
+            return {"message": f"Weather lookup failed: {exc}", "card": None}
+        return {"message": f"Here’s the weather in {card['location']}.", "card": card}
+
+    cancel_match = re.search(r"\bcancel\s+(?:timer|alarm)\s+([\w-]+)", lower)
+    if cancel_match:
+        timer_id = cancel_match.group(1)
+        with utilities._TIMER_LOCK:
+            item = utilities._TIMERS.get(timer_id)
+            if not item:
+                return {"message": "Timer not found.", "card": None}
+            item["status"] = "cancelled"
+        return {"message": f"Cancelled {timer_id}.", "card": None}
 
     return None
