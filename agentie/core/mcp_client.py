@@ -325,6 +325,8 @@ def _mentioned_server(text: str) -> str | None:
         name = str(server.get("name") or "")
         if not name:
             continue
+        token = re.escape(name.lower())
+        direct = re.search(rf"\b(?:the\s+)?{token}\s+(?:plugin|mcp)(?:\b|$)", low)
         patterns = (
             f"using the {name.lower()} plugin", f"using {name.lower()} plugin",
             f"with the {name.lower()} plugin", f"with {name.lower()} plugin",
@@ -332,7 +334,7 @@ def _mentioned_server(text: str) -> str | None:
             f"with the {name.lower()} mcp", f"with {name.lower()} mcp",
             f"using {name.lower()}", f"with {name.lower()}",
         )
-        if any(pattern in low for pattern in patterns):
+        if direct or any(pattern in low for pattern in patterns):
             return name
     return None
 
@@ -373,7 +375,7 @@ def _infer_natural_tool(text: str, server: dict[str, Any], info: dict[str, Any])
     low = text.lower()
     root = _filesystem_root(server)
 
-    if any(phrase in low for phrase in ("allowed directories", "allowed folders", "where can", "what directories can")):
+    if any(phrase in low for phrase in ("allowed directories", "allowed folders", "where can", "what directories can", "what folders can", "which directories can", "which folders can", "directories can the", "folders can the")):
         tool = _pick_existing_tool(info, ("list_allowed_directories",))
         if tool:
             return tool, {}
