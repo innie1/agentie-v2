@@ -29,44 +29,16 @@ def _filesystem_server() -> dict[str, Any] | None:
 
 
 def _filename(text: str) -> str | None:
-    # First prefer a quoted filename because spaces are unambiguous there.
-    quoted = re.search(
-        rf"[\"'`]([^\"'`\r\n]+\.(?:{_EXT_PATTERN}))[\"'`]",
-        text,
-        re.I,
-    )
+    quoted = re.search(rf"[\"'`]([^\"'`\r\n]+\.(?:{_EXT_PATTERN}))[\"'`]", text, re.I)
     if quoted:
         return quoted.group(1).strip()
-
-    # For ordinary prose, capture the filename-like tail and remove only known
-    # request prefixes. This keeps names such as "Morning Build.json" intact while
-    # preventing "Read tasks.json" from being treated as the filename itself.
-    match = re.search(
-        rf"([\w][\w .()\-]*\.(?:{_EXT_PATTERN}))(?=$|[\s,;:!?]|\.(?:\s|$))",
-        text,
-        re.I,
-    )
+    match = re.search(rf"([\w][\w .()\-]*\.(?:{_EXT_PATTERN}))(?=$|[\s,;:!?]|\.(?:\s|$))", text, re.I)
     if not match:
         return None
     candidate = match.group(1).strip(" .?!\"'`")
-    candidate = re.sub(
-        r"^(?:please\s+)?(?:read|open|display|view|inspect)\s+(?:the\s+)?",
-        "",
-        candidate,
-        flags=re.I,
-    )
-    candidate = re.sub(
-        r"^(?:please\s+)?show\s+me\s+(?:(?:information|info|details|metadata)\s+about\s+)?(?:the\s+)?",
-        "",
-        candidate,
-        flags=re.I,
-    )
-    candidate = re.sub(
-        r"^(?:(?:information|info|details|metadata)\s+about\s+)(?:the\s+)?",
-        "",
-        candidate,
-        flags=re.I,
-    )
+    candidate = re.sub(r"^(?:please\s+)?(?:read|open|display|view|inspect|create|make|write|edit|update|append to|move|rename)\s+(?:a\s+|the\s+)?(?:file\s+)?(?:called|named)?\s*", "", candidate, flags=re.I)
+    candidate = re.sub(r"^(?:please\s+)?show\s+me\s+(?:(?:information|info|details|metadata)\s+about\s+)?(?:the\s+)?", "", candidate, flags=re.I)
+    candidate = re.sub(r"^(?:(?:information|info|details|metadata)\s+about\s+)(?:the\s+)?", "", candidate, flags=re.I)
     return candidate.strip(" .?!\"'`") or None
 
 
@@ -89,6 +61,26 @@ def _allowed_directories_request(text: str) -> bool:
         re.search(r"\b(?:what|which|show|list|tell me)\b.*\b(?:directories|folders)\b.*\b(?:can|allowed|access|accessible)\b", low)
         or re.search(r"\b(?:directories|folders)\b.*\b(?:can i|am i allowed to)\b.*\baccess\b", low)
     )
+
+
+def _mutation_request(text: str) -> bool:
+    low = " ".join(text.lower().split())
+    return bool(
+        re.search(r"\b(?:create|make|write|edit|update|append|move|rename)\b", low)
+        and (_filename(text) or re.search(r"\b(?:file|folder|directory|workspace)\b", low))
+    )
+
+
+def _content_after_marker(text: str) -> str | None:
+    match = re.search(r"\b(?:containing|with content|with the content|that says|saying)\s+(.+)$", text, re.I)
+    if not match:
+        return None
+    return match.group(1).strip().strip("\"'`")
+
+
+def _rename_target(text: str) -> str | None:
+    match = re.search(rf"\b(?:to|as)\s+([\w][\w .()\-]*\.(?:{_EXT_PATTERN}))\b", text, re.I)
+    return match.group(1).strip(" .?!\"'`") if match else None
 
 
 def _tool_name(info: dict[str, Any], *names: str) -> str | None:
@@ -129,6 +121,20 @@ def _choice(text: str, server: dict[str, Any], info: dict[str, Any]) -> tuple[st
     if not path:
         return None
 
+    if re.search(r"\b(?:create|make|write)\b", low):
+        tool = _tool_name(info, "write_file")
+        content = _content_after_marker(text)
+        if tool and content is not None:
+            return tool, {"path": path, "content": content}
+
+    if re.search(r"\b(?:move|rename)\b", low):
+        tool = _tool_name(info, "move_file")
+        target = _rename_target(text)
+        if tool and target:
+            destination = _join_root(root, target)
+            if destination:
+                return tool, {"source": path, "destination": destination}
+
     if re.search(r"\b(?:information|info|details|metadata|size|modified|created)\b", low):
         tool = _tool_name(info, "get_file_info")
         if tool:
@@ -145,13 +151,14 @@ def _choice(text: str, server: dict[str, Any], info: dict[str, Any]) -> tuple[st
 async def route_capability_preflight(message: str) -> dict[str, Any] | None:
     """Intercept only high-confidence filesystem requests before generic local parsing.
 
-    This intentionally does not handle generic "list files" requests, timers, tasks,
-    reminders, calculations, memory, Python, or other native Agentie behavior.
+    Generic native Agentie behavior remains untouched. This preflight is limited to
+    explicit filenames, extension searches, allowed-directory questions, and explicit
+    filesystem mutations that would otherwise be swallowed by the old local-file guard.
     """
     text = " ".join(str(message or "").strip().split())
     if not text:
         return None
-    if not (_filename(text) or _extension_search(text) or _allowed_directories_request(text)):
+    if not (_filename(text) or _extension_search(text) or _allowed_directories_request(text) or _mutation_request(text)):
         return None
 
     server = _filesystem_server()
