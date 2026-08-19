@@ -35,17 +35,11 @@ def _parse_trigger(text:str)->tuple[str,str]|None:
     return None
 def _name_for(action:str)->str:return " ".join(re.findall(r"[A-Za-z0-9]+",action)[:7]).title() or "Routine"
 def _parse_named_routine(text:str,trigger_phrase:str)->tuple[str|None,str]:
-    """Extract an explicit routine name and the actual action from conversational create syntax."""
-    compact=" ".join(text.strip().split())
-    explicit=None
+    compact=" ".join(text.strip().split());explicit=None
     m=re.match(r"^(?:please\s+)?(?:create|make|set up|setup|add)\s+(?:me\s+)?(?:a\s+)?routine\s+(?:called|named|titled)\s+(.+?)\s+(?:that|which|to)\s+(.+)$",compact,re.I)
-    if m:
-        explicit=m.group(1).strip(' \"“”.,:;-');body=m.group(2).strip()
-    else:
-        body=re.sub(r"^(?:please\s+)?(?:create|make|set up|setup|add)\s+(?:me\s+)?(?:a\s+)?routine\s+(?:to|that|which)?\s*","",compact,flags=re.I).strip()
+    if m:explicit=m.group(1).strip(' \"“”.,:;-');body=m.group(2).strip()
+    else:body=re.sub(r"^(?:please\s+)?(?:create|make|set up|setup|add)\s+(?:me\s+)?(?:a\s+)?routine\s+(?:to|that|which)?\s*","",compact,flags=re.I).strip()
     body=re.sub(re.escape(trigger_phrase)," ",body,flags=re.I);body=re.sub(r"\s+"," ",body).strip(" ,.;:-")
-    # Natural routine phrasing often says "that every weekday ... checks". Preserve meaning,
-    # but normalize common third-person action verbs for cleaner job goals.
     body=re.sub(r"^(checks|reminds|researches|summarizes|saves|runs|looks|tells)\b",lambda m:{'checks':'check','reminds':'remind','researches':'research','summarizes':'summarize','saves':'save','runs':'run','looks':'look','tells':'tell'}[m.group(1).lower()],body,flags=re.I)
     return explicit,body
 def create_routine(text:str,agent_role:str|None=None):
@@ -55,6 +49,12 @@ def create_routine(text:str,agent_role:str|None=None):
     if not action:raise ValueError("Tell me what the routine should do.")
     sig=_signature(trigger,action);items=list_routines();existing=next((x for x in items if x.get("signature")==sig and x.get("status")!="deleted"),None)
     if existing:return existing,False
+    # Repair routines created by the old parser (e.g. name "Called Morning Build Check That Checks My")
+    # when the user repeats the intended named routine command after upgrading.
+    if explicit_name:
+        needle=_norm(explicit_name);legacy=next((x for x in items if x.get('status')!='deleted' and _norm(str(x.get('trigger','')))==_norm(trigger) and (_norm(str(x.get('name',''))).startswith('called '+needle) or _norm(str(x.get('action',''))).startswith('called '+needle))),None)
+        if legacy:
+            legacy['name']=explicit_name;legacy['action']=action;legacy['agent_role']=agent_role or legacy.get('agent_role') or 'auto';legacy['signature']=sig;legacy['updated_at']=datetime.now().astimezone().isoformat(timespec='seconds');_save(ROUTINES,items);return legacy,False
     now=datetime.now().astimezone().isoformat(timespec="seconds");item={"id":uuid.uuid4().hex[:8],"name":explicit_name or _name_for(action),"trigger":trigger,"action":action,"agent_role":agent_role or "auto","status":"active","created_at":now,"updated_at":now,"last_run":None,"signature":sig,"run_count":0};items.append(item);_save(ROUTINES,items);return item,True
 def update_routine(routine_id:str,**changes):
     items=list_routines();item=next((x for x in items if x.get("id")==routine_id),None)
@@ -91,11 +91,14 @@ def route_routine_command(message:str):
     return None
 def _due(item:dict[str,Any],now:datetime)->bool:
     if item.get("status")!="active":return False
-    last=datetime.fromisoformat(item["last_run"]) if item.get("last_run") else None;trig=str(item.get("trigger","")).lower();m=re.match(r"every (\d+(?:\.\d+)?) (minutes|hours)",trig)
+    last=datetime.fromisoformat(item["last_run"]) if item.get("last_run") else None;created=datetime.fromisoformat(item["created_at"]) if item.get('created_at') else now;trig=str(item.get("trigger","")).lower();m=re.match(r"every (\d+(?:\.\d+)?) (minutes|hours)",trig)
     if m:
-        sec=float(m.group(1))*(3600 if m.group(2)=="hours" else 60);base=last or datetime.fromisoformat(item["created_at"]);return (now-base).total_seconds()>=sec
+        sec=float(m.group(1))*(3600 if m.group(2)=="hours" else 60);base=last or created;return (now-base).total_seconds()>=sec
     tm=re.search(r"at (\d{1,2}):(\d{2})",trig);hour,minute=(int(tm.group(1)),int(tm.group(2))) if tm else (9,0);target=now.replace(hour=hour,minute=minute,second=0,microsecond=0)
     if now<target or (last and last.date()==now.date()):return False
+    # If this routine was created today after today's scheduled time, today's occurrence was never
+    # scheduled for it. Wait until the next eligible day instead of treating it as overdue.
+    if not last and created.date()==now.date() and created>target:return False
     if trig.startswith("daily"):return True
     if trig.startswith("weekdays"):return now.weekday()<5
     wm=re.match(r"weekly (\w+)",trig);names={"monday":0,"tuesday":1,"wednesday":2,"thursday":3,"friday":4,"saturday":5,"sunday":6};return bool(wm and now.weekday()==names.get(wm.group(1),-1))
