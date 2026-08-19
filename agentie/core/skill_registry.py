@@ -6,6 +6,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from agentie.core.web_research_service import search_sources
+
 WORKSPACE=Path.cwd()/"workspace"
 SKILLS_DIR=WORKSPACE/"skills"
 STATE=WORKSPACE/"skills_state.json"
@@ -48,6 +50,17 @@ def create_skill_manifest(skill_id:str,name:str,description:str,agents:list[str]
 def skills_for_agent(agent_type:str)->list[dict[str,Any]]:return [s for s in list_skills() if s.get("enabled") and (agent_type in (s.get("agents") or []) or "*" in (s.get("agents") or []))]
 def route_skill_command(message:str)->dict[str,Any]|None:
     text=" ".join(message.strip().split());lower=text.lower().strip(" .?!")
+
+    # Explicit web search is deterministic and does not need an LLM decision.
+    # Deep search/research is intentionally excluded here so it can flow into
+    # Agentie's durable background deep-research job engine.
+    web=re.match(r"^(?:please\s+)?(?:search the web|web search|search online|look up online|find online)\s+(?:for|about|on)?\s*(.+)$",text,re.I)
+    if web and skill_enabled("research"):
+        query=web.group(1).strip(" .?!")
+        try:sources=search_sources(query,8)
+        except Exception as exc:return {"message":f"Web search failed: {exc}","card":None}
+        return {"message":f"Found {len(sources)} web source(s) for “{query}”.","card":{"type":"web_search","query":query,"sources":sources,"answer":"","provider_calls":0}}
+
     if lower in {"skills","show skills","list skills","my skills"}:
         items=list_skills();return {"message":f"Agentie has {len(items)} registered skill(s).","card":{"type":"skills","items":items}}
     m=re.match(r"^(?:create|make|add)\s+(?:a\s+)?skill(?:\s+called|\s+named)?\s+(.+?)\s+(?:for|usable by)\s+([a-z*, ]+?)\s+(?:with|using|that has)\s+(?:capabilities?\s+)?(.+)$",text,re.I)
