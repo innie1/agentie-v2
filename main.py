@@ -11,6 +11,7 @@ from agentie.core.code_execution import route_code_command
 from agentie.core.conversation_loop import consume_followup,detect_incomplete_intent
 from agentie.core.file_service import MAX_FILE_BYTES,resolve_upload,run_action,save_upload
 from agentie.core.local_router import route_local_actions
+from agentie.core.mcp_client import route_mcp_command
 from agentie.core.memory_store import add_message
 from agentie.core.observability import finish_trace,get_trace,record_event,record_route,recent_traces,start_trace,summary_card,trace_card
 from agentie.core.office_artifacts import try_office_request
@@ -24,7 +25,7 @@ from agentie.tools.approval_tools import resolve_approval
 from agentie.tools.advanced_utility_tools import SCHEDULES
 from agentie.tools.productivity_tools import REMINDERS
 
-app=FastAPI(title="Agentie API",version="1.7.1",description="Local-first Agentie runtime with observability, cost tracking, memory, routines, jobs, RAG, skills and local artifact generation")
+app=FastAPI(title="Agentie API",version="1.8.0",description="Local-first Agentie runtime with observability, cost tracking, memory, routines, jobs, RAG, MCP discovery, skills and local artifact generation")
 FRONTEND_DIR=Path(__file__).parent/"frontend";FRONTEND_FILE=FRONTEND_DIR/"index.html";CARDS_JS=FRONTEND_DIR/"cards.js";EVENTS_JS=FRONTEND_DIR/"events.js";UPLOAD_JS=FRONTEND_DIR/"upload.js"
 class AgentRequest(BaseModel):
     message:str=Field(min_length=1,max_length=20_000);agent_type:str=Field(default="general",pattern="^(general|research|coding|manager|github)$");session_id:str|None=Field(default=None,max_length=200)
@@ -109,7 +110,7 @@ async def events_js():return Response(EVENTS_JS.read_text(encoding="utf-8"),medi
 @app.get("/upload.js")
 async def upload_js():return Response(UPLOAD_JS.read_text(encoding="utf-8"),media_type="application/javascript",headers={"Cache-Control":"no-store"})
 @app.get("/health")
-async def health():return {"status":"ok","service":"agentie-v2","version":"1.7.1"}
+async def health():return {"status":"ok","service":"agentie-v2","version":"1.8.0"}
 @app.post("/files/upload")
 async def file_upload(file:UploadFile=File(...)):
     try:
@@ -162,8 +163,9 @@ async def agent_run(request:AgentRequest,http_request:Request):
     try:
         session_key=request.session_id or f"{http_request.client.host if http_request.client else 'local'}:{request.agent_type}"
         trace_id=start_trace(session_key,request.agent_type,request.message)
-        # Explicit Python execution is a deterministic local action. Route it before
-        # reference/artifact/LLM handling so it never consumes Gemini quota.
+        mcp=await route_mcp_command(request.message)
+        if mcp is not None:
+            message=str(mcp.get("message",""));card=mcp.get("card");_record_local(session_key,request.message,message,card,request.agent_type,"mcp");return AgentResponse(message=message,result=message,card=card,agent_type=request.agent_type,routed_by="mcp")
         code=route_code_command(request.message)
         if code is not None:
             message=str(code.get("message",""));card=code.get("card");_record_local(session_key,request.message,message,card,request.agent_type,"local_code");return AgentResponse(message=message,result=message,card=card,agent_type=request.agent_type,routed_by="local_code")
