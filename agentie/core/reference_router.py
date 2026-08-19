@@ -70,9 +70,13 @@ def try_active_reference(session_id: str, message: str) -> dict[str, Any] | None
             return {"message": f"Timer set for {pretty} seconds.", "card": new_card, "routed_by": "active_reference"}
 
         if reference_words and re.search(r"\b(?:cancel|stop)\b", text):
-            result = local_utils.cancel_timer(timer_id)
+            with local_utils._TIMER_LOCK:
+                item = local_utils._TIMERS.get(timer_id)
+                if not item:
+                    return None
+                item["status"] = "cancelled"
             new_card = dict(card); new_card["status"] = "cancelled"
             set_context(session_id, "active_object", {"type": "timer", "card": new_card})
-            return {"message": str(result), "card": new_card, "routed_by": "active_reference"}
+            return {"message": "Timer cancelled.", "card": new_card, "routed_by": "active_reference"}
 
     return None
