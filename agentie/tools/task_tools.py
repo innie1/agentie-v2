@@ -6,7 +6,7 @@ from pathlib import Path
 
 from agents import function_tool
 
-from agentie.tools.approval_tools import approval_is_granted, request_approval
+from agentie.tools.approval_tools import approval_is_granted, create_approval
 
 STORE = Path.cwd() / "workspace" / "tasks.json"
 ACTIVE_STATUSES = {"pending", "working"}
@@ -99,13 +99,11 @@ def request_task_delete_approval(task_id: str, reason: str) -> str:
     if not task:
         raise ValueError("Task not found.")
     action = f"delete_task:{task_id}"
-    return request_approval.on_invoke_tool(
-        None,
-        json.dumps({
-            "action": action,
-            "reason": reason or f"Delete task '{task.get('title', task_id)}'",
-        }),
+    approval = create_approval(
+        action,
+        reason or f"Delete task '{task.get('title', task_id)}'",
     )
+    return json.dumps(approval)
 
 
 @function_tool
