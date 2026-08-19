@@ -32,8 +32,8 @@ def _specialist(t):
     if re.search(r"\b(research|search|web|latest|sources?|compare|investigate|find out|news)\b",x):return "research"
     return "general"
 def make_plan(goal):
-    clean=re.sub(r"\s+"," ",goal.strip());low=clean.lower();research=bool(re.search(r"\b(research|search|latest|compare|investigate|sources?|web|deep research)\b",low));synthesis=bool(re.search(r"\b(report|summary|summarize|write|draft|document|pdf|presentation|research)\b",low));coding=bool(re.search(r"\b(code|build|implement|fix|debug|refactor|test)\b",low))
-    if research and synthesis:return [{"id":"s1","title":"Deep research","instruction":clean,"specialist":"deep_research","depends_on":[]}]
+    clean=re.sub(r"\s+"," ",goal.strip());low=clean.lower();research=bool(re.search(r"\b(research|search|latest|compare|investigate|sources?|web|deep research|deep search|deeper search)\b",low));synthesis=bool(re.search(r"\b(report|summary|summarize|write|draft|document|pdf|presentation|research)\b",low))
+    if research and (synthesis or "deep search" in low or "deeper search" in low):return [{"id":"s1","title":"Deep research","instruction":clean,"specialist":"deep_research","depends_on":[]}]
     if coding and re.search(r"\b(test|verify|check)\b",low):return [{"id":"s1","title":"Implement","instruction":clean,"specialist":"coding","depends_on":[]},{"id":"s2","title":"Verify","instruction":"Verify the implementation, run appropriate checks, and report failures clearly.","specialist":"coding","depends_on":["s1"]}]
     sequential=bool(re.search(r"\bthen\b",clean,re.I));clauses=[x.strip(" .") for x in re.split(r"\s*(?:;|\bthen\b|\band then\b)\s*",clean,flags=re.I) if x.strip(" .")]
     if len(clauses)==1:
