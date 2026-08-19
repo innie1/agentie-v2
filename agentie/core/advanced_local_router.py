@@ -7,8 +7,10 @@ from pathlib import Path
 
 import yaml
 
+from agentie.core.collection_store import route_collection_command
 from agentie.core.role_store import route_role_command
 from agentie.core.routine_engine import route_routine_command
+from agentie.core.skill_registry import route_skill_command
 from agentie.tools import advanced_utility_tools as advanced
 from agentie.tools import productivity_tools as productivity
 from agentie.tools import local_utility_tools as utilities
@@ -43,10 +45,9 @@ def _timer_with_reason(text: str) -> dict | None:
 
 def try_advanced_local_command(message: str) -> dict | None:
     text=" ".join(message.strip().split()); lower=text.lower().strip(" .?!")
-    routine=route_routine_command(text)
-    if routine is not None:return routine
-    role=route_role_command(text)
-    if role is not None:return role
+    for router in (route_routine_command, route_role_command, route_collection_command, route_skill_command):
+        result=router(text)
+        if result is not None:return result
     if _looks_like_time_question(lower) and "timer" not in lower:
         now=datetime.now().astimezone(); return {"message":f"It is {now.strftime('%H:%M:%S')} on {now.strftime('%Y-%m-%d')}.","card":{"type":"datetime","datetime":now.isoformat(timespec="seconds"),"timezone":str(now.tzinfo)}}
     timer=_timer_with_reason(text)
