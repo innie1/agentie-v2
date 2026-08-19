@@ -7,25 +7,26 @@ from typing import Any
 
 import uvicorn
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse, HTMLResponse, Response
+from fastapi.responses import HTMLResponse, Response
 from pydantic import BaseModel, Field
 
-from agentie.core.advanced_local_router import try_advanced_local_command
-from agentie.core.local_router import try_local_command
+from agentie.core.local_router import route_local_actions
 from agentie.core.runner import run_agent
 from agentie.tools.approval_tools import resolve_approval
 from agentie.tools.advanced_utility_tools import SCHEDULES
 from agentie.tools.productivity_tools import REMINDERS
 
-app = FastAPI(title="Agentie API", version="0.7.1", description="Local-first Agentie runtime with inline cards and persistent local utilities")
+app = FastAPI(title="Agentie API", version="0.8.0", description="Local-first Agentie runtime with fuzzy intent routing, inline cards, and persistent utilities")
 FRONTEND_DIR = Path(__file__).parent / "frontend"
 FRONTEND_FILE = FRONTEND_DIR / "index.html"
 CARDS_JS = FRONTEND_DIR / "cards.js"
 EVENTS_JS = FRONTEND_DIR / "events.js"
 
+
 class AgentRequest(BaseModel):
     message: str = Field(min_length=1, max_length=20_000)
     agent_type: str = Field(default="general", pattern="^(general|research|coding|manager|github)$")
+
 
 class AgentResponse(BaseModel):
     message: str
@@ -34,17 +35,21 @@ class AgentResponse(BaseModel):
     agent_type: str
     routed_by: str
 
+
 class ApprovalDecision(BaseModel):
     approved: bool
+
 
 def _load(path: Path, default):
     if not path.exists(): return default
     try: return json.loads(path.read_text(encoding="utf-8"))
     except Exception: return default
 
+
 def _save(path: Path, value) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(value, indent=2, ensure_ascii=False), encoding="utf-8")
+
 
 def _schedule_due(item: dict, now: datetime) -> bool:
     if item.get("status") != "active": return False
@@ -68,26 +73,38 @@ def _schedule_due(item: dict, now: datetime) -> bool:
         return now.weekday() == names.get(cadence.split(" ",1)[1], -1)
     return False
 
+
+def _multi_card(results: list[dict], extra_message: str | None = None) -> dict:
+    items = [{"message": r.get("message", ""), "card": r.get("card")} for r in results]
+    if extra_message:
+        items.append({"message": extra_message, "card": None})
+    return {"type": "multi", "items": items}
+
+
 @app.get("/")
 async def chat_ui():
     if not FRONTEND_FILE.exists(): raise HTTPException(status_code=404, detail="Frontend not found.")
     html = FRONTEND_FILE.read_text(encoding="utf-8")
-    html += '\n<script src="/cards.js?v=071"></script>\n<script src="/events.js?v=071"></script>\n'
+    html += '\n<script src="/cards.js?v=080"></script>\n<script src="/events.js?v=080"></script>\n'
     return HTMLResponse(html, headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"})
+
 
 @app.get("/cards.js")
 async def cards_js():
     if not CARDS_JS.exists(): raise HTTPException(status_code=404, detail="Card renderer not found.")
     return Response(CARDS_JS.read_text(encoding="utf-8"), media_type="application/javascript", headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"})
 
+
 @app.get("/events.js")
 async def events_js():
     if not EVENTS_JS.exists(): raise HTTPException(status_code=404, detail="Events script not found.")
     return Response(EVENTS_JS.read_text(encoding="utf-8"), media_type="application/javascript", headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"})
 
+
 @app.get("/health")
 async def health() -> dict[str, str]:
-    return {"status":"ok","service":"agentie-v2","version":"0.7.1"}
+    return {"status":"ok","service":"agentie-v2","version":"0.8.0"}
+
 
 @app.get("/local/events/poll")
 async def poll_local_events() -> dict[str, Any]:
@@ -115,15 +132,36 @@ async def poll_local_events() -> dict[str, Any]:
     if changed: _save(SCHEDULES, schedules)
     return {"events": events}
 
+
 @app.post("/agent/run", response_model=AgentResponse)
 async def agent_run(request: AgentRequest) -> AgentResponse:
     try:
-        local_result = try_advanced_local_command(request.message)
-        if local_result is None:
-            local_result = try_local_command(request.message)
-        if local_result is not None:
-            message = str(local_result.get("message", ""))
-            return AgentResponse(message=message, result=message, card=local_result.get("card"), agent_type=request.agent_type, routed_by="local")
+        routed = route_local_actions(request.message)
+        local_results: list[dict] = routed.get("results", [])
+        unresolved: list[str] = routed.get("unresolved", [])
+
+        # Everything was understood by deterministic/free routing.
+        if local_results and not unresolved:
+            if len(local_results) == 1:
+                item = local_results[0]
+                message = str(item.get("message", ""))
+                return AgentResponse(message=message, result=message, card=item.get("card"), agent_type=request.agent_type, routed_by="local")
+            return AgentResponse(message="", result="", card=_multi_card(local_results), agent_type=request.agent_type, routed_by="local")
+
+        # Mixed request: keep completed local work and send only unresolved clauses to the model.
+        if local_results and unresolved:
+            unresolved_prompt = (
+                "Handle only the following unresolved parts of the user's request. Do not repeat or redo other actions.\n\n"
+                + "\n".join(f"- {part}" for part in unresolved)
+            )
+            try:
+                llm_result = await run_agent(unresolved_prompt, request.agent_type)
+            except Exception as exc:
+                # A provider/credit failure must not erase successfully completed local actions.
+                llm_result = "I completed the other actions, but I couldn't process: " + "; ".join(unresolved) + f". ({exc})"
+            return AgentResponse(message="", result=llm_result, card=_multi_card(local_results, llm_result), agent_type=request.agent_type, routed_by="hybrid")
+
+        # Nothing matched locally; use the model normally.
         result = await run_agent(request.message, request.agent_type)
         return AgentResponse(message=result, result=result, card=None, agent_type=request.agent_type, routed_by="llm")
     except RuntimeError as exc:
@@ -131,10 +169,12 @@ async def agent_run(request: AgentRequest) -> AgentResponse:
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Agent run failed: {exc}") from exc
 
+
 @app.post("/approvals/{approval_id}/resolve")
 async def approval_resolve(approval_id: str, decision: ApprovalDecision) -> dict:
     try: return resolve_approval(approval_id, decision.approved)
     except ValueError as exc: raise HTTPException(status_code=400, detail=str(exc)) from exc
+
 
 if __name__ == "__main__":
     port = int(os.getenv("PORT", "8000")); uvicorn.run("main:app", host="0.0.0.0", port=port, reload=False)
