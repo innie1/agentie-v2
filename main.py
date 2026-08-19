@@ -1,7 +1,10 @@
 import os
+from pathlib import Path
+from typing import Any
 
 import uvicorn
 from fastapi import FastAPI, HTTPException
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
 from agentie.core.local_router import try_local_command
@@ -11,9 +14,11 @@ from agentie.tools.approval_tools import resolve_approval
 
 app = FastAPI(
     title="Agentie API",
-    version="0.4.0",
-    description="Python-first Agentie agent runtime with local-first utility routing",
+    version="0.5.0",
+    description="Python-first Agentie runtime with local-first routing and inline UI cards",
 )
+
+FRONTEND_FILE = Path(__file__).parent / "frontend" / "index.html"
 
 
 class AgentRequest(BaseModel):
@@ -22,7 +27,9 @@ class AgentRequest(BaseModel):
 
 
 class AgentResponse(BaseModel):
+    message: str
     result: str
+    card: dict[str, Any] | None = None
     agent_type: str
     routed_by: str
 
@@ -31,9 +38,16 @@ class ApprovalDecision(BaseModel):
     approved: bool
 
 
+@app.get("/")
+async def chat_ui():
+    if not FRONTEND_FILE.exists():
+        raise HTTPException(status_code=404, detail="Frontend not found.")
+    return FileResponse(FRONTEND_FILE, media_type="text/html")
+
+
 @app.get("/health")
 async def health() -> dict[str, str]:
-    return {"status": "ok", "service": "agentie-v2", "version": "0.4.0"}
+    return {"status": "ok", "service": "agentie-v2", "version": "0.5.0"}
 
 
 @app.post("/agent/run", response_model=AgentResponse)
@@ -41,15 +55,20 @@ async def agent_run(request: AgentRequest) -> AgentResponse:
     try:
         local_result = try_local_command(request.message)
         if local_result is not None:
+            message = str(local_result.get("message", ""))
             return AgentResponse(
-                result=local_result,
+                message=message,
+                result=message,
+                card=local_result.get("card"),
                 agent_type=request.agent_type,
                 routed_by="local",
             )
 
         result = await run_agent(request.message, request.agent_type)
         return AgentResponse(
+            message=result,
             result=result,
+            card=None,
             agent_type=request.agent_type,
             routed_by="llm",
         )
