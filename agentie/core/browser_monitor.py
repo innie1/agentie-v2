@@ -16,6 +16,9 @@ from playwright.async_api import async_playwright
 WORKSPACE = Path.cwd() / "workspace"
 SNAPSHOT_DIR = WORKSPACE / "web_snapshots"
 STATE_FILE = WORKSPACE / "website_monitor_state.json"
+LIVE_DIR = WORKSPACE / "browser_live"
+LIVE_STATE_FILE = LIVE_DIR / "state.json"
+LIVE_FRAME_FILE = LIVE_DIR / "frame.png"
 
 
 def _load_state() -> dict[str, dict[str, Any]]:
@@ -28,6 +31,68 @@ def _load_state() -> dict[str, dict[str, Any]]:
 def _save_state(data: dict[str, dict[str, Any]]) -> None:
     STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
     STATE_FILE.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+
+
+def _set_live_state(*, active: bool, status: str, url: str = "", detail: str = "", error: str | None = None) -> None:
+    LIVE_DIR.mkdir(parents=True, exist_ok=True)
+    previous = get_live_state()
+    state = {
+        "active": bool(active),
+        "status": status,
+        "url": url,
+        "detail": detail,
+        "error": error,
+        "updated_at": datetime.now().astimezone().isoformat(timespec="milliseconds"),
+        "frame_version": int(previous.get("frame_version") or 0),
+        "stop_requested": bool(previous.get("stop_requested", False)) if active else False,
+    }
+    LIVE_STATE_FILE.write_text(json.dumps(state, indent=2, ensure_ascii=False), encoding="utf-8")
+
+
+def get_live_state() -> dict[str, Any]:
+    try:
+        return json.loads(LIVE_STATE_FILE.read_text(encoding="utf-8")) if LIVE_STATE_FILE.exists() else {
+            "active": False,
+            "status": "idle",
+            "url": "",
+            "detail": "",
+            "frame_version": 0,
+            "stop_requested": False,
+        }
+    except Exception:
+        return {"active": False, "status": "idle", "url": "", "detail": "", "frame_version": 0, "stop_requested": False}
+
+
+def request_browser_stop() -> dict[str, Any]:
+    state = get_live_state()
+    state["stop_requested"] = True
+    state["updated_at"] = datetime.now().astimezone().isoformat(timespec="milliseconds")
+    LIVE_DIR.mkdir(parents=True, exist_ok=True)
+    LIVE_STATE_FILE.write_text(json.dumps(state, indent=2, ensure_ascii=False), encoding="utf-8")
+    return state
+
+
+def _stop_requested() -> bool:
+    return bool(get_live_state().get("stop_requested"))
+
+
+async def _publish_frame(page: Any, *, status: str, url: str, detail: str = "") -> None:
+    LIVE_DIR.mkdir(parents=True, exist_ok=True)
+    try:
+        await page.screenshot(path=str(LIVE_FRAME_FILE), full_page=False)
+    except Exception:
+        return
+    state = get_live_state()
+    state.update({
+        "active": True,
+        "status": status,
+        "url": url,
+        "detail": detail,
+        "error": None,
+        "frame_version": int(state.get("frame_version") or 0) + 1,
+        "updated_at": datetime.now().astimezone().isoformat(timespec="milliseconds"),
+    })
+    LIVE_STATE_FILE.write_text(json.dumps(state, indent=2, ensure_ascii=False), encoding="utf-8")
 
 
 def _url(text: str) -> str | None:
@@ -137,27 +202,43 @@ async def capture_website(url: str, *, track_change: bool = False) -> dict[str, 
     SNAPSHOT_DIR.mkdir(parents=True, exist_ok=True)
     filename = _safe_slug(url)
     path = SNAPSHOT_DIR / filename
+    _set_live_state(active=True, status="starting", url=url, detail="Starting browser")
 
     try:
         async with async_playwright() as p:
+            if _stop_requested():
+                raise RuntimeError("Browser task stopped by user.")
             browser = await p.chromium.launch(headless=True)
             page = await browser.new_page(viewport={"width": 1440, "height": 1000})
             try:
+                _set_live_state(active=True, status="opening", url=url, detail="Opening page")
                 response = await page.goto(url, wait_until="domcontentloaded", timeout=30000)
+                await _publish_frame(page, status="loaded", url=url, detail="Page loaded")
+                if _stop_requested():
+                    raise RuntimeError("Browser task stopped by user.")
                 try:
+                    _set_live_state(active=True, status="waiting", url=url, detail="Waiting for page activity to settle")
                     await page.wait_for_load_state("networkidle", timeout=8000)
                 except Exception:
                     pass
+                await _publish_frame(page, status="ready", url=url, detail="Page ready")
+                if _stop_requested():
+                    raise RuntimeError("Browser task stopped by user.")
                 title = await page.title()
                 text = _normalized_text(await page.locator("body").inner_text(timeout=10000))
+                _set_live_state(active=True, status="capturing", url=url, detail="Capturing full-page screenshot")
                 await page.screenshot(path=str(path), full_page=True)
+                await _publish_frame(page, status="captured", url=url, detail="Screenshot captured")
                 status = response.status if response else None
             finally:
                 await browser.close()
     except Exception as exc:
         message = str(exc)
+        _set_live_state(active=False, status="error", url=url, detail="Browser task ended", error=message[:500])
         if "Executable doesn't exist" in message or "playwright install" in message.lower():
             raise RuntimeError("Chromium is not installed for Agentie yet. Run: python -m playwright install chromium") from exc
+        if "stopped by user" in message.lower():
+            raise RuntimeError("Browser task stopped by user.") from exc
         raise RuntimeError(f"Website capture failed: {message[:500]}") from exc
 
     key = hashlib.sha256(url.encode("utf-8")).hexdigest()
@@ -177,7 +258,8 @@ async def capture_website(url: str, *, track_change: bool = False) -> dict[str, 
         changed, similarity = False, None
 
     excerpt = text[:900]
-    result = {
+    _set_live_state(active=False, status="done", url=url, detail="Browser task complete")
+    return {
         "message": (
             f"Checked {url}. The page has meaningfully changed since the previous check."
             if track_change and changed and previous
@@ -190,7 +272,6 @@ async def capture_website(url: str, *, track_change: bool = False) -> dict[str, 
         "changed": changed,
         "first_check": previous is None if track_change else True,
     }
-    return result
 
 
 async def route_browser_request(message: str) -> dict[str, Any] | None:
