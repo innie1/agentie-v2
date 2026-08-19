@@ -81,6 +81,80 @@ async def _locator_for_text(page: Page, target: str):
     return None
 
 
+def _ordinal(target: str) -> int | None:
+    words = {"first": 0, "second": 1, "third": 2, "fourth": 3, "fifth": 4}
+    low = target.lower()
+    for word, index in words.items():
+        if re.search(rf"\b{word}\b", low):
+            return index
+    m = re.search(r"\b(\d+)(?:st|nd|rd|th)\b", low)
+    return max(0, int(m.group(1)) - 1) if m else None
+
+
+def _requested_color(target: str) -> str | None:
+    for color in ("blue", "red", "green", "yellow", "orange", "purple", "pink", "black", "white", "gray", "grey"):
+        if re.search(rf"\b{color}\b", target, re.I):
+            return "gray" if color == "grey" else color
+    return None
+
+
+def _requested_position(target: str) -> str | None:
+    low = target.lower().replace(" ", "-")
+    for position in ("top-right", "top-left", "bottom-right", "bottom-left", "top", "bottom", "left", "right", "center", "middle"):
+        if position in low:
+            return "center" if position == "middle" else position
+    return None
+
+
+async def _visual_locator(page: Page, target: str):
+    selector = 'button,a,[role="button"],input[type="button"],input[type="submit"],[onclick]'
+    candidates = await page.locator(selector).evaluate_all(
+        """
+        els => els.map((el,index) => {
+          const r=el.getBoundingClientRect(), s=getComputedStyle(el);
+          const visible=r.width>1&&r.height>1&&r.bottom>0&&r.right>0&&r.top<innerHeight&&r.left<innerWidth&&s.visibility!=='hidden'&&s.display!=='none';
+          const rgb=(s.backgroundColor.match(/\d+/g)||[]).slice(0,3).map(Number);
+          let color='unknown';
+          if(rgb.length===3){const [r0,g,b]=rgb,max=Math.max(r0,g,b),min=Math.min(r0,g,b);if(max<55)color='black';else if(min>220)color='white';else if(max-min<30)color='gray';else if(b>r0*1.15&&b>g*1.08)color='blue';else if(r0>g*1.25&&r0>b*1.2)color='red';else if(g>r0*1.12&&g>b*1.05)color='green';else if(r0>180&&g>130&&b<120)color='orange';else if(r0>160&&g>150&&b<100)color='yellow';else if(r0>120&&b>120&&g<130)color='purple';}
+          return {index,visible,color,text:(el.innerText||el.value||el.getAttribute('aria-label')||el.title||'').trim().slice(0,200),tag:el.tagName.toLowerCase(),role:el.getAttribute('role')||'',x:r.left+r.width/2,y:r.top+r.height/2,w:r.width,h:r.height};
+        }).filter(x=>x.visible)
+        """
+    )
+    if not candidates:
+        return None
+    low = target.lower()
+    wanted_color = _requested_color(target)
+    wanted_position = _requested_position(target)
+    wanted_kind = "button" if "button" in low else "link" if "link" in low else None
+    filtered = []
+    for item in candidates:
+        if wanted_color and item.get("color") != wanted_color:
+            continue
+        if wanted_kind == "button" and not (item.get("tag") in {"button", "input"} or item.get("role") == "button"):
+            continue
+        if wanted_kind == "link" and item.get("tag") != "a":
+            continue
+        filtered.append(item)
+    if not filtered:
+        filtered = candidates
+
+    width, height = 1440.0, 900.0
+    def distance(item: dict[str, Any]) -> float:
+        x, y = float(item.get("x") or 0), float(item.get("y") or 0)
+        points = {
+            "top-right": (width, 0), "top-left": (0, 0), "bottom-right": (width, height), "bottom-left": (0, height),
+            "top": (width/2, 0), "bottom": (width/2, height), "left": (0, height/2), "right": (width, height/2), "center": (width/2, height/2),
+        }
+        px, py = points.get(wanted_position or "center", (width/2, height/2))
+        return (x-px)**2 + (y-py)**2
+
+    if wanted_position:
+        filtered.sort(key=distance)
+    index = _ordinal(target)
+    chosen = filtered[index] if index is not None and index < len(filtered) else filtered[0]
+    return page.locator(selector).nth(int(chosen["index"])), chosen
+
+
 async def _field(page: Page, name: str):
     name = name.strip().strip('"\'`')
     if name.lower() in {"search", "search box", "search field", "query"}:
@@ -105,7 +179,6 @@ def _strip_open_prefix(text: str, url: str | None) -> str:
     if url:
         value = value.replace(url, " ", 1)
     value = re.sub(r"^\s*(?:please\s+)?(?:open|visit|go to|navigate to|browse)\s+", "", value, flags=re.I)
-    # Removing the URL can leave a leading connector, e.g. "Open URL then scroll" -> "then scroll".
     value = re.sub(r"^\s*(?:(?:and\s+)?then)\s+", "", value, flags=re.I)
     return value.strip(" ,.;:-")
 
@@ -144,11 +217,7 @@ def _require_consequential_approval(page: Page, step: str) -> None:
     if approval_is_granted(action):
         consume_approval(action)
         return
-    item = create_approval(
-        action,
-        f"Allow this browser action once: {step}",
-        {"kind": "browser", "url": page.url, "step": step},
-    )
+    item = create_approval(action, f"Allow this browser action once: {step}", {"kind": "browser", "url": page.url, "step": step})
     raise BrowserApprovalRequired(action, step, item)
 
 
@@ -172,15 +241,21 @@ async def _perform(page: Page, step: str) -> tuple[str, Page]:
     target = _click_target(step)
     if target:
         locator = await _locator_for_text(page, target)
+        visual = None
+        if locator is None:
+            visual = await _visual_locator(page, target)
+            locator = visual[0] if visual else None
         if locator is None:
             raise RuntimeError(f"I couldn't find a clickable element matching “{target}”.")
-        _set_live_state(active=True, status="clicking", url=page.url, detail=f"Clicking {target}")
+        label = (visual[1].get("text") if visual else target) or target
+        _require_consequential_approval(page, f"click {label}")
+        _set_live_state(active=True, status="clicking", url=page.url, detail=f"Clicking {label}")
         await locator.click(timeout=10000)
         try:
             await page.wait_for_load_state("domcontentloaded", timeout=5000)
         except Exception:
             pass
-        return f"Clicked {target}", page
+        return f"Clicked {label}", page
     typed = _type_parts(step)
     if typed:
         value, field_name = typed
@@ -229,6 +304,55 @@ async def _perform(page: Page, step: str) -> tuple[str, Page]:
     return f"Skipped unrecognized step: {step}", page
 
 
+async def browser_direct_control(action: str, **payload: Any) -> dict[str, Any]:
+    async with _LOCK:
+        page = await _ensure_page(None)
+        try:
+            if action == "click":
+                x, y = float(payload.get("x", 0)), float(payload.get("y", 0))
+                info = await page.evaluate("""([x,y])=>{const el=document.elementFromPoint(x,y);if(!el)return {label:''};const target=el.closest('button,a,[role=button],input,[onclick]')||el;return {label:(target.innerText||target.value||target.getAttribute('aria-label')||target.title||target.tagName||'').trim().slice(0,160)}}""", [x, y])
+                label = str((info or {}).get("label") or "screen item")
+                step = f"click {label}"
+                try:
+                    _require_consequential_approval(page, step)
+                except BrowserApprovalRequired as exc:
+                    return {"ok": False, "approval": {"type": "browser_approval", "url": page.url, "step": step, "approval": exc.approval, "control": {"action": "click", "x": x, "y": y}}}
+                _set_live_state(active=True, status="clicking", url=page.url, detail=f"Clicking {label}")
+                await page.mouse.click(x, y)
+            elif action == "type":
+                text = str(payload.get("text") or "")[:5000]
+                _set_live_state(active=True, status="typing", url=page.url, detail="Typing into focused field")
+                await page.keyboard.insert_text(text)
+            elif action == "key":
+                key = str(payload.get("key") or "Enter")
+                allowed = {"Enter", "Tab", "Escape", "Backspace", "Delete", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "PageUp", "PageDown", "Home", "End"}
+                if key not in allowed:
+                    raise ValueError("Unsupported browser key.")
+                _set_live_state(active=True, status="key", url=page.url, detail=f"Pressing {key}")
+                await page.keyboard.press(key)
+            elif action == "scroll":
+                dy = max(-3000, min(3000, float(payload.get("dy", 0))))
+                _set_live_state(active=True, status="scrolling", url=page.url, detail="Scrolling")
+                await page.mouse.wheel(0, dy)
+            elif action == "back":
+                _set_live_state(active=True, status="navigating", url=page.url, detail="Going back")
+                await page.go_back(wait_until="domcontentloaded", timeout=10000)
+            elif action == "forward":
+                _set_live_state(active=True, status="navigating", url=page.url, detail="Going forward")
+                await page.go_forward(wait_until="domcontentloaded", timeout=10000)
+            elif action == "reload":
+                _set_live_state(active=True, status="navigating", url=page.url, detail="Reloading page")
+                await page.reload(wait_until="domcontentloaded", timeout=15000)
+            else:
+                raise ValueError("Unsupported browser control action.")
+            await _publish_frame(page, status="ready", url=page.url, detail="Manual control ready")
+            _set_live_state(active=False, status="done", url=page.url, detail="Manual control complete")
+            return {"ok": True, "url": page.url}
+        except Exception as exc:
+            _set_live_state(active=False, status="error", url=page.url, detail="Manual browser control failed", error=str(exc)[:500])
+            return {"ok": False, "error": str(exc)[:500]}
+
+
 async def browser_session_command(message: str) -> dict[str, Any] | None:
     if not _is_interactive_request(message):
         return None
@@ -248,23 +372,11 @@ async def browser_session_command(message: str) -> dict[str, Any] | None:
             title = await page.title()
             await _publish_frame(page, status="done", url=page.url, detail="Browser actions complete")
             _set_live_state(active=False, status="done", url=page.url, detail="Browser actions complete")
-            return {
-                "message": "Completed the browser actions.",
-                "card": {"type": "browser_actions", "title": title or "Browser", "url": page.url, "actions": actions},
-            }
+            return {"message": "Completed the browser actions.", "card": {"type": "browser_actions", "title": title or "Browser", "url": page.url, "actions": actions}}
         except BrowserApprovalRequired as exc:
             page_url = _PAGE.url if _PAGE and not _PAGE.is_closed() else (target or "")
             _set_live_state(active=False, status="paused", url=page_url, detail=f"Approval required: {exc.step}")
-            return {
-                "message": "This browser action needs your approval before I continue.",
-                "card": {
-                    "type": "browser_approval",
-                    "url": page_url,
-                    "step": exc.step,
-                    "approval": exc.approval,
-                    "command": message,
-                },
-            }
+            return {"message": "This browser action needs your approval before I continue.", "card": {"type": "browser_approval", "url": page_url, "step": exc.step, "approval": exc.approval, "command": message}}
         except Exception as exc:
             page_url = _PAGE.url if _PAGE and not _PAGE.is_closed() else (target or "")
             _set_live_state(active=False, status="error", url=page_url, detail="Browser action failed", error=str(exc)[:500])
