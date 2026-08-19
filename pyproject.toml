@@ -1,6 +1,6 @@
 [project]
 name = "agentie-v2"
-version = "1.1.0"
+version = "1.2.0"
 description = "Python-first agent platform built with FastAPI and the OpenAI Agents SDK"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -8,6 +8,7 @@ dependencies = [
   "ddgs>=9.5.0",
   "fastapi>=0.115.0",
   "fastembed>=0.7.0",
+  "mcp>=2.0.0,<3.0.0",
   "openai-agents>=0.6.0",
   "openpyxl>=3.1.0",
   "pillow>=10.0.0",
