@@ -34,14 +34,28 @@ def _parse_trigger(text:str)->tuple[str,str]|None:
         if m:return f(m),m.group(0)
     return None
 def _name_for(action:str)->str:return " ".join(re.findall(r"[A-Za-z0-9]+",action)[:7]).title() or "Routine"
+def _parse_named_routine(text:str,trigger_phrase:str)->tuple[str|None,str]:
+    """Extract an explicit routine name and the actual action from conversational create syntax."""
+    compact=" ".join(text.strip().split())
+    explicit=None
+    m=re.match(r"^(?:please\s+)?(?:create|make|set up|setup|add)\s+(?:me\s+)?(?:a\s+)?routine\s+(?:called|named|titled)\s+(.+?)\s+(?:that|which|to)\s+(.+)$",compact,re.I)
+    if m:
+        explicit=m.group(1).strip(' \"“”.,:;-');body=m.group(2).strip()
+    else:
+        body=re.sub(r"^(?:please\s+)?(?:create|make|set up|setup|add)\s+(?:me\s+)?(?:a\s+)?routine\s+(?:to|that|which)?\s*","",compact,flags=re.I).strip()
+    body=re.sub(re.escape(trigger_phrase)," ",body,flags=re.I);body=re.sub(r"\s+"," ",body).strip(" ,.;:-")
+    # Natural routine phrasing often says "that every weekday ... checks". Preserve meaning,
+    # but normalize common third-person action verbs for cleaner job goals.
+    body=re.sub(r"^(checks|reminds|researches|summarizes|saves|runs|looks|tells)\b",lambda m:{'checks':'check','reminds':'remind','researches':'research','summarizes':'summarize','saves':'save','runs':'run','looks':'look','tells':'tell'}[m.group(1).lower()],body,flags=re.I)
+    return explicit,body
 def create_routine(text:str,agent_role:str|None=None):
     parsed=_parse_trigger(text)
     if not parsed:raise ValueError("Tell me when it should run, for example every weekday at 9, every morning, or every 30 minutes.")
-    trigger,phrase=parsed;action=re.sub(re.escape(phrase),"",text,flags=re.I).strip(" ,.;:-");action=re.sub(r"^(?:create|make|set up|setup|add)\s+(?:me\s+)?(?:a\s+)?routine\s+(?:to|that|which)?\s*","",action,flags=re.I).strip();action=re.sub(r"^please\s+","",action,flags=re.I).strip()
+    trigger,phrase=parsed;explicit_name,action=_parse_named_routine(text,phrase)
     if not action:raise ValueError("Tell me what the routine should do.")
     sig=_signature(trigger,action);items=list_routines();existing=next((x for x in items if x.get("signature")==sig and x.get("status")!="deleted"),None)
     if existing:return existing,False
-    now=datetime.now().astimezone().isoformat(timespec="seconds");item={"id":uuid.uuid4().hex[:8],"name":_name_for(action),"trigger":trigger,"action":action,"agent_role":agent_role or "auto","status":"active","created_at":now,"updated_at":now,"last_run":None,"signature":sig,"run_count":0};items.append(item);_save(ROUTINES,items);return item,True
+    now=datetime.now().astimezone().isoformat(timespec="seconds");item={"id":uuid.uuid4().hex[:8],"name":explicit_name or _name_for(action),"trigger":trigger,"action":action,"agent_role":agent_role or "auto","status":"active","created_at":now,"updated_at":now,"last_run":None,"signature":sig,"run_count":0};items.append(item);_save(ROUTINES,items);return item,True
 def update_routine(routine_id:str,**changes):
     items=list_routines();item=next((x for x in items if x.get("id")==routine_id),None)
     if not item:raise KeyError(routine_id)
