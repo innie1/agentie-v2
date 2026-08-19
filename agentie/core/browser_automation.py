@@ -7,6 +7,7 @@ from typing import Any
 from playwright.async_api import Browser, BrowserContext, Page, Playwright, async_playwright
 
 from agentie.core.browser_monitor import _publish_frame, _set_live_state, _stop_requested, _url, _validate_url, get_live_state
+from agentie.tools.approval_tools import approval_is_granted, consume_approval, create_approval
 
 _PLAYWRIGHT: Playwright | None = None
 _BROWSER: Browser | None = None
@@ -18,6 +19,14 @@ _CONSEQUENTIAL = re.compile(
     r"\b(?:buy|purchase|pay|checkout|place order|submit|send|delete|remove account|confirm order|transfer|publish|post)\b",
     re.I,
 )
+
+
+class BrowserApprovalRequired(Exception):
+    def __init__(self, action: str, step: str, approval: dict[str, Any]):
+        super().__init__(step)
+        self.action = action
+        self.step = step
+        self.approval = approval
 
 
 def _is_interactive_request(text: str) -> bool:
@@ -122,11 +131,29 @@ def _type_parts(step: str) -> tuple[str, str] | None:
     return None
 
 
+def _browser_action(page: Page, step: str) -> str:
+    return f"browser:{page.url}:{' '.join(step.lower().split())}"[:500]
+
+
+def _require_consequential_approval(page: Page, step: str) -> None:
+    if not _CONSEQUENTIAL.search(step):
+        return
+    action = _browser_action(page, step)
+    if approval_is_granted(action):
+        consume_approval(action)
+        return
+    item = create_approval(
+        action,
+        f"Allow this browser action once: {step}",
+        {"kind": "browser", "url": page.url, "step": step},
+    )
+    raise BrowserApprovalRequired(action, step, item)
+
+
 async def _perform(page: Page, step: str) -> tuple[str, Page]:
     global _PAGE
     low = step.lower().strip()
-    if _CONSEQUENTIAL.search(low):
-        raise PermissionError(f"Stopped before consequential browser action: {step}")
+    _require_consequential_approval(page, step)
     if re.search(r"\bnew tab\b", low):
         assert _CONTEXT is not None
         _set_live_state(active=True, status="tab", url=page.url, detail="Opening new tab")
@@ -142,8 +169,6 @@ async def _perform(page: Page, step: str) -> tuple[str, Page]:
         return "Closed tab", _PAGE
     target = _click_target(step)
     if target:
-        if _CONSEQUENTIAL.search(target):
-            raise PermissionError(f"Stopped before consequential browser action: click {target}")
         locator = await _locator_for_text(page, target)
         if locator is None:
             raise RuntimeError(f"I couldn't find a clickable element matching “{target}”.")
@@ -225,12 +250,18 @@ async def browser_session_command(message: str) -> dict[str, Any] | None:
                 "message": "Completed the browser actions.",
                 "card": {"type": "browser_actions", "title": title or "Browser", "url": page.url, "actions": actions},
             }
-        except PermissionError as exc:
+        except BrowserApprovalRequired as exc:
             page_url = _PAGE.url if _PAGE and not _PAGE.is_closed() else (target or "")
-            _set_live_state(active=False, status="paused", url=page_url, detail=str(exc))
+            _set_live_state(active=False, status="paused", url=page_url, detail=f"Approval required: {exc.step}")
             return {
-                "message": str(exc) + ". I did not perform it.",
-                "card": {"type": "browser_actions", "title": "Browser paused", "url": page_url, "actions": [str(exc)], "approval_needed": True},
+                "message": "This browser action needs your approval before I continue.",
+                "card": {
+                    "type": "browser_approval",
+                    "url": page_url,
+                    "step": exc.step,
+                    "approval": exc.approval,
+                    "command": message,
+                },
             }
         except Exception as exc:
             page_url = _PAGE.url if _PAGE and not _PAGE.is_closed() else (target or "")
