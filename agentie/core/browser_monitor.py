@@ -55,7 +55,7 @@ def website_routine_target(text: str) -> str | None:
     low = str(text or "").lower()
     if not _url(text):
         return None
-    if not re.search(r"\b(?:monitor|watch|check|inspect|visit|screenshot|snapshot|capture)\b", low):
+    if not re.search(r"\b(?:monitor|monitors|watch|watches|check|checks|inspect|inspects|visit|visits|screenshot|screenshots|snapshot|snapshots|capture|captures)\b", low):
         return None
     return _url(text)
 
@@ -65,6 +65,14 @@ def routine_always_show(text: str) -> bool:
     return bool(re.search(r"\b(?:always show|show every|every screenshot|every check|always notify|notify every)\b", low))
 
 
+def _blocked_ip(value: str) -> bool:
+    try:
+        ip = ipaddress.ip_address(value)
+    except ValueError:
+        return False
+    return bool(ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved or ip.is_multicast or ip.is_unspecified)
+
+
 def _validate_url(url: str) -> str:
     parsed = urlparse(url)
     if parsed.scheme not in {"http", "https"} or not parsed.hostname:
@@ -72,15 +80,15 @@ def _validate_url(url: str) -> str:
     if parsed.username or parsed.password:
         raise ValueError("URLs containing embedded credentials are not allowed.")
     host = parsed.hostname.lower()
-    if host in {"localhost", "0.0.0.0"} or host.endswith(".localhost"):
-        raise ValueError("Localhost URLs are blocked by the website monitor.")
+    if host in {"localhost", "0.0.0.0"} or host.endswith(".localhost") or _blocked_ip(host):
+        raise ValueError("Private and local network addresses are blocked by the website monitor.")
     try:
-        direct = ipaddress.ip_address(host)
-        if direct.is_private or direct.is_loopback or direct.is_link_local or direct.is_reserved:
-            raise ValueError("Private and local network addresses are blocked by the website monitor.")
-    except ValueError as exc:
-        if "blocked" in str(exc):
-            raise
+        for item in socket.getaddrinfo(host, parsed.port or (443 if parsed.scheme == "https" else 80), type=socket.SOCK_STREAM):
+            address = item[4][0]
+            if _blocked_ip(address):
+                raise ValueError("Private and local network addresses are blocked by the website monitor.")
+    except socket.gaierror:
+        pass
     return url
 
 
@@ -155,8 +163,8 @@ async def capture_website(url: str, *, track_change: bool = False) -> dict[str, 
     key = hashlib.sha256(url.encode("utf-8")).hexdigest()
     state = _load_state()
     previous = state.get(key) if track_change else None
-    changed, similarity = _meaningfully_changed(previous, text, title)
     if track_change:
+        changed, similarity = _meaningfully_changed(previous, text, title)
         state[key] = {
             "url": url,
             "title": title,
@@ -165,6 +173,8 @@ async def capture_website(url: str, *, track_change: bool = False) -> dict[str, 
             "captured_at": datetime.now().astimezone().isoformat(timespec="seconds"),
         }
         _save_state(state)
+    else:
+        changed, similarity = False, None
 
     excerpt = text[:900]
     result = {
@@ -178,7 +188,7 @@ async def capture_website(url: str, *, track_change: bool = False) -> dict[str, 
         "card": _card(url, title, filename, changed, similarity, excerpt),
         "status": status,
         "changed": changed,
-        "first_check": previous is None,
+        "first_check": previous is None if track_change else True,
     }
     return result
 
