@@ -6,7 +6,7 @@ from typing import Any
 
 from playwright.async_api import Browser, BrowserContext, Page, Playwright, async_playwright
 
-from agentie.core.browser_monitor import _publish_frame, _set_live_state, _stop_requested, _url, _validate_url
+from agentie.core.browser_monitor import _publish_frame, _set_live_state, _stop_requested, _url, _validate_url, get_live_state
 
 _PLAYWRIGHT: Playwright | None = None
 _BROWSER: Browser | None = None
@@ -38,8 +38,14 @@ async def _ensure_page(url: str | None = None) -> Page:
         _CONTEXT = await _BROWSER.new_context(viewport={"width": 1440, "height": 900})
     if _PAGE is None or _PAGE.is_closed():
         _PAGE = await _CONTEXT.new_page()
-    if url:
-        safe = _validate_url(url)
+    recovery_url = None
+    if not url and (_PAGE.url in {"", "about:blank"}):
+        previous = str(get_live_state().get("url") or "").strip()
+        if previous.startswith(("http://", "https://")):
+            recovery_url = previous
+    navigate_to = url or recovery_url
+    if navigate_to:
+        safe = _validate_url(navigate_to)
         _set_live_state(active=True, status="opening", url=safe, detail="Opening page")
         await _PAGE.goto(safe, wait_until="domcontentloaded", timeout=30000)
         try:
@@ -116,10 +122,24 @@ def _type_parts(step: str) -> tuple[str, str] | None:
     return None
 
 
-async def _perform(page: Page, step: str) -> str:
+async def _perform(page: Page, step: str) -> tuple[str, Page]:
+    global _PAGE
     low = step.lower().strip()
     if _CONSEQUENTIAL.search(low):
         raise PermissionError(f"Stopped before consequential browser action: {step}")
+    if re.search(r"\bnew tab\b", low):
+        assert _CONTEXT is not None
+        _set_live_state(active=True, status="tab", url=page.url, detail="Opening new tab")
+        _PAGE = await _CONTEXT.new_page()
+        return "Opened new tab", _PAGE
+    if re.search(r"\bclose tab\b", low):
+        if _CONTEXT is None:
+            return "No browser tab to close", page
+        _set_live_state(active=True, status="tab", url=page.url, detail="Closing tab")
+        await page.close()
+        pages = [p for p in _CONTEXT.pages if not p.is_closed()]
+        _PAGE = pages[-1] if pages else await _CONTEXT.new_page()
+        return "Closed tab", _PAGE
     target = _click_target(step)
     if target:
         if _CONSEQUENTIAL.search(target):
@@ -133,7 +153,7 @@ async def _perform(page: Page, step: str) -> str:
             await page.wait_for_load_state("domcontentloaded", timeout=5000)
         except Exception:
             pass
-        return f"Clicked {target}"
+        return f"Clicked {target}", page
     typed = _type_parts(step)
     if typed:
         value, field_name = typed
@@ -142,7 +162,7 @@ async def _perform(page: Page, step: str) -> str:
             raise RuntimeError(f"I couldn't find a field matching “{field_name}”.")
         _set_live_state(active=True, status="typing", url=page.url, detail=f"Typing into {field_name}")
         await field.fill(value)
-        return f"Typed into {field_name}"
+        return f"Typed into {field_name}", page
     m = re.search(r"\bsearch\s+for\s+[\"']?(.+?)[\"']?$", step, re.I)
     if m:
         query = m.group(1).strip(' "\'')
@@ -156,30 +176,30 @@ async def _perform(page: Page, step: str) -> str:
             await page.wait_for_load_state("domcontentloaded", timeout=5000)
         except Exception:
             pass
-        return f"Searched for {query}"
+        return f"Searched for {query}", page
     if re.search(r"\bscroll\s+(?:down|lower)\b", low):
         _set_live_state(active=True, status="scrolling", url=page.url, detail="Scrolling down")
         await page.mouse.wheel(0, 700)
-        return "Scrolled down"
+        return "Scrolled down", page
     if re.search(r"\bscroll\s+(?:up|higher)\b", low):
         _set_live_state(active=True, status="scrolling", url=page.url, detail="Scrolling up")
         await page.mouse.wheel(0, -700)
-        return "Scrolled up"
+        return "Scrolled up", page
     m = re.search(r"\bpress\s+(enter|tab|escape|esc|arrowdown|arrowup|pagedown|pageup)\b", low, re.I)
     if m:
         key = {"esc": "Escape", "enter": "Enter", "tab": "Tab", "arrowdown": "ArrowDown", "arrowup": "ArrowUp", "pagedown": "PageDown", "pageup": "PageUp"}.get(m.group(1).lower(), m.group(1))
         _set_live_state(active=True, status="key", url=page.url, detail=f"Pressing {key}")
         await page.keyboard.press(key)
-        return f"Pressed {key}"
+        return f"Pressed {key}", page
     if re.search(r"\b(?:go back|back)\b", low):
         _set_live_state(active=True, status="navigating", url=page.url, detail="Going back")
         await page.go_back(wait_until="domcontentloaded", timeout=10000)
-        return "Went back"
+        return "Went back", page
     if re.search(r"\b(?:go forward|forward)\b", low):
         _set_live_state(active=True, status="navigating", url=page.url, detail="Going forward")
         await page.go_forward(wait_until="domcontentloaded", timeout=10000)
-        return "Went forward"
-    return f"Skipped unrecognized step: {step}"
+        return "Went forward", page
+    return f"Skipped unrecognized step: {step}", page
 
 
 async def browser_session_command(message: str) -> dict[str, Any] | None:
@@ -195,7 +215,7 @@ async def browser_session_command(message: str) -> dict[str, Any] | None:
             for step in _steps(message, target):
                 if _stop_requested():
                     raise RuntimeError("Browser task stopped by user.")
-                result = await _perform(page, step)
+                result, page = await _perform(page, step)
                 actions.append(result)
                 await _publish_frame(page, status="working", url=page.url, detail=result)
             title = await page.title()
