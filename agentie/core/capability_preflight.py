@@ -36,10 +36,29 @@ def _filename(text: str) -> str | None:
     if not match:
         return None
     candidate = match.group(1).strip(" .?!\"'`")
-    candidate = re.sub(r"^(?:please\s+)?(?:read|open|display|view|inspect|create|make|write|edit|update|append to|move|rename)\s+(?:a\s+|the\s+)?(?:file\s+)?(?:called|named)?\s*", "", candidate, flags=re.I)
+    candidate = re.sub(
+        r"^(?:please\s+)?(?:read|open|display|view|inspect|create|make|write|edit|update|append to|move|rename)\s+(?:(?:a|another|the)\s+)?(?:file\s+)?(?:called|named)?\s*",
+        "",
+        candidate,
+        flags=re.I,
+    )
     candidate = re.sub(r"^(?:please\s+)?show\s+me\s+(?:(?:information|info|details|metadata)\s+about\s+)?(?:the\s+)?", "", candidate, flags=re.I)
     candidate = re.sub(r"^(?:(?:information|info|details|metadata)\s+about\s+)(?:the\s+)?", "", candidate, flags=re.I)
     return candidate.strip(" .?!\"'`") or None
+
+
+def _folder_name(text: str) -> str | None:
+    match = re.search(
+        r"\b(?:create|make)\s+(?:(?:a|another|the)\s+)?(?:folder|directory)\s+(?:called|named)\s+(.+?)(?=\s+(?:in|inside|under)\s+(?:the\s+)?(?:workspace|folder|directory)\b|[.!?]?$)",
+        text,
+        re.I,
+    )
+    if not match:
+        return None
+    value = match.group(1).strip().strip("\"'` .!?")
+    if not value or value in {".", ".."} or "/" in value or "\\" in value:
+        return None
+    return value
 
 
 def _extension_search(text: str) -> str | None:
@@ -67,7 +86,7 @@ def _mutation_request(text: str) -> bool:
     low = " ".join(text.lower().split())
     return bool(
         re.search(r"\b(?:create|make|write|edit|update|append|move|rename)\b", low)
-        and (_filename(text) or re.search(r"\b(?:file|folder|directory|workspace)\b", low))
+        and (_filename(text) or _folder_name(text) or re.search(r"\b(?:file|folder|directory|workspace)\b", low))
     )
 
 
@@ -113,6 +132,12 @@ def _choice(text: str, server: dict[str, Any], info: dict[str, Any]) -> tuple[st
         tool = _tool_name(info, "search_files")
         if tool:
             return tool, {"path": root, "pattern": pattern}
+
+    folder = _folder_name(text)
+    if folder and root and re.search(r"\b(?:create|make)\b", low):
+        tool = _tool_name(info, "create_directory")
+        if tool:
+            return tool, {"path": str(Path(root) / folder)}
 
     filename = _filename(text)
     if not filename:
