@@ -1,6 +1,6 @@
 [project]
 name = "agentie-v2"
-version = "1.0.0"
+version = "1.1.0"
 description = "Python-first agent platform built with FastAPI and the OpenAI Agents SDK"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -14,6 +14,7 @@ dependencies = [
   "python-dotenv>=1.0.1",
   "python-multipart>=0.0.9",
   "pyyaml>=6.0.0",
+  "reportlab>=4.0.0",
   "uvicorn[standard]>=0.34.0",
 ]
 
