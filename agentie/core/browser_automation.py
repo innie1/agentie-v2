@@ -242,6 +242,10 @@ async def _perform(page: Page, step: str) -> tuple[str,Page]:
 
 
 async def browser_session_command(message:str)->dict[str,Any]|None:
+    from agentie.core.desktop_runtime import route_desktop_request
+    desktop = route_desktop_request(message)
+    if desktop is not None:
+        return desktop
     if not _is_interactive_request(message):return None
     async with _LOCK:
         target=_url(message)
