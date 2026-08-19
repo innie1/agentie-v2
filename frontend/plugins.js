@@ -9,31 +9,19 @@
     .plugins-launch:hover{background:var(--soft);border-color:var(--border)}
     .plugins-launch .plug-dot{width:24px;height:24px;border-radius:8px;display:grid;place-items:center;background:var(--soft);font-size:13px}
     .plugins-panel{position:fixed;left:242px;bottom:18px;width:min(390px,calc(100vw - 270px));max-height:min(620px,78vh);z-index:80;background:var(--panel);border:1px solid var(--border);border-radius:16px;box-shadow:0 18px 55px rgba(0,0,0,.18);overflow:hidden;display:none}
-    .plugins-panel.open{display:block}
-    .plugins-head{display:flex;align-items:center;justify-content:space-between;padding:15px 16px;border-bottom:1px solid var(--border)}
-    .plugins-head strong{font-size:15px}.plugins-close{border:0;background:transparent;color:var(--muted);font-size:20px;cursor:pointer;line-height:1}
-    .plugins-body{padding:14px 16px 16px;overflow:auto;max-height:calc(min(620px,78vh) - 54px)}
-    .plugins-section{margin-bottom:18px}.plugins-section:last-child{margin-bottom:0}.plugins-section-title{font-size:12px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px}
-    .plugin-empty{font-size:13px;color:var(--muted);padding:10px 0}
-    .mcp-row{display:flex;gap:10px;align-items:flex-start;padding:10px 0;border-bottom:1px solid var(--border)}.mcp-row:last-child{border-bottom:0}
-    .mcp-icon{width:30px;height:30px;border-radius:9px;background:var(--soft);display:grid;place-items:center;flex:none;font-size:13px}
-    .mcp-main{min-width:0;flex:1}.mcp-name{font-size:13px;font-weight:650}.mcp-meta{font-size:11px;color:var(--muted);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-    .mcp-inspect{border:1px solid var(--border);background:var(--panel);color:var(--text);padding:5px 8px;border-radius:8px;font-size:11px;cursor:pointer}
-    .plugins-foot{display:flex;justify-content:space-between;align-items:center;margin-top:8px;font-size:11px;color:var(--muted)}
-    .plugins-refresh{border:0;background:transparent;color:var(--muted);cursor:pointer;padding:3px}
+    .plugins-panel.open{display:block}.plugins-head{display:flex;align-items:center;justify-content:space-between;padding:15px 16px;border-bottom:1px solid var(--border)}
+    .plugins-head strong{font-size:15px}.plugins-close{border:0;background:transparent;color:var(--muted);font-size:20px;cursor:pointer;line-height:1}.plugins-body{padding:14px 16px 16px;overflow:auto;max-height:calc(min(620px,78vh) - 54px)}
+    .plugins-section{margin-bottom:18px}.plugins-section:last-child{margin-bottom:0}.plugins-section-title{font-size:12px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px}.plugin-empty{font-size:13px;color:var(--muted);padding:10px 0}
+    .mcp-row{display:flex;gap:10px;align-items:flex-start;padding:10px 0;border-bottom:1px solid var(--border)}.mcp-row:last-child{border-bottom:0}.mcp-icon{width:30px;height:30px;border-radius:9px;background:var(--soft);display:grid;place-items:center;flex:none;font-size:13px}
+    .mcp-main{min-width:0;flex:1}.mcp-name{font-size:13px;font-weight:650}.mcp-meta{font-size:11px;color:var(--muted);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.mcp-inspect{border:1px solid var(--border);background:var(--panel);color:var(--text);padding:5px 8px;border-radius:8px;font-size:11px;cursor:pointer}
+    .plugins-foot{display:flex;justify-content:space-between;align-items:center;margin-top:8px;font-size:11px;color:var(--muted)}.plugins-refresh{border:0;background:transparent;color:var(--muted);cursor:pointer;padding:3px}
+    .mcp-approval-detail{margin-top:9px;padding:9px;border-radius:10px;background:var(--soft);font-size:12px;line-height:1.45}.mcp-approval-actions{display:flex;gap:7px;margin-top:10px}.mcp-approval-actions button{border:1px solid var(--border);background:var(--panel);color:var(--text);padding:6px 10px;border-radius:9px;cursor:pointer}.mcp-approval-actions button:first-child{background:var(--accent);color:var(--accent-text);border-color:var(--accent)}
     @media(max-width:760px){.plugins-panel{left:12px;right:12px;bottom:12px;width:auto}.plugins-launch{display:none}}
   `;
   document.head.appendChild(style);
 
-  const button=document.createElement('button');
-  button.id='agentiePluginsButton';button.className='plugins-launch';button.type='button';
-  button.innerHTML='<span class="plug-dot">🔌</span><span>Plugins</span>';
-  sidebar.appendChild(button);
-
-  const panel=document.createElement('div');
-  panel.className='plugins-panel';panel.id='agentiePluginsPanel';
-  panel.innerHTML=`<div class="plugins-head"><strong>Plugins</strong><button class="plugins-close" type="button" aria-label="Close">×</button></div><div class="plugins-body"><div class="plugin-empty">Loading…</div></div>`;
-  document.body.appendChild(panel);
+  const button=document.createElement('button');button.id='agentiePluginsButton';button.className='plugins-launch';button.type='button';button.innerHTML='<span class="plug-dot">🔌</span><span>Plugins</span>';sidebar.appendChild(button);
+  const panel=document.createElement('div');panel.className='plugins-panel';panel.id='agentiePluginsPanel';panel.innerHTML=`<div class="plugins-head"><strong>Plugins</strong><button class="plugins-close" type="button" aria-label="Close">×</button></div><div class="plugins-body"><div class="plugin-empty">Loading…</div></div>`;document.body.appendChild(panel);
   const body=panel.querySelector('.plugins-body');
 
   function escPlugin(value){const d=document.createElement('div');d.textContent=String(value??'');return d.innerHTML}
@@ -42,20 +30,28 @@
   async function loadPlugins(){
     body.innerHTML='<div class="plugin-empty">Loading…</div>';
     try{
-      const response=await fetch('/plugins/state',{cache:'no-store'});
-      if(!response.ok)throw new Error('Could not load plugins');
-      const state=await response.json();
-      const native=Array.isArray(state.plugins)?state.plugins:[];
-      const servers=Array.isArray(state.mcp_servers)?state.mcp_servers:[];
-      body.innerHTML=`
-        <div class="plugins-section"><div class="plugins-section-title">Installed plugins</div>${native.length?native.map(p=>`<div class="mcp-row"><div class="mcp-icon">◫</div><div class="mcp-main"><div class="mcp-name">${escPlugin(p.name||'Plugin')}</div><div class="mcp-meta">${escPlugin(p.description||'Installed')}</div></div></div>`).join(''):'<div class="plugin-empty">No native plugins installed yet.</div>'}</div>
-        <div class="plugins-section"><div class="plugins-section-title">MCP servers</div><div id="agentieMcpRows">${servers.length?servers.map(s=>`<div class="mcp-row"><div class="mcp-icon">${s.transport==='stdio'?'⌘':'↗'}</div><div class="mcp-main"><div class="mcp-name">${escPlugin(s.name)}</div><div class="mcp-meta">${s.transport==='stdio'?'Local · ':'HTTP · '}${escPlugin(s.display||'')}</div></div><button class="mcp-inspect" type="button" data-mcp="${escPlugin(s.name)}">Inspect</button></div>`).join(''):'<div class="plugin-empty">No MCP servers registered.</div>'}</div><div class="plugins-foot"><span>${servers.length} MCP server${servers.length===1?'':'s'}</span><button class="plugins-refresh" type="button">Refresh</button></div></div>`;
-      body.querySelectorAll('[data-mcp]').forEach(btn=>btn.addEventListener('click',()=>sendChat(`Inspect MCP ${btn.dataset.mcp}`)));
-      const refresh=body.querySelector('.plugins-refresh');if(refresh)refresh.onclick=loadPlugins;
+      const response=await fetch('/plugins/state',{cache:'no-store'});if(!response.ok)throw new Error('Could not load plugins');const state=await response.json();const native=Array.isArray(state.plugins)?state.plugins:[],servers=Array.isArray(state.mcp_servers)?state.mcp_servers:[];
+      body.innerHTML=`<div class="plugins-section"><div class="plugins-section-title">Installed plugins</div>${native.length?native.map(p=>`<div class="mcp-row"><div class="mcp-icon">◫</div><div class="mcp-main"><div class="mcp-name">${escPlugin(p.name||'Plugin')}</div><div class="mcp-meta">${escPlugin(p.description||'Installed')}</div></div></div>`).join(''):'<div class="plugin-empty">No native plugins installed yet.</div>'}</div><div class="plugins-section"><div class="plugins-section-title">MCP servers</div><div id="agentieMcpRows">${servers.length?servers.map(s=>`<div class="mcp-row"><div class="mcp-icon">${s.transport==='stdio'?'⌘':'↗'}</div><div class="mcp-main"><div class="mcp-name">${escPlugin(s.name)}</div><div class="mcp-meta">${s.transport==='stdio'?'Local · ':'HTTP · '}${escPlugin(s.display||'')}</div></div><button class="mcp-inspect" type="button" data-mcp="${escPlugin(s.name)}">Inspect</button></div>`).join(''):'<div class="plugin-empty">No MCP servers registered.</div>'}</div><div class="plugins-foot"><span>${servers.length} MCP server${servers.length===1?'':'s'}</span><button class="plugins-refresh" type="button">Refresh</button></div></div>`;
+      body.querySelectorAll('[data-mcp]').forEach(btn=>btn.addEventListener('click',()=>sendChat(`Inspect MCP ${btn.dataset.mcp}`)));const refresh=body.querySelector('.plugins-refresh');if(refresh)refresh.onclick=loadPlugins;
     }catch(error){body.innerHTML=`<div class="plugin-empty">${escPlugin(error.message||'Could not load plugins.')}</div>`}
   }
 
-  button.onclick=()=>{panel.classList.toggle('open');if(panel.classList.contains('open'))loadPlugins()};
-  panel.querySelector('.plugins-close').onclick=()=>panel.classList.remove('open');
-  document.addEventListener('keydown',event=>{if(event.key==='Escape')panel.classList.remove('open')});
+  const previousRender=window.renderCard;
+  if(typeof previousRender==='function'){
+    window.renderCard=function(card,message){
+      if(!card||card.type!=='mcp_approval')return previousRender(card,message);
+      const wrap=document.createElement('div');wrap.className='card-wrap';const el=document.createElement('div');el.className='result-card';wrap.appendChild(el);
+      const title=document.createElement('div');title.className='card-title';title.textContent='🛡 MCP approval';el.appendChild(title);
+      if(message){const top=document.createElement('div');top.className='card-meta';top.textContent=message;el.appendChild(top)}
+      const detail=document.createElement('div');detail.className='mcp-approval-detail';detail.textContent=`${card.server} / ${card.tool}\n${JSON.stringify(card.arguments||{},null,2)}`;detail.style.whiteSpace='pre-wrap';el.appendChild(detail);
+      const actions=document.createElement('div');actions.className='mcp-approval-actions';const approve=document.createElement('button'),deny=document.createElement('button');approve.textContent='Approve';deny.textContent='Deny';actions.append(approve,deny);el.appendChild(actions);
+      async function resolve(approved){
+        approve.disabled=true;deny.disabled=true;
+        try{const r=await fetch(`/approvals/${card.approval.id}/resolve`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({approved})});if(!r.ok)throw new Error('Could not resolve approval');title.textContent=approved?'✓ MCP approved':'MCP denied';actions.remove();if(approved&&card.command)setTimeout(()=>sendChat(card.command),80)}catch(error){approve.disabled=false;deny.disabled=false;const meta=document.createElement('div');meta.className='card-meta';meta.textContent=error.message||'Approval failed.';el.appendChild(meta)}
+      }
+      approve.onclick=()=>resolve(true);deny.onclick=()=>resolve(false);return wrap;
+    };
+  }
+
+  button.onclick=()=>{panel.classList.toggle('open');if(panel.classList.contains('open'))loadPlugins()};panel.querySelector('.plugins-close').onclick=()=>panel.classList.remove('open');document.addEventListener('keydown',event=>{if(event.key==='Escape')panel.classList.remove('open')});
 })();
