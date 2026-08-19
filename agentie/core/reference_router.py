@@ -39,8 +39,8 @@ def _direct_timer_create(message):
     """Handle explicit timer creation before any stale active reminder can see the request."""
     text=' '.join(message.strip().split())
     patterns=[
-        re.compile(r"^(?:please\s+)?(?:set|start|make|give me)\s+(?:a\s+)?timer\s+(?:for\s+)?(\d+(?:\.\d+)?)\s*(seconds?|secs?|sec|s|minutes?|mins?|min|m|hours?|hrs?|hr|h)(?:\s+(?:to|for|because|so i can|so that i can)\s+(.+))?$",re.I),
-        re.compile(r"^(?:please\s+)?(?:set|start|make|give me)\s+(?:a\s+)?(\d+(?:\.\d+)?)\s*[- ]?\s*(seconds?|secs?|sec|s|minutes?|mins?|min|m|hours?|hrs?|hr|h)\s+timer(?:\s+(?:to|for|because|so i can|so that i can)\s+(.+))?$",re.I),
+        re.compile(r"^(?:please\s+)?(?:(?:set|start|make|give me)\s+)?(?:a\s+)?timer(?:\s+for)?\s+(\d+(?:\.\d+)?)\s*(seconds?|secs?|sec|s|minutes?|mins?|min|m|hours?|hrs?|hr|h)(?:\s+(?:to|for|because|so i can|so that i can)\s+(.+))?$",re.I),
+        re.compile(r"^(?:please\s+)?(?:(?:set|start|make|give me)\s+)?(?:a\s+)?(\d+(?:\.\d+)?)\s*[- ]?\s*(seconds?|secs?|sec|s|minutes?|mins?|min|m|hours?|hrs?|hr|h)\s+timer(?:\s+(?:to|for|because|so i can|so that i can)\s+(.+))?$",re.I),
     ]
     m=next((p.match(text) for p in patterns if p.match(text)),None)
     if not m:return None
