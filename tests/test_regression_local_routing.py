@@ -1,8 +1,10 @@
 import unittest
 from unittest.mock import patch
 
+from agentie.core.capability_router import _looks_filesystem, _native_guarded
 from agentie.core.code_execution import route_code_command
 from agentie.core.local_router import route_local_actions
+from agentie.core.mcp_catalog import presets
 from agentie.core.mcp_client import _infer_natural_tool, _mentioned_server, _split_local_command
 from agentie.core.reference_router import _direct_timer_create
 
@@ -122,6 +124,29 @@ class MCPNaturalLanguageTests(unittest.TestCase):
                 _mentioned_server("What directories can the filesystem plugin access?"),
                 "filesystem",
             )
+
+
+class CapabilityRoutingRegressionTests(unittest.TestCase):
+    def test_unnamed_filesystem_request_is_detected(self):
+        self.assertTrue(_looks_filesystem("Look at the files in C:\\Users\\user\\agentie-v2\\workspace"))
+        self.assertTrue(_looks_filesystem("Show me the files in this workspace"))
+
+    def test_native_intents_are_protected_from_external_auto_routing(self):
+        for text in (
+            "timer 10s",
+            "Remind me in 5 minutes to check the build",
+            "Calculate 12 * 8",
+            "Convert 5 km to mi",
+            "Run Python: print(1 + 1)",
+            "What time is it",
+            "Remember that my project is Blue Falcon",
+        ):
+            with self.subTest(text=text):
+                self.assertTrue(_native_guarded(text))
+
+    def test_curated_mcp_presets_are_available(self):
+        ids = {item["id"] for item in presets()}
+        self.assertTrue({"memory", "sequential-thinking", "everything", "fetch", "time-mcp", "git"}.issubset(ids))
 
 
 if __name__ == "__main__":
