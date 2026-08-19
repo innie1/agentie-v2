@@ -1,12 +1,15 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import re
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from agentie.core.web_research_service import search_sources
+from agentie.core.observability import current_trace_id, set_current_trace
+from agentie.core.web_research_service import answer_web_search, search_sources, source_card, sources_only_requested
 
 WORKSPACE=Path.cwd()/"workspace"
 SKILLS_DIR=WORKSPACE/"skills"
@@ -48,18 +51,38 @@ def create_skill_manifest(skill_id:str,name:str,description:str,agents:list[str]
     valid_agents={"general","research","coding","manager","github","*"};agents=[a for a in agents if a in valid_agents] or ["general"]
     item={"id":sid,"name":name[:120],"description":description[:1000],"agents":sorted(set(agents)),"capabilities":sorted(set(capabilities)),"enabled":True,"version":"1.0","kind":"declarative"};path.write_text(json.dumps(item,indent=2,ensure_ascii=False),encoding="utf-8");return item
 def skills_for_agent(agent_type:str)->list[dict[str,Any]]:return [s for s in list_skills() if s.get("enabled") and (agent_type in (s.get("agents") or []) or "*" in (s.get("agents") or []))]
+
+
+def _run_web_synthesis(query:str)->dict[str,Any]:
+    """Run the async isolated web synthesizer from the synchronous local router."""
+    trace_id=current_trace_id()
+    def worker():
+        if trace_id:set_current_trace(trace_id)
+        return asyncio.run(answer_web_search(query,8))
+    with ThreadPoolExecutor(max_workers=1,thread_name_prefix="agentie-web") as pool:
+        return pool.submit(worker).result()
+
+
 def route_skill_command(message:str)->dict[str,Any]|None:
     text=" ".join(message.strip().split());lower=text.lower().strip(" .?!")
 
-    # Explicit web search is deterministic and does not need an LLM decision.
-    # Deep search/research is intentionally excluded here so it can flow into
-    # Agentie's durable background deep-research job engine.
+    # Explicit web search is deterministic: retrieve first, then synthesize once.
+    # "sources only" / "links only" deliberately keeps the zero-model-call path.
+    # Deep research is excluded here so it can flow into the durable research job engine.
     web=re.match(r"^(?:please\s+)?(?:search(?:\s+the)?\s+web|web search|search online|look up online|find online|look on the web)\s+(?:for|about|on)?\s*(.+)$",text,re.I)
     if web and skill_enabled("research"):
         query=web.group(1).strip(" .?!")
-        try:sources=search_sources(query,8)
-        except Exception as exc:return {"message":f"Web search failed: {exc}","card":None}
-        return {"message":f"Found {len(sources)} web source(s) for “{query}”.","card":{"type":"web_search","query":query,"sources":sources,"answer":"","provider_calls":0}}
+        if sources_only_requested(text):
+            query=re.sub(r"\b(?:sources only|links only|results only|just (?:the )?(?:sources|links|results)|do not summarize|don't summarize|no summary)\b", "", query, flags=re.I).strip(" ,.-")
+            try:sources=search_sources(query,8)
+            except Exception as exc:return {"message":f"Web search failed: {exc}","card":None}
+            return {"message":f"Found {len(sources)} web source(s) for “{query}”.","card":source_card(query,sources,"",0)}
+        try:return _run_web_synthesis(query)
+        except Exception as exc:
+            # A provider outage should not throw away useful search results.
+            try:sources=search_sources(query,8)
+            except Exception:return {"message":f"Web search failed: {exc}","card":None}
+            return {"message":f"I found the web results, but synthesis failed: {exc}","card":source_card(query,sources,"",0)}
 
     if lower in {"skills","show skills","list skills","my skills"}:
         items=list_skills();return {"message":f"Agentie has {len(items)} registered skill(s).","card":{"type":"skills","items":items}}
