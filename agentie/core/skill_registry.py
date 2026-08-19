@@ -8,6 +8,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from agentie.core.code_execution import route_code_command
 from agentie.core.observability import current_trace_id, set_current_trace
 from agentie.core.web_research_service import answer_web_search, search_sources, source_card, sources_only_requested
 
@@ -16,6 +17,7 @@ SKILLS_DIR=WORKSPACE/"skills"
 STATE=WORKSPACE/"skills_state.json"
 DEFAULT_SKILLS={
   "local-utils":{"name":"Local Utilities","description":"Timers, reminders, calculations, conversions, notes and system utilities.","agents":["general","manager","coding"],"enabled":True,"capabilities":["timer","alarm","reminder","calculator","conversion","notes","system"]},
+  "code-execution":{"name":"Code Execution","description":"Constrained local Python execution with captured output and downloadable artifacts.","agents":["general","coding","manager","research"],"enabled":True,"capabilities":["python","code_execution","local_analysis","artifacts"]},
   "research":{"name":"Research","description":"Web search, page reading and deep research with citations.","agents":["general","research","manager"],"enabled":True,"capabilities":["web_search","browser_read","deep_research","citation_verify"]},
   "files":{"name":"Files & Documents","description":"Upload, inspect, search, generate and download local artifacts including PDF, DOCX, XLSX and PPTX.","agents":["general","research","coding","manager"],"enabled":True,"capabilities":["files","pdf","docx","xlsx","pptx","zip","collections","rag"]},
   "jobs":{"name":"Jobs & Delegation","description":"Durable background jobs, parallel agents, routines and dynamic roles.","agents":["general","manager","research","coding","github"],"enabled":True,"capabilities":["jobs","delegation","routines","roles"]},
@@ -71,6 +73,11 @@ def _friendly_synthesis_failure(exc:Exception)->str:
 
 def route_skill_command(message:str)->dict[str,Any]|None:
     text=" ".join(message.strip().split());lower=text.lower().strip(" .?!")
+
+    if skill_enabled("code-execution"):
+        code_result=route_code_command(text)
+        if code_result is not None:return code_result
+
     web=re.match(r"^(?:please\s+)?(?:search(?:\s+the)?\s+web|web search|search online|look up online|find online|look on the web)\s+(?:for|about|on)?\s*(.+)$",text,re.I)
     if web and skill_enabled("research"):
         query=web.group(1).strip(" .?!")
