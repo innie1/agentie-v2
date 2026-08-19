@@ -144,7 +144,6 @@ def _safe_model_dump(value: Any) -> Any:
 
 
 def _error_text(exc: BaseException) -> str:
-    """Flatten ExceptionGroup/TaskGroup failures into a useful user-facing cause."""
     children = getattr(exc, "exceptions", None)
     if children:
         parts: list[str] = []
@@ -199,53 +198,27 @@ async def _discover_with_client(server: dict[str, Any], client: Any, init: Any =
         }
         for t in (getattr(tool_result, "tools", []) or [])
     ]
-
     try:
         resource_result = await client.list_resources()
-        info["resources"] = [
-            {
-                "name": getattr(r, "name", None),
-                "title": getattr(r, "title", None),
-                "uri": str(getattr(r, "uri", "")),
-                "description": getattr(r, "description", None),
-            }
-            for r in (getattr(resource_result, "resources", []) or [])
-        ]
+        info["resources"] = [{"name": getattr(r, "name", None), "title": getattr(r, "title", None), "uri": str(getattr(r, "uri", "")), "description": getattr(r, "description", None)} for r in (getattr(resource_result, "resources", []) or [])]
     except Exception:
         info["resources"] = []
-
     try:
         prompt_result = await client.list_prompts()
-        info["prompts"] = [
-            {"name": getattr(p, "name", None), "title": getattr(p, "title", None), "description": getattr(p, "description", None)}
-            for p in (getattr(prompt_result, "prompts", []) or [])
-        ]
+        info["prompts"] = [{"name": getattr(p, "name", None), "title": getattr(p, "title", None), "description": getattr(p, "description", None)} for p in (getattr(prompt_result, "prompts", []) or [])]
     except Exception:
         info["prompts"] = []
-
     try:
         template_result = await client.list_resource_templates()
-        info["resource_templates"] = [
-            {
-                "name": getattr(i, "name", None),
-                "title": getattr(i, "title", None),
-                "uri_template": str(getattr(i, "uriTemplate", None) or getattr(i, "uri_template", "")),
-                "description": getattr(i, "description", None),
-            }
-            for i in (getattr(template_result, "resourceTemplates", None) or getattr(template_result, "resource_templates", []) or [])
-        ]
+        info["resource_templates"] = [{"name": getattr(i, "name", None), "title": getattr(i, "title", None), "uri_template": str(getattr(i, "uriTemplate", None) or getattr(i, "uri_template", "")), "description": getattr(i, "description", None)} for i in (getattr(template_result, "resourceTemplates", None) or getattr(template_result, "resource_templates", []) or [])]
     except Exception:
         info["resource_templates"] = []
-
     if init is not None:
         server_name, version = _init_server_info(init)
         info["server_info"] = {"name": server_name, "version": version}
     else:
         server_info = getattr(client, "server_info", None)
-        info["server_info"] = {
-            "name": getattr(server_info, "name", None) if server_info else None,
-            "version": getattr(server_info, "version", None) if server_info else None,
-        }
+        info["server_info"] = {"name": getattr(server_info, "name", None) if server_info else None, "version": getattr(server_info, "version", None) if server_info else None}
     return info
 
 
@@ -253,12 +226,8 @@ async def inspect_server(name: str) -> dict[str, Any]:
     server = get_server(name)
     if not server:
         raise ValueError(f"MCP server '{name}' is not registered.")
-
     if server.get("transport") == "stdio":
-        params = StdioServerParameters(
-            command=str(server.get("command") or ""),
-            args=[str(x) for x in server.get("args") or []],
-        )
+        params = StdioServerParameters(command=str(server.get("command") or ""), args=[str(x) for x in server.get("args") or []])
         try:
             async with stdio_client(params) as (read, write):
                 async with ClientSession(read, write) as session:
@@ -266,7 +235,6 @@ async def inspect_server(name: str) -> dict[str, Any]:
                     return await _discover_with_client(server, session, init)
         except Exception as exc:
             raise RuntimeError(_error_text(exc)) from exc
-
     try:
         async with Client(str(server.get("url") or "")) as client:
             return await _discover_with_client(server, client)
@@ -298,17 +266,13 @@ def _tool_result(server_name: str, tool_name: str, result: Any) -> dict[str, Any
         text = json.dumps(dumped, ensure_ascii=False, indent=2) if isinstance(dumped, (dict, list)) else str(dumped)
     text = text[:12000]
     is_error = bool(getattr(result, "isError", False) or getattr(result, "is_error", False))
-    return {
-        "message": f"MCP tool '{tool_name}' {'returned an error' if is_error else 'completed'} on '{_clean_name(server_name)}'.",
-        "card": {"type": "note", "title": f"MCP · {_clean_name(server_name)} / {tool_name}", "content": text or "Tool completed without text output."},
-    }
+    return {"message": f"MCP tool '{tool_name}' {'returned an error' if is_error else 'completed'} on '{_clean_name(server_name)}'.", "card": {"type": "note", "title": f"MCP · {_clean_name(server_name)} / {tool_name}", "content": text or "Tool completed without text output."}}
 
 
 async def execute_tool(server_name: str, tool_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
     server = get_server(server_name)
     if not server:
         raise ValueError(f"MCP server '{server_name}' is not registered.")
-
     if server.get("transport") == "stdio":
         params = StdioServerParameters(command=str(server.get("command") or ""), args=[str(x) for x in server.get("args") or []])
         try:
@@ -319,7 +283,6 @@ async def execute_tool(server_name: str, tool_name: str, arguments: dict[str, An
                     return _tool_result(server_name, tool_name, result)
         except Exception as exc:
             raise RuntimeError(_error_text(exc)) from exc
-
     try:
         async with Client(str(server.get("url") or "")) as client:
             result = await client.call_tool(tool_name, arguments)
@@ -339,21 +302,153 @@ def _server_list_card(items: list[dict[str, Any]]) -> dict[str, Any]:
 
 def _inspect_card(info: dict[str, Any]) -> dict[str, Any]:
     transport = "Local stdio" if info.get("transport") == "stdio" else "Streamable HTTP"
-    lines = [
-        f"Transport: {transport}",
-        f"Connection: {info.get('display') or ''}",
-        f"Protocol: {info.get('protocol_version') or 'unknown'}",
-        f"Tools: {len(info.get('tools') or [])}",
-        f"Resources: {len(info.get('resources') or [])}",
-        f"Resource templates: {len(info.get('resource_templates') or [])}",
-        f"Prompts: {len(info.get('prompts') or [])}",
-        "Tool execution: approval required",
-    ]
+    lines = [f"Transport: {transport}", f"Connection: {info.get('display') or ''}", f"Protocol: {info.get('protocol_version') or 'unknown'}", f"Tools: {len(info.get('tools') or [])}", f"Resources: {len(info.get('resources') or [])}", f"Resource templates: {len(info.get('resource_templates') or [])}", f"Prompts: {len(info.get('prompts') or [])}", "Tool execution: approval required"]
     if info.get("tools"):
         lines.append("\nTools")
         for tool in info["tools"][:30]:
             lines.append(f"- {tool.get('title') or tool.get('name') or 'tool'}")
     return {"type": "note", "title": f"MCP · {info['name']}", "content": "\n".join(lines)}
+
+
+def _filesystem_root(server: dict[str, Any]) -> str | None:
+    args = [str(x) for x in server.get("args") or []]
+    package_names = {"@modelcontextprotocol/server-filesystem", "@modelcontextprotocol/server-filesystem@latest"}
+    for index, arg in enumerate(args):
+        if arg.lower() in package_names and index + 1 < len(args):
+            return args[index + 1]
+    return None
+
+
+def _mentioned_server(text: str) -> str | None:
+    low = text.lower()
+    for server in list_servers():
+        name = str(server.get("name") or "")
+        if not name:
+            continue
+        patterns = (
+            f"using the {name.lower()} plugin", f"using {name.lower()} plugin",
+            f"with the {name.lower()} plugin", f"with {name.lower()} plugin",
+            f"using the {name.lower()} mcp", f"using {name.lower()} mcp",
+            f"with the {name.lower()} mcp", f"with {name.lower()} mcp",
+            f"using {name.lower()}", f"with {name.lower()}",
+        )
+        if any(pattern in low for pattern in patterns):
+            return name
+    return None
+
+
+def _extract_windows_path(text: str) -> str | None:
+    match = re.search(r"([A-Za-z]:\\[^\n\r\"']+)", text)
+    if match:
+        value = match.group(1).strip().rstrip(" .?!")
+        for marker in (" using ", " with "):
+            pos = value.lower().find(marker)
+            if pos > 0:
+                value = value[:pos].rstrip()
+        return value
+    return None
+
+
+def _basename_request(text: str, markers: tuple[str, ...]) -> str | None:
+    low = text.lower()
+    for marker in markers:
+        pos = low.find(marker)
+        if pos >= 0:
+            tail = text[pos + len(marker):].strip(" :\"'`.")
+            tail = re.split(r"\s+(?:using|with)\s+(?:the\s+)?[\w.-]+(?:\s+(?:plugin|mcp))?\b", tail, maxsplit=1, flags=re.I)[0].strip()
+            if tail:
+                return tail
+    return None
+
+
+def _pick_existing_tool(info: dict[str, Any], candidates: tuple[str, ...]) -> str | None:
+    by_name = {str(tool.get("name") or "").lower(): str(tool.get("name") or "") for tool in info.get("tools") or []}
+    for candidate in candidates:
+        if candidate.lower() in by_name:
+            return by_name[candidate.lower()]
+    return None
+
+
+def _infer_natural_tool(text: str, server: dict[str, Any], info: dict[str, Any]) -> tuple[str, dict[str, Any]] | None:
+    low = text.lower()
+    root = _filesystem_root(server)
+
+    if any(phrase in low for phrase in ("allowed directories", "allowed folders", "where can", "what directories can")):
+        tool = _pick_existing_tool(info, ("list_allowed_directories",))
+        if tool:
+            return tool, {}
+
+    if any(phrase in low for phrase in ("directory tree", "folder tree", "show the tree", "show tree")):
+        tool = _pick_existing_tool(info, ("directory_tree",))
+        if tool and root:
+            return tool, {"path": _extract_windows_path(text) or root}
+
+    if any(word in low for word in ("search files", "find files", "find file", "search for")):
+        tool = _pick_existing_tool(info, ("search_files",))
+        query = _basename_request(text, ("search for", "find files", "find file", "search files"))
+        if tool and root and query:
+            return tool, {"path": _extract_windows_path(text) or root, "pattern": query}
+
+    if any(phrase in low for phrase in ("file info", "file details", "information about", "details about")):
+        tool = _pick_existing_tool(info, ("get_file_info",))
+        path = _extract_windows_path(text) or _basename_request(text, ("file info", "file details", "information about", "details about"))
+        if tool and path:
+            if root and not re.match(r"^[A-Za-z]:\\", path):
+                path = str(Path(root) / path)
+            return tool, {"path": path}
+
+    if any(phrase in low for phrase in ("read file", "read the file", "open file", "open the file", "show file", "show the file")):
+        tool = _pick_existing_tool(info, ("read_text_file", "read_file"))
+        path = _extract_windows_path(text) or _basename_request(text, ("read the file", "read file", "open the file", "open file", "show the file", "show file"))
+        if tool and path:
+            if root and not re.match(r"^[A-Za-z]:\\", path):
+                path = str(Path(root) / path)
+            return tool, {"path": path}
+
+    if any(phrase in low for phrase in ("show me the files", "show the files", "list the files", "list files", "files in my workspace", "files in the workspace", "what files")):
+        tool = _pick_existing_tool(info, ("list_directory", "list_directory_with_sizes"))
+        if tool and root:
+            return tool, {"path": _extract_windows_path(text) or root}
+
+    return None
+
+
+def _approval_response(server_name: str, tool_name: str, arguments: dict[str, Any], command: str, natural: bool = False) -> dict[str, Any]:
+    action = _approval_action(server_name, tool_name, arguments)
+    if approval_is_granted(action):
+        return {"approved": True, "action": action}
+    approval = create_approval(action, f"Allow MCP server '{_clean_name(server_name)}' to run tool '{tool_name}' with the shown arguments.")
+    return {
+        "message": "I matched that request to an MCP tool. Approve it to continue." if natural else "This MCP tool call needs your approval before it can run.",
+        "card": {"type": "mcp_approval", "approval": approval, "server": _clean_name(server_name), "tool": tool_name, "arguments": arguments, "command": command},
+    }
+
+
+async def _route_natural_mcp(text: str) -> dict[str, Any] | None:
+    server_name = _mentioned_server(text)
+    if not server_name:
+        return None
+    server = get_server(server_name)
+    if not server:
+        return None
+    try:
+        info = await inspect_server(server_name)
+    except Exception as exc:
+        return {"message": f"I found the '{server_name}' plugin, but could not connect to it: {_error_text(exc)}", "card": None}
+    inferred = _infer_natural_tool(text, server, info)
+    if not inferred:
+        tools = [str(t.get("title") or t.get("name") or "") for t in info.get("tools") or []]
+        preview = ", ".join(x for x in tools[:6] if x)
+        return {"message": f"I found the '{server_name}' plugin, but I couldn't confidently choose a tool for that request. Available tools include: {preview}.", "card": None}
+    tool_name, arguments = inferred
+    canonical = f"Call MCP {server_name} tool {tool_name} with {json.dumps(arguments, ensure_ascii=False)}"
+    approval = _approval_response(server_name, tool_name, arguments, canonical, natural=True)
+    if approval.get("approved"):
+        try:
+            return await execute_tool(server_name, tool_name, arguments)
+        except Exception as exc:
+            return {"message": f"The approved MCP tool call could not complete: {_error_text(exc)}", "card": None}
+    return approval
 
 
 async def route_mcp_command(message: str) -> dict[str, Any] | None:
@@ -404,20 +499,18 @@ async def route_mcp_command(message: str) -> dict[str, Any] | None:
                 raise ValueError
         except Exception:
             return {"message": "MCP tool arguments must be a JSON object, for example: with {\"query\":\"hello\"}.", "card": None}
-
         if not get_server(server_name):
             return {"message": f"MCP server '{server_name}' is not registered.", "card": None}
+        approval = _approval_response(server_name, tool_name, arguments, text)
+        if approval.get("approved"):
+            try:
+                return await execute_tool(server_name, tool_name, arguments)
+            except Exception as exc:
+                return {"message": f"The approved MCP tool call could not complete: {_error_text(exc)}", "card": None}
+        return approval
 
-        action = _approval_action(server_name, tool_name, arguments)
-        if not approval_is_granted(action):
-            approval = create_approval(action, f"Allow MCP server '{_clean_name(server_name)}' to run tool '{tool_name}' with the shown arguments.")
-            return {
-                "message": "This MCP tool call needs your approval before it can run.",
-                "card": {"type": "mcp_approval", "approval": approval, "server": _clean_name(server_name), "tool": tool_name, "arguments": arguments, "command": text},
-            }
-        try:
-            return await execute_tool(server_name, tool_name, arguments)
-        except Exception as exc:
-            return {"message": f"The approved MCP tool call could not complete: {_error_text(exc)}", "card": None}
+    natural = await _route_natural_mcp(text)
+    if natural is not None:
+        return natural
 
     return None
