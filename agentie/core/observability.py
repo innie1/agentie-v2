@@ -7,7 +7,6 @@ import sqlite3
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
 
 WORKSPACE=Path.cwd()/"workspace";DB_PATH=WORKSPACE/"agentie_observability.sqlite3";_CURRENT_TRACE=contextvars.ContextVar("agentie_trace_id",default=None)
 def _price_table():
@@ -40,23 +39,46 @@ def record_route(routed_by,metadata=None,trace_id=None):
     if not tid:return
     with _connect() as c:c.execute("UPDATE traces SET routed_by=? WHERE id=?",(routed_by[:80],tid))
     record_event("route",routed_by,metadata=metadata,trace_id=tid)
-def _usage_from_result(result):
-    inp=out=total=0;candidates=[getattr(result,"usage",None)];ctx=getattr(result,"context_wrapper",None)
-    if ctx is not None:candidates.append(getattr(ctx,"usage",None))
-    for response in getattr(result,"raw_responses",[]) or []:candidates.append(getattr(response,"usage",None))
-    for usage in candidates:
-        if usage is None:continue
-        def val(*names):
-            for n in names:
-                v=getattr(usage,n,None)
-                if v is None and isinstance(usage,dict):v=usage.get(n)
-                if v is not None:
-                    try:return int(v)
-                    except Exception:pass
-            return 0
-        inp+=val("input_tokens","prompt_tokens");out+=val("output_tokens","completion_tokens");t=val("total_tokens");total+=t
-    if total==0:total=inp+out
-    return inp,out,total
+def _value(obj,*names):
+    for name in names:
+        v=getattr(obj,name,None)
+        if v is None and isinstance(obj,dict):v=obj.get(name)
+        if v is not None:return v
+    return None
+def _usage_tuple(usage):
+    if usage is None:return (0,0,0,None)
+    def integer(*names):
+        v=_value(usage,*names)
+        try:return int(v or 0)
+        except Exception:return 0
+    inp=integer("input_tokens","prompt_tokens");out=integer("output_tokens","completion_tokens");total=integer("total_tokens") or inp+out
+    raw_cost=_value(usage,"cost","total_cost","cost_usd")
+    try:cost=float(raw_cost) if raw_cost is not None else None
+    except Exception:cost=None
+    return inp,out,total,cost
+def _result_accounting(result,configured_model):
+    raw=list(getattr(result,"raw_responses",[]) or []);calls=max(1,len(raw))
+    # Prefer the SDK aggregate usage if available; summing aggregate + raw responses double-counts tokens.
+    aggregate=getattr(result,"usage",None);ctx=getattr(result,"context_wrapper",None)
+    if aggregate is None and ctx is not None:aggregate=getattr(ctx,"usage",None)
+    if aggregate is not None:
+        inp,out,total,cost=_usage_tuple(aggregate)
+    else:
+        inp=out=total=0;cost_values=[]
+        for response in raw:
+            i,o,t,c=_usage_tuple(getattr(response,"usage",None));inp+=i;out+=o;total+=t
+            if c is not None:cost_values.append(c)
+        cost=sum(cost_values) if cost_values else None
+    actual_models=[]
+    for response in raw:
+        model=_value(response,"model","model_name")
+        if model and str(model) not in actual_models:actual_models.append(str(model))
+    model_name=actual_models[-1] if actual_models else configured_model
+    if cost is None:
+        prices=_price_table();price=prices.get(model_name) or prices.get(configured_model)
+        if price:
+            pi,po=price;cost=(inp*pi+out*po)/1_000_000
+    return {"provider_calls":calls,"input_tokens":inp,"output_tokens":out,"total_tokens":total,"cost":cost,"model":model_name,"models":actual_models}
 def _record_result_items(result,tid):
     for item in getattr(result,"new_items",[]) or []:
         kind=item.__class__.__name__.lower();raw=getattr(item,"raw_item",None);name=""
@@ -69,15 +91,13 @@ def _record_result_items(result,tid):
         if "toolcall" in kind or "tool_call" in kind:record_event("tool",name or "tool",metadata={"item_type":item.__class__.__name__},trace_id=tid)
         elif "handoff" in kind:record_event("handoff",name or "agent",metadata={"item_type":item.__class__.__name__},trace_id=tid)
 def record_model_result(result,model,latency_ms,trace_id=None):
-    tid=trace_id or current_trace_id();inp,out,total=_usage_from_result(result);prices=_price_table();cost=None
-    if model in prices:
-        pi,po=prices[model];cost=(inp*pi+out*po)/1_000_000
+    tid=trace_id or current_trace_id();a=_result_accounting(result,model);cost=a["cost"]
     if tid:
         with _connect() as c:
             row=c.execute("SELECT estimated_cost_usd FROM traces WHERE id=?",(tid,)).fetchone();previous=row["estimated_cost_usd"] if row and row["estimated_cost_usd"] is not None else None;merged=(float(previous or 0)+float(cost)) if cost is not None else previous
-            c.execute("UPDATE traces SET provider_calls=provider_calls+1,input_tokens=input_tokens+?,output_tokens=output_tokens+?,total_tokens=total_tokens+?,estimated_cost_usd=? WHERE id=?",(inp,out,total,merged,tid))
-        record_event("model",model,latency_ms=latency_ms,metadata={"input_tokens":inp,"output_tokens":out,"total_tokens":total,"estimated_cost_usd":cost},trace_id=tid);_record_result_items(result,tid)
-    return {"input_tokens":inp,"output_tokens":out,"total_tokens":total,"estimated_cost_usd":cost}
+            c.execute("UPDATE traces SET provider_calls=provider_calls+?,input_tokens=input_tokens+?,output_tokens=output_tokens+?,total_tokens=total_tokens+?,estimated_cost_usd=? WHERE id=?",(a["provider_calls"],a["input_tokens"],a["output_tokens"],a["total_tokens"],merged,tid))
+        record_event("model",a["model"],latency_ms=latency_ms,metadata={"provider_calls":a["provider_calls"],"models":a["models"],"input_tokens":a["input_tokens"],"output_tokens":a["output_tokens"],"total_tokens":a["total_tokens"],"estimated_cost_usd":cost},trace_id=tid);_record_result_items(result,tid)
+    return a
 def record_model_error(model,error,latency_ms,trace_id=None):
     tid=trace_id or current_trace_id()
     if tid:
@@ -109,4 +129,5 @@ def recent_traces(session_id=None,limit=20):
     return [dict(r) for r in rows]
 def trace_card(trace,detailed=False):return {"type":"observability","id":trace["id"],"status":trace.get("status"),"routed_by":trace.get("routed_by"),"agent_type":trace.get("agent_type"),"latency_ms":trace.get("latency_ms"),"provider_calls":trace.get("provider_calls",0),"input_tokens":trace.get("input_tokens",0),"output_tokens":trace.get("output_tokens",0),"total_tokens":trace.get("total_tokens",0),"estimated_cost_usd":trace.get("estimated_cost_usd"),"error":trace.get("error"),"events":trace.get("events",[]) if detailed else []}
 def summary_card(session_id=None,limit=20):
-    items=recent_traces(session_id,limit);return {"type":"observability_summary","items":items,"requests":len(items),"provider_calls":sum(int(x.get("provider_calls") or 0) for x in items),"tokens":sum(int(x.get("total_tokens") or 0) for x in items),"known_cost_usd":round(sum(float(x.get("estimated_cost_usd") or 0) for x in items if x.get("estimated_cost_usd") is not None),6),"unknown_cost_requests":sum(1 for x in items if int(x.get("provider_calls") or 0)>0 and x.get("estimated_cost_usd") is None)}
+    current=current_trace_id();items=[x for x in recent_traces(session_id,limit+1) if x.get("id")!=current][:limit]
+    return {"type":"observability_summary","items":items,"requests":len(items),"provider_calls":sum(int(x.get("provider_calls") or 0) for x in items),"tokens":sum(int(x.get("total_tokens") or 0) for x in items),"known_cost_usd":round(sum(float(x.get("estimated_cost_usd") or 0) for x in items if x.get("estimated_cost_usd") is not None),6),"unknown_cost_requests":sum(1 for x in items if int(x.get("provider_calls") or 0)>0 and x.get("estimated_cost_usd") is None)}
