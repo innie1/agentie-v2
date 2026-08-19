@@ -15,6 +15,7 @@ from agentie.core.file_service import MAX_FILE_BYTES, run_action, save_upload
 from agentie.core.local_router import route_local_actions
 from agentie.core.memory_store import add_message
 from agentie.core.pdf_service import try_pdf_request
+from agentie.core.provider_gate import local_fallback_message, provider_allowed
 from agentie.core.reference_router import remember_active_from_card, try_active_reference
 from agentie.core.runner import run_agent
 from agentie.tools import local_utility_tools as local_utils
@@ -22,7 +23,7 @@ from agentie.tools.approval_tools import resolve_approval
 from agentie.tools.advanced_utility_tools import SCHEDULES
 from agentie.tools.productivity_tools import REMINDERS
 
-app = FastAPI(title="Agentie API", version="1.3.0", description="Local-first Agentie runtime with persistent memory, active-object references, local PDF creation, uploads, cards, and conversational routing")
+app = FastAPI(title="Agentie API", version="1.4.0", description="Local-first Agentie runtime with provider gating, persistent memory, active-object references, local PDF creation, uploads, cards, and conversational routing")
 FRONTEND_DIR = Path(__file__).parent / "frontend"
 FRONTEND_FILE = FRONTEND_DIR / "index.html"
 CARDS_JS = FRONTEND_DIR / "cards.js"
@@ -136,7 +137,7 @@ def _result_summary(results: list[dict], fallback: str = "") -> str:
 async def chat_ui():
     if not FRONTEND_FILE.exists(): raise HTTPException(status_code=404, detail="Frontend not found.")
     html = FRONTEND_FILE.read_text(encoding="utf-8")
-    html += '\n<script src="/cards.js?v=130"></script>\n<script src="/events.js?v=130"></script>\n<script src="/upload.js?v=130"></script>\n'
+    html += '\n<script src="/cards.js?v=140"></script>\n<script src="/events.js?v=140"></script>\n<script src="/upload.js?v=140"></script>\n'
     return HTMLResponse(html, headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"})
 
 
@@ -160,7 +161,7 @@ async def upload_js():
 
 @app.get("/health")
 async def health() -> dict[str, str]:
-    return {"status":"ok","service":"agentie-v2","version":"1.3.0"}
+    return {"status":"ok","service":"agentie-v2","version":"1.4.0"}
 
 
 @app.post("/files/upload")
@@ -217,14 +218,12 @@ async def agent_run(request: AgentRequest, http_request: Request) -> AgentRespon
     try:
         session_key = request.session_id or f"{http_request.client.host if http_request.client else 'local'}:{request.agent_type}"
 
-        # Resolve follow-ups against the most recent local object before asking a model.
         reference_result = try_active_reference(session_key, request.message)
         if reference_result is not None:
             message = str(reference_result.get("message", "")); card = reference_result.get("card")
             _record_local(session_key, request.message, message, card, request.agent_type, "active_reference")
             return AgentResponse(message=message, result=message, card=card, agent_type=request.agent_type, routed_by="active_reference")
 
-        # PDF generation is deterministic and local and always takes precedence over LLM fallback.
         pdf_result = try_pdf_request(session_key, request.message)
         if pdf_result is not None:
             message = str(pdf_result.get("message", "")); card = pdf_result.get("card")
@@ -244,9 +243,24 @@ async def agent_run(request: AgentRequest, http_request: Request) -> AgentRespon
         clarification_message: str | None = None; remaining_unresolved: list[str] = []
         for clause in unresolved:
             incomplete = detect_incomplete_intent(session_key, clause)
-            if incomplete and clarification_message is None: clarification_message = str(incomplete.get("message", ""))
-            else: remaining_unresolved.append(clause)
+            if incomplete and clarification_message is None:
+                clarification_message = str(incomplete.get("message", ""))
+            else:
+                remaining_unresolved.append(clause)
         unresolved = remaining_unresolved
+
+        # Provider gate: a parser miss on a local/free-first capability must never
+        # silently become a paid request. Keep only genuinely model-worthy clauses.
+        provider_unresolved: list[str] = []
+        blocked_local: list[str] = []
+        for clause in unresolved:
+            if provider_allowed(clause):
+                provider_unresolved.append(clause)
+            else:
+                blocked_local.append(clause)
+        unresolved = provider_unresolved
+        if blocked_local and not clarification_message:
+            clarification_message = local_fallback_message(blocked_local[0])
 
         if local_results and not unresolved:
             _refresh_timer_cards(local_results)
@@ -276,9 +290,15 @@ async def agent_run(request: AgentRequest, http_request: Request) -> AgentRespon
             remember_active_from_card(session_key, card)
             return AgentResponse(message="", result=llm_result, card=card, agent_type=request.agent_type, routed_by="hybrid")
 
-        if clarification_message and unresolved:
+        if clarification_message and not unresolved:
             _record_local(session_key, request.message, clarification_message, None, request.agent_type, "clarification")
             return AgentResponse(message=clarification_message, result=clarification_message, card=None, agent_type=request.agent_type, routed_by="clarification")
+
+        # Last safety gate before any provider call.
+        if not provider_allowed(effective_message):
+            message = local_fallback_message(effective_message)
+            _record_local(session_key, request.message, message, None, request.agent_type, "local_guard")
+            return AgentResponse(message=message, result=message, card=None, agent_type=request.agent_type, routed_by="local_guard")
 
         result = await run_agent(effective_message, request.agent_type, session_key)
         return AgentResponse(message=result, result=result, card=None, agent_type=request.agent_type, routed_by="llm")
