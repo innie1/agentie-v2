@@ -10,6 +10,7 @@ from agentie.core.conversation_loop import consume_followup,detect_incomplete_in
 from agentie.core.file_service import MAX_FILE_BYTES,resolve_upload,run_action,save_upload
 from agentie.core.local_router import route_local_actions
 from agentie.core.memory_store import add_message
+from agentie.core.observability import finish_trace,get_trace,record_event,record_route,recent_traces,start_trace,summary_card,trace_card
 from agentie.core.office_artifacts import try_office_request
 from agentie.core.pdf_service import try_pdf_request
 from agentie.core.provider_gate import local_fallback_message,provider_allowed
@@ -21,7 +22,7 @@ from agentie.tools.approval_tools import resolve_approval
 from agentie.tools.advanced_utility_tools import SCHEDULES
 from agentie.tools.productivity_tools import REMINDERS
 
-app=FastAPI(title="Agentie API",version="1.6.0",description="Local-first Agentie runtime with memory, routines, dynamic roles, deep research, jobs, RAG, skills and local artifact generation")
+app=FastAPI(title="Agentie API",version="1.7.0",description="Local-first Agentie runtime with observability, cost tracking, memory, routines, jobs, RAG, skills and local artifact generation")
 FRONTEND_DIR=Path(__file__).parent/"frontend";FRONTEND_FILE=FRONTEND_DIR/"index.html";CARDS_JS=FRONTEND_DIR/"cards.js";EVENTS_JS=FRONTEND_DIR/"events.js";UPLOAD_JS=FRONTEND_DIR/"upload.js"
 class AgentRequest(BaseModel):
     message:str=Field(min_length=1,max_length=20_000);agent_type:str=Field(default="general",pattern="^(general|research|coding|manager|github)$");session_id:str|None=Field(default=None,max_length=200)
@@ -36,7 +37,7 @@ def _load(path,default):
     except Exception:return default
 def _save(path,value):path.parent.mkdir(parents=True,exist_ok=True);path.write_text(json.dumps(value,indent=2,ensure_ascii=False),encoding="utf-8")
 def _record_local(session_id,user_message,assistant_message,card,agent_type,routed_by):
-    add_message(session_id,"user",user_message,{"agent_type":agent_type,"routed_by":routed_by});add_message(session_id,"assistant",assistant_message,{"agent_type":agent_type,"routed_by":routed_by});remember_active_from_card(session_id,card)
+    add_message(session_id,"user",user_message,{"agent_type":agent_type,"routed_by":routed_by});add_message(session_id,"assistant",assistant_message,{"agent_type":agent_type,"routed_by":routed_by});remember_active_from_card(session_id,card);record_route(routed_by,{"card_type":card.get("type") if isinstance(card,dict) else None});record_event("local_action",card.get("type") if isinstance(card,dict) else routed_by,metadata={"agent_type":agent_type})
 def _schedule_due(item,now):
     if item.get("status")!="active":return False
     cadence=str(item.get("cadence","")).lower();hhmm=item.get("time_hhmm") or "09:00"
@@ -75,12 +76,28 @@ def _multi_card(results,extra_message=None):
     return {"type":"multi","items":items}
 def _result_summary(results,fallback=""):return "\n".join(str(x.get("message","")).strip() for x in results if str(x.get("message","")).strip()) or fallback
 
+def _observability_command(session_id,message):
+    text=" ".join(message.strip().split());lower=text.lower().strip(" .?!")
+    m=re.match(r"^(?:show|open|inspect)?\s*(?:trace|request trace)\s+([a-f0-9]{8,16})$",lower)
+    if m:
+        try:item=get_trace(m.group(1))
+        except KeyError:return {"message":"I couldn't find that trace.","card":None}
+        return {"message":f"Trace {item['id']}.","card":trace_card(item,True)}
+    if lower in {"trace","show trace","show last trace","last trace","why did you call the api","why did that use the api"}:
+        items=recent_traces(session_id,5);current=items[0] if items else None
+        if current and current.get("status")=="running" and len(items)>1:current=items[1]
+        if not current:return {"message":"No traces yet.","card":None}
+        return {"message":f"Trace {current['id']}.","card":trace_card(get_trace(current['id']),True)}
+    if lower in {"usage","show usage","cost","show cost","show costs","observability","show observability","request history","show request history"}:
+        return {"message":"Here is recent Agentie usage and routing.","card":summary_card(session_id,20)}
+    return None
+
 @app.on_event("startup")
 async def startup_event():start_routine_worker()
 @app.get("/")
 async def chat_ui():
     if not FRONTEND_FILE.exists():raise HTTPException(404,"Frontend not found.")
-    html=FRONTEND_FILE.read_text(encoding="utf-8")+'\n<script src="/cards.js?v=160"></script>\n<script src="/events.js?v=160"></script>\n<script src="/upload.js?v=160"></script>\n';return HTMLResponse(html,headers={"Cache-Control":"no-store, no-cache, must-revalidate, max-age=0"})
+    html=FRONTEND_FILE.read_text(encoding="utf-8")+'\n<script src="/cards.js?v=170"></script>\n<script src="/events.js?v=170"></script>\n<script src="/upload.js?v=170"></script>\n';return HTMLResponse(html,headers={"Cache-Control":"no-store, no-cache, must-revalidate, max-age=0"})
 @app.get("/cards.js")
 async def cards_js():return Response(CARDS_JS.read_text(encoding="utf-8"),media_type="application/javascript",headers={"Cache-Control":"no-store"})
 @app.get("/events.js")
@@ -88,7 +105,7 @@ async def events_js():return Response(EVENTS_JS.read_text(encoding="utf-8"),medi
 @app.get("/upload.js")
 async def upload_js():return Response(UPLOAD_JS.read_text(encoding="utf-8"),media_type="application/javascript",headers={"Cache-Control":"no-store"})
 @app.get("/health")
-async def health():return {"status":"ok","service":"agentie-v2","version":"1.6.0"}
+async def health():return {"status":"ok","service":"agentie-v2","version":"1.7.0"}
 @app.post("/files/upload")
 async def file_upload(file:UploadFile=File(...)):
     try:
@@ -101,8 +118,7 @@ async def file_upload(file:UploadFile=File(...)):
     finally:await file.close()
 @app.get("/files/{filename}/download")
 async def file_download(filename:str):
-    try:
-        path=resolve_upload(filename);return FileResponse(path=str(path),filename=path.name,media_type="application/octet-stream")
+    try:path=resolve_upload(filename);return FileResponse(path=str(path),filename=path.name,media_type="application/octet-stream")
     except FileNotFoundError as exc:raise HTTPException(404,"File not found.") from exc
     except ValueError as exc:raise HTTPException(400,str(exc)) from exc
 @app.post("/files/{filename}/action")
@@ -130,8 +146,13 @@ async def poll_local_events():
     events.extend(poll_routine_events());return {"events":events}
 @app.post("/agent/run",response_model=AgentResponse)
 async def agent_run(request:AgentRequest,http_request:Request):
+    trace_id=None;failed=None
     try:
         session_key=request.session_id or f"{http_request.client.host if http_request.client else 'local'}:{request.agent_type}"
+        trace_id=start_trace(session_key,request.agent_type,request.message)
+        obs=_observability_command(session_key,request.message)
+        if obs is not None:
+            message=str(obs.get("message",""));card=obs.get("card");_record_local(session_key,request.message,message,card,request.agent_type,"observability");return AgentResponse(message=message,result=message,card=card,agent_type=request.agent_type,routed_by="observability")
         ref=try_active_reference(session_key,request.message)
         if ref is not None:
             message=str(ref.get("message",""));card=ref.get("card");_record_local(session_key,request.message,message,card,request.agent_type,"active_reference");return AgentResponse(message=message,result=message,card=card,agent_type=request.agent_type,routed_by="active_reference")
@@ -165,6 +186,7 @@ async def agent_run(request:AgentRequest,http_request:Request):
         if not local_results and clarification and not unresolved:
             _record_local(session_key,request.message,clarification,None,request.agent_type,"clarification");return AgentResponse(message=clarification,result=clarification,card=None,agent_type=request.agent_type,routed_by="clarification")
         if local_results and unresolved:
+            record_route("hybrid",{"local_actions":len(local_results),"provider_clauses":len(unresolved)})
             prompt="Handle only the following unresolved parts of the user's request. Do not repeat or redo other actions.\n\n"+"\n".join(f"- {p}" for p in unresolved)
             try:llm=await run_agent(prompt,request.agent_type,session_key)
             except Exception as exc:llm="I completed the other actions, but I couldn't process: "+"; ".join(unresolved)+f". ({exc})"
@@ -174,9 +196,13 @@ async def agent_run(request:AgentRequest,http_request:Request):
             _record_local(session_key,request.message,clarification,None,request.agent_type,"clarification");return AgentResponse(message=clarification,result=clarification,card=None,agent_type=request.agent_type,routed_by="clarification")
         if not provider_allowed(effective):
             message=local_fallback_message(effective);_record_local(session_key,request.message,message,None,request.agent_type,"local_guard");return AgentResponse(message=message,result=message,card=None,agent_type=request.agent_type,routed_by="local_guard")
-        result=await run_agent(effective,request.agent_type,session_key);return AgentResponse(message=result,result=result,card=None,agent_type=request.agent_type,routed_by="llm")
-    except RuntimeError as exc:raise HTTPException(500,str(exc)) from exc
-    except Exception as exc:raise HTTPException(502,f"Agent run failed: {exc}") from exc
+        record_route("llm",{"agent_type":request.agent_type});result=await run_agent(effective,request.agent_type,session_key);return AgentResponse(message=result,result=result,card=None,agent_type=request.agent_type,routed_by="llm")
+    except RuntimeError as exc:
+        failed=str(exc);raise HTTPException(500,str(exc)) from exc
+    except Exception as exc:
+        failed=str(exc);raise HTTPException(502,f"Agent run failed: {exc}") from exc
+    finally:
+        if trace_id:finish_trace(trace_id,"failed" if failed else "completed",failed)
 @app.post("/approvals/{approval_id}/resolve")
 async def approval_resolve(approval_id:str,decision:ApprovalDecision):
     try:return resolve_approval(approval_id,decision.approved)
