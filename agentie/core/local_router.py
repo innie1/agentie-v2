@@ -1,9 +1,15 @@
+import ast
+import json
+import operator
 import re
 import time
+import uuid
 from datetime import datetime, timedelta
+from pathlib import Path
 from urllib.parse import urlencode
 
 from agentie.tools import local_utility_tools as utilities
+from agentie.tools import productivity_tools as productivity
 
 
 _DURATION_RE = re.compile(
@@ -32,7 +38,7 @@ def _pretty_duration(seconds: float) -> str:
     if seconds % 60 == 0:
         value = int(seconds // 60)
         return f"{value} minute" + ("s" if value != 1 else "")
-    value = int(seconds) if seconds.is_integer() else seconds
+    value = int(seconds) if float(seconds).is_integer() else seconds
     return f"{value} second" + ("s" if value != 1 else "")
 
 
@@ -82,11 +88,20 @@ def _stopwatch_card() -> dict:
     }
 
 
-def try_local_command(message: str) -> dict | None:
-    """Handle deterministic utility requests without calling an LLM.
+def _safe_calc(expression: str):
+    tree = ast.parse(expression, mode="eval")
+    return productivity._eval_math(tree)
 
-    Returns a structured chat payload or None when the request is not confidently recognized.
-    """
+
+def _load_json(path: Path, default):
+    try:
+        return json.loads(path.read_text(encoding="utf-8")) if path.exists() else default
+    except Exception:
+        return default
+
+
+def try_local_command(message: str) -> dict | None:
+    """Handle deterministic utility requests without calling an LLM."""
     text = " ".join(message.strip().split())
     lower = text.lower()
 
@@ -97,16 +112,7 @@ def try_local_command(message: str) -> dict | None:
         if seconds <= 0 or seconds > 7 * 24 * 3600:
             return {"message": "Timer must be between 1 second and 7 days.", "card": None}
         item = utilities._create_timer(seconds, "Timer", "timer")
-        return {
-            "message": f"Timer set for {_pretty_duration(seconds)}.",
-            "card": {
-                "type": "timer",
-                "id": item["id"],
-                "status": item["status"],
-                "duration_seconds": seconds,
-                "due_at": item["due_at"],
-            },
-        }
+        return {"message": f"Timer set for {_pretty_duration(seconds)}.", "card": {"type": "timer", "id": item["id"], "status": item["status"], "duration_seconds": seconds, "due_at": item["due_at"]}}
 
     alarm_match = re.search(r"\b(?:set\s+)?(?:an\s+)?alarm\b.*?\b(\d{1,2}):(\d{2})\b", lower)
     if alarm_match:
@@ -118,17 +124,7 @@ def try_local_command(message: str) -> dict | None:
         if due <= now:
             due += timedelta(days=1)
         item = utilities._create_timer((due - now).total_seconds(), "Alarm", "alarm")
-        return {
-            "message": f"Alarm set for {due.strftime('%H:%M')}.",
-            "card": {
-                "type": "alarm",
-                "id": item["id"],
-                "status": item["status"],
-                "due_at": item["due_at"],
-                "display_time": due.strftime("%H:%M"),
-                "display_date": due.strftime("%Y-%m-%d"),
-            },
-        }
+        return {"message": f"Alarm set for {due.strftime('%H:%M')}.", "card": {"type": "alarm", "id": item["id"], "status": item["status"], "due_at": item["due_at"], "display_time": due.strftime("%H:%M"), "display_date": due.strftime("%Y-%m-%d")}}
 
     if "start stopwatch" in lower or lower == "start the stopwatch":
         with utilities._STOPWATCH_LOCK:
@@ -171,5 +167,71 @@ def try_local_command(message: str) -> dict | None:
                 return {"message": "Timer not found.", "card": None}
             item["status"] = "cancelled"
         return {"message": f"Cancelled {timer_id}.", "card": None}
+
+    calc_match = re.match(r"^(?:calculate|what is|what's)\s+([0-9+\-*/().%\s]+)\??$", lower)
+    if calc_match:
+        try:
+            value = _safe_calc(calc_match.group(1).strip())
+            return {"message": f"The result is {value}.", "card": {"type": "calculation", "expression": calc_match.group(1).strip(), "result": value}}
+        except Exception:
+            return None
+
+    reminder_match = re.search(r"\bremind me(?: to)?\s+(.+?)\s+in\s+(\d+(?:\.\d+)?)\s*(minutes?|mins?|hours?|hrs?)\b", text, re.IGNORECASE)
+    if reminder_match:
+        reminder_text = reminder_match.group(1).strip()
+        value = float(reminder_match.group(2))
+        unit = reminder_match.group(3).lower()
+        minutes = value * 60 if unit.startswith(("hour", "hr")) else value
+        items = _load_json(productivity.REMINDERS, [])
+        now = datetime.now()
+        item = {"id": str(uuid.uuid4())[:8], "text": reminder_text, "status": "scheduled", "created_at": now.isoformat(timespec="seconds"), "due_at": (now + timedelta(minutes=minutes)).isoformat(timespec="seconds"), "repeat_minutes": 0}
+        items.append(item)
+        productivity._save(productivity.REMINDERS, items)
+        return {"message": f"Reminder set for {_pretty_duration(minutes * 60)} from now.", "card": {"type": "reminder", **item}}
+
+    recurring_match = re.search(r"\bremind me(?: to)?\s+(.+?)\s+every\s+(\d+(?:\.\d+)?)\s*(minutes?|mins?|hours?|hrs?)\b", text, re.IGNORECASE)
+    if recurring_match:
+        reminder_text = recurring_match.group(1).strip()
+        value = float(recurring_match.group(2))
+        unit = recurring_match.group(3).lower()
+        minutes = value * 60 if unit.startswith(("hour", "hr")) else value
+        items = _load_json(productivity.REMINDERS, [])
+        now = datetime.now()
+        item = {"id": str(uuid.uuid4())[:8], "text": reminder_text, "status": "scheduled", "created_at": now.isoformat(timespec="seconds"), "due_at": (now + timedelta(minutes=minutes)).isoformat(timespec="seconds"), "repeat_minutes": minutes}
+        items.append(item)
+        productivity._save(productivity.REMINDERS, items)
+        return {"message": f"Recurring reminder set for every {_pretty_duration(minutes * 60)}.", "card": {"type": "reminder", **item}}
+
+    if lower in {"show reminders", "list reminders", "my reminders"}:
+        items = _load_json(productivity.REMINDERS, [])
+        return {"message": f"You have {len(items)} reminder(s).", "card": {"type": "reminders", "items": items}}
+
+    note_match = re.match(r"^(?:save note|note)\s+([^:]+):\s*(.+)$", text, re.IGNORECASE)
+    if note_match:
+        title, content = note_match.group(1).strip(), note_match.group(2).strip()
+        notes = _load_json(productivity.NOTES, {})
+        notes[title[:120]] = {"content": content[:10000], "updated_at": datetime.now().isoformat(timespec="seconds")}
+        productivity._save(productivity.NOTES, notes)
+        return {"message": f"Saved note “{title}”.", "card": {"type": "note", "title": title, "content": content}}
+
+    if lower in {"system status", "show system status", "agentie status"}:
+        import platform, shutil, os
+        disk = shutil.disk_usage(Path.cwd())
+        card = {"type": "system", "os": platform.system(), "os_detail": platform.platform(), "python": platform.python_version(), "hostname": platform.node(), "disk_total_gb": round(disk.total / 1024**3, 1), "disk_free_gb": round(disk.free / 1024**3, 1), "process_id": os.getpid()}
+        return {"message": "Here’s Agentie’s local system status.", "card": card}
+
+    if lower in {"show tasks", "list tasks", "my tasks"}:
+        items = _load_json(Path.cwd() / "workspace" / "tasks.json", [])
+        return {"message": f"You have {len(items)} tracked task(s).", "card": {"type": "tasks", "items": items}}
+
+    if lower in {"show approvals", "list approvals", "pending approvals"}:
+        items = _load_json(Path.cwd() / "workspace" / "approvals.json", [])
+        return {"message": f"There are {len(items)} approval request(s).", "card": {"type": "approvals", "items": items}}
+
+    if lower in {"show files", "list files", "workspace files"}:
+        workspace = Path.cwd() / "workspace"
+        workspace.mkdir(parents=True, exist_ok=True)
+        items = [{"name": p.name, "size_bytes": p.stat().st_size, "suffix": p.suffix.lower()} for p in sorted(workspace.iterdir()) if p.is_file()]
+        return {"message": f"There are {len(items)} file(s) in the workspace.", "card": {"type": "files", "items": items}}
 
     return None
