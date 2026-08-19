@@ -3,7 +3,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from agentie.core.capability_preflight import _allowed_directories_request, _choice, _extension_search, _filename
+from agentie.core.capability_preflight import _allowed_directories_request, _choice, _extension_search, _filename, _folder_name
 from agentie.core.capability_router import _looks_filesystem, _native_guarded
 from agentie.core.code_execution import route_code_command
 from agentie.core.local_router import route_local_actions
@@ -167,6 +167,8 @@ class CapabilityPreflightRegressionTests(unittest.TestCase):
                 {"name": "read_text_file"},
                 {"name": "get_file_info"},
                 {"name": "list_allowed_directories"},
+                {"name": "write_file"},
+                {"name": "create_directory"},
             ]
         }
 
@@ -192,6 +194,20 @@ class CapabilityPreflightRegressionTests(unittest.TestCase):
         tool, arguments = _choice("What directories can I access?", self.server, self.info)
         self.assertEqual(tool, "list_allowed_directories")
         self.assertEqual(arguments, {})
+
+    def test_another_file_called_extracts_only_filename(self):
+        text = "Create another file called persistent-test-2.txt in the workspace containing second test."
+        self.assertEqual(_filename(text), "persistent-test-2.txt")
+        tool, arguments = _choice(text, self.server, self.info)
+        self.assertEqual(tool, "write_file")
+        self.assertTrue(arguments["path"].endswith("persistent-test-2.txt"))
+
+    def test_create_folder_maps_to_create_directory(self):
+        text = "Create a folder called approval-folder in the workspace."
+        self.assertEqual(_folder_name(text), "approval-folder")
+        tool, arguments = _choice(text, self.server, self.info)
+        self.assertEqual(tool, "create_directory")
+        self.assertTrue(arguments["path"].endswith("approval-folder"))
 
 
 class MCPApprovalPolicyTests(unittest.TestCase):
