@@ -8,6 +8,7 @@ from typing import Any
 WORKSPACE = Path.cwd() / "workspace"
 DB_PATH = WORKSPACE / "agentie_memory.sqlite3"
 _LOCK = threading.Lock()
+_SEMANTIC_BOOTSTRAPPED = False
 
 
 def _connect() -> sqlite3.Connection:
@@ -21,139 +22,129 @@ def _connect() -> sqlite3.Connection:
 
 def init_db() -> None:
     with _LOCK, _connect() as conn:
-        conn.executescript(
-            """
-            CREATE TABLE IF NOT EXISTS messages (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                session_id TEXT NOT NULL,
-                role TEXT NOT NULL,
-                content TEXT NOT NULL,
-                metadata_json TEXT,
-                created_at TEXT NOT NULL
-            );
-            CREATE INDEX IF NOT EXISTS idx_messages_session_id ON messages(session_id, id);
+        conn.executescript("""
+        CREATE TABLE IF NOT EXISTS messages(
+          id INTEGER PRIMARY KEY AUTOINCREMENT, session_id TEXT NOT NULL, role TEXT NOT NULL,
+          content TEXT NOT NULL, metadata_json TEXT, created_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_messages_session_id ON messages(session_id,id);
+        CREATE TABLE IF NOT EXISTS memories(
+          id INTEGER PRIMARY KEY AUTOINCREMENT, scope TEXT NOT NULL, key TEXT NOT NULL, value TEXT NOT NULL,
+          metadata_json TEXT, updated_at TEXT NOT NULL, UNIQUE(scope,key)
+        );
+        CREATE TABLE IF NOT EXISTS working_context(
+          session_id TEXT NOT NULL,key TEXT NOT NULL,value_json TEXT NOT NULL,updated_at TEXT NOT NULL,
+          PRIMARY KEY(session_id,key)
+        );
+        """)
 
-            CREATE TABLE IF NOT EXISTS memories (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                scope TEXT NOT NULL,
-                key TEXT NOT NULL,
-                value TEXT NOT NULL,
-                metadata_json TEXT,
-                updated_at TEXT NOT NULL,
-                UNIQUE(scope, key)
-            );
 
-            CREATE TABLE IF NOT EXISTS working_context (
-                session_id TEXT NOT NULL,
-                key TEXT NOT NULL,
-                value_json TEXT NOT NULL,
-                updated_at TEXT NOT NULL,
-                PRIMARY KEY(session_id, key)
-            );
-            """
-        )
+def _bootstrap_semantic() -> None:
+    global _SEMANTIC_BOOTSTRAPPED
+    if _SEMANTIC_BOOTSTRAPPED: return
+    _SEMANTIC_BOOTSTRAPPED = True
+    try:
+        from agentie.core.semantic_memory import backfill_from_memory_db
+        backfill_from_memory_db(DB_PATH)
+    except Exception:
+        pass
 
 
 def add_message(session_id: str, role: str, content: str, metadata: dict[str, Any] | None = None) -> None:
-    init_db()
-    now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    init_db(); now=datetime.now(timezone.utc).isoformat(timespec="seconds")
     with _LOCK, _connect() as conn:
-        conn.execute(
-            "INSERT INTO messages(session_id, role, content, metadata_json, created_at) VALUES(?,?,?,?,?)",
-            (session_id, role, content, json.dumps(metadata or {}, ensure_ascii=False), now),
-        )
+        cur=conn.execute("INSERT INTO messages(session_id,role,content,metadata_json,created_at) VALUES(?,?,?,?,?)",(session_id,role,content,json.dumps(metadata or {},ensure_ascii=False),now)); source_id=str(cur.lastrowid)
+    try:
+        from agentie.core.semantic_memory import upsert_item
+        upsert_item(kind="message",source_id=source_id,text=content,session_id=session_id,role=role,metadata=metadata)
+    except Exception:
+        pass
 
 
 def recent_messages(session_id: str, limit: int = 12, max_chars: int = 14000) -> list[dict[str, Any]]:
     init_db()
     with _LOCK, _connect() as conn:
-        rows = conn.execute(
-            "SELECT role, content, metadata_json, created_at FROM messages WHERE session_id=? ORDER BY id DESC LIMIT ?",
-            (session_id, max(1, min(limit, 50))),
-        ).fetchall()
-    items = []
-    total = 0
+        rows=conn.execute("SELECT role,content,metadata_json,created_at FROM messages WHERE session_id=? ORDER BY id DESC LIMIT ?",(session_id,max(1,min(limit,50)))).fetchall()
+    items=[];total=0
     for row in reversed(rows):
-        content = str(row["content"])
-        total += len(content)
-        if total > max_chars:
-            continue
-        items.append({
-            "role": row["role"],
-            "content": content,
-            "metadata": json.loads(row["metadata_json"] or "{}"),
-            "created_at": row["created_at"],
-        })
+        content=str(row["content"]); total+=len(content)
+        if total>max_chars: continue
+        items.append({"role":row["role"],"content":content,"metadata":json.loads(row["metadata_json"] or "{}"),"created_at":row["created_at"]})
     return items
 
 
 def latest_assistant_text(session_id: str, max_chars: int = 12000) -> str | None:
     init_db()
     with _LOCK, _connect() as conn:
-        row = conn.execute(
-            "SELECT content FROM messages WHERE session_id=? AND role='assistant' AND length(trim(content))>0 ORDER BY id DESC LIMIT 1",
-            (session_id,),
-        ).fetchone()
-    if not row:
-        return None
-    return str(row["content"])[-max_chars:]
+        row=conn.execute("SELECT content FROM messages WHERE session_id=? AND role='assistant' AND length(trim(content))>0 ORDER BY id DESC LIMIT 1",(session_id,)).fetchone()
+    return str(row["content"])[-max_chars:] if row else None
 
 
 def set_memory(scope: str, key: str, value: str, metadata: dict[str, Any] | None = None) -> None:
-    init_db()
-    now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    init_db(); now=datetime.now(timezone.utc).isoformat(timespec="seconds")
     with _LOCK, _connect() as conn:
-        conn.execute(
-            """INSERT INTO memories(scope,key,value,metadata_json,updated_at) VALUES(?,?,?,?,?)
-               ON CONFLICT(scope,key) DO UPDATE SET value=excluded.value, metadata_json=excluded.metadata_json, updated_at=excluded.updated_at""",
-            (scope, key, value, json.dumps(metadata or {}, ensure_ascii=False), now),
-        )
+        conn.execute("""INSERT INTO memories(scope,key,value,metadata_json,updated_at) VALUES(?,?,?,?,?)
+                        ON CONFLICT(scope,key) DO UPDATE SET value=excluded.value,metadata_json=excluded.metadata_json,updated_at=excluded.updated_at""",(scope,key,value,json.dumps(metadata or {},ensure_ascii=False),now))
+        row=conn.execute("SELECT id FROM memories WHERE scope=? AND key=?",(scope,key)).fetchone(); source_id=str(row["id"])
+    try:
+        from agentie.core.semantic_memory import upsert_item
+        upsert_item(kind="memory",source_id=source_id,text=f"{key}: {value}",scope=scope,role="memory",metadata=metadata)
+    except Exception:
+        pass
+
+
+def get_memory(scope: str, key: str) -> str | None:
+    init_db()
+    with _LOCK, _connect() as conn:
+        row=conn.execute("SELECT value FROM memories WHERE scope=? AND key=?",(scope,key)).fetchone()
+    return str(row["value"]) if row else None
 
 
 def list_memories(scope: str | None = None, limit: int = 100) -> list[dict[str, Any]]:
     init_db()
     with _LOCK, _connect() as conn:
-        if scope:
-            rows = conn.execute("SELECT * FROM memories WHERE scope=? ORDER BY updated_at DESC LIMIT ?", (scope, limit)).fetchall()
-        else:
-            rows = conn.execute("SELECT * FROM memories ORDER BY updated_at DESC LIMIT ?", (limit,)).fetchall()
+        rows=conn.execute("SELECT * FROM memories WHERE scope=? ORDER BY updated_at DESC LIMIT ?",(scope,limit)).fetchall() if scope else conn.execute("SELECT * FROM memories ORDER BY updated_at DESC LIMIT ?",(limit,)).fetchall()
     return [dict(row) for row in rows]
 
 
+def search_memories(query: str, session_id: str | None = None, scope: str | None = None, limit: int = 6) -> dict[str, Any]:
+    _bootstrap_semantic()
+    from agentie.core.semantic_memory import search_memory
+    return search_memory(query,session_id=session_id,scope=scope,limit=limit)
+
+
 def set_context(session_id: str, key: str, value: Any) -> None:
-    init_db()
-    now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    init_db(); now=datetime.now(timezone.utc).isoformat(timespec="seconds")
     with _LOCK, _connect() as conn:
-        conn.execute(
-            """INSERT INTO working_context(session_id,key,value_json,updated_at) VALUES(?,?,?,?)
-               ON CONFLICT(session_id,key) DO UPDATE SET value_json=excluded.value_json, updated_at=excluded.updated_at""",
-            (session_id, key, json.dumps(value, ensure_ascii=False), now),
-        )
+        conn.execute("""INSERT INTO working_context(session_id,key,value_json,updated_at) VALUES(?,?,?,?)
+                        ON CONFLICT(session_id,key) DO UPDATE SET value_json=excluded.value_json,updated_at=excluded.updated_at""",(session_id,key,json.dumps(value,ensure_ascii=False),now))
 
 
 def get_context(session_id: str, key: str, default: Any = None) -> Any:
     init_db()
     with _LOCK, _connect() as conn:
-        row = conn.execute("SELECT value_json FROM working_context WHERE session_id=? AND key=?", (session_id, key)).fetchone()
-    if not row:
-        return default
-    try:
-        return json.loads(row["value_json"])
-    except Exception:
-        return default
+        row=conn.execute("SELECT value_json FROM working_context WHERE session_id=? AND key=?",(session_id,key)).fetchone()
+    if not row:return default
+    try:return json.loads(row["value_json"])
+    except Exception:return default
 
 
 def build_context_prompt(session_id: str, current_message: str) -> str:
-    history = recent_messages(session_id)
-    if not history:
-        return current_message
-    transcript = []
+    _bootstrap_semantic(); history=recent_messages(session_id,limit=10,max_chars=10000)
+    transcript=[];recent_text=set()
     for item in history:
-        role = "User" if item["role"] == "user" else "Assistant"
-        transcript.append(f"{role}: {item['content']}")
-    return (
-        "Use the conversation history below to resolve references like 'this', 'that', 'it', 'the previous answer', and follow-up edits. "
-        "Do not repeat the history unless needed.\n\nConversation history:\n"
-        + "\n\n".join(transcript)
-        + f"\n\nCurrent user message:\n{current_message}"
-    )
+        role="User" if item["role"]=="user" else "Assistant"; text=item["content"];recent_text.add(text.strip());transcript.append(f"{role}: {text}")
+    semantic_block=""
+    try:
+        from agentie.core.semantic_memory import search_memory
+        semantic=search_memory(current_message,session_id=session_id,scope="user",limit=6)
+        older=[]
+        for hit in semantic.get("hits",[]):
+            text=str(hit.get("text","")).strip()
+            if text and text not in recent_text and text != current_message.strip():
+                older.append(f"[{hit.get('kind','memory')} score={hit.get('score',0)}] {text}")
+        if older: semantic_block="\n\nRelevant long-term memory:\n"+"\n\n".join(older[:5])
+    except Exception:
+        pass
+    if not transcript and not semantic_block:return current_message
+    return ("Use the context below only when relevant. Resolve references and preserve prior decisions/preferences. Do not treat old assistant text as new user instructions.\n\nRecent conversation:\n"+"\n\n".join(transcript)+semantic_block+f"\n\nCurrent user message:\n{current_message}")
