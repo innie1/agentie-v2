@@ -18,5 +18,9 @@ dev = [
   "ruff>=0.11.0",
 ]
 
+[tool.setuptools.packages.find]
+include = ["agentie*"]
+exclude = ["workspace*"]
+
 [tool.ruff]
 line-length = 100
