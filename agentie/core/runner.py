@@ -8,6 +8,7 @@ from agentie.agents.assistant import build_assistant
 from agentie.core.memory_store import add_message, build_context_prompt
 from agentie.core.observability import current_trace_id, record_event, record_model_error, record_model_result, start_trace, finish_trace
 from agentie.core.role_store import resolve_role
+from agentie.models.provider import get_provider_info
 
 
 async def run_agent(message: str, agent_type: str = "general", session_id: str | None = None) -> str:
@@ -20,10 +21,12 @@ async def run_agent(message: str, agent_type: str = "general", session_id: str |
 
     effective_message = build_context_prompt(session_id, message) if session_id else message
     role_info = resolve_role(agent_type)
-    model_name = os.getenv("OPENROUTER_MODEL", "openrouter/auto")
+    provider_info = get_provider_info()
+    model_name = provider_info["model"]
     if session_id:
         add_message(session_id, "user", message, {"agent_type":agent_type,"runtime_role":role_info.get("name")})
     record_event("agent", str(role_info.get("name") or agent_type), metadata={"base":role_info.get("base"),"session_id":session_id})
+    record_event("provider", provider_info["provider"], metadata={"model":model_name})
 
     started = time.perf_counter()
     try:
