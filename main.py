@@ -10,6 +10,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse, HTMLResponse
 from pydantic import BaseModel, Field
 
+from agentie.core.advanced_local_router import try_advanced_local_command
 from agentie.core.local_router import try_local_command
 from agentie.core.runner import run_agent
 from agentie.tools.approval_tools import resolve_approval
@@ -21,11 +22,9 @@ FRONTEND_DIR = Path(__file__).parent / "frontend"
 FRONTEND_FILE = FRONTEND_DIR / "index.html"
 EVENTS_JS = FRONTEND_DIR / "events.js"
 
-
 class AgentRequest(BaseModel):
     message: str = Field(min_length=1, max_length=20_000)
     agent_type: str = Field(default="general", pattern="^(general|research|coding|manager|github)$")
-
 
 class AgentResponse(BaseModel):
     message: str
@@ -34,21 +33,17 @@ class AgentResponse(BaseModel):
     agent_type: str
     routed_by: str
 
-
 class ApprovalDecision(BaseModel):
     approved: bool
-
 
 def _load(path: Path, default):
     if not path.exists(): return default
     try: return json.loads(path.read_text(encoding="utf-8"))
     except Exception: return default
 
-
 def _save(path: Path, value) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(value, indent=2, ensure_ascii=False), encoding="utf-8")
-
 
 def _schedule_due(item: dict, now: datetime) -> bool:
     if item.get("status") != "active": return False
@@ -72,24 +67,19 @@ def _schedule_due(item: dict, now: datetime) -> bool:
         return now.weekday() == names.get(cadence.split(" ",1)[1], -1)
     return False
 
-
 @app.get("/")
 async def chat_ui():
     if not FRONTEND_FILE.exists(): raise HTTPException(status_code=404, detail="Frontend not found.")
-    html = FRONTEND_FILE.read_text(encoding="utf-8") + '\n<script src="/events.js"></script>\n'
-    return HTMLResponse(html)
-
+    return HTMLResponse(FRONTEND_FILE.read_text(encoding="utf-8") + '\n<script src="/events.js"></script>\n')
 
 @app.get("/events.js")
 async def events_js():
     if not EVENTS_JS.exists(): raise HTTPException(status_code=404, detail="Events script not found.")
     return FileResponse(EVENTS_JS, media_type="application/javascript")
 
-
 @app.get("/health")
 async def health() -> dict[str, str]:
     return {"status":"ok","service":"agentie-v2","version":"0.7.0"}
-
 
 @app.get("/local/events/poll")
 async def poll_local_events() -> dict[str, Any]:
@@ -117,11 +107,12 @@ async def poll_local_events() -> dict[str, Any]:
     if changed: _save(SCHEDULES, schedules)
     return {"events": events}
 
-
 @app.post("/agent/run", response_model=AgentResponse)
 async def agent_run(request: AgentRequest) -> AgentResponse:
     try:
-        local_result = try_local_command(request.message)
+        local_result = try_advanced_local_command(request.message)
+        if local_result is None:
+            local_result = try_local_command(request.message)
         if local_result is not None:
             message = str(local_result.get("message", ""))
             return AgentResponse(message=message, result=message, card=local_result.get("card"), agent_type=request.agent_type, routed_by="local")
@@ -132,12 +123,10 @@ async def agent_run(request: AgentRequest) -> AgentResponse:
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Agent run failed: {exc}") from exc
 
-
 @app.post("/approvals/{approval_id}/resolve")
 async def approval_resolve(approval_id: str, decision: ApprovalDecision) -> dict:
     try: return resolve_approval(approval_id, decision.approved)
     except ValueError as exc: raise HTTPException(status_code=400, detail=str(exc)) from exc
-
 
 if __name__ == "__main__":
     port = int(os.getenv("PORT", "8000")); uvicorn.run("main:app", host="0.0.0.0", port=port, reload=False)
