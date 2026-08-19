@@ -7,10 +7,12 @@ from fastapi import FastAPI,File,HTTPException,Request,UploadFile
 from fastapi.responses import FileResponse,HTMLResponse,Response
 from pydantic import BaseModel,Field
 from agentie.core.attachment_reasoner import reason_about_documents
+from agentie.core.capability_router import route_capability_request
 from agentie.core.code_execution import route_code_command
 from agentie.core.conversation_loop import consume_followup,detect_incomplete_intent
 from agentie.core.file_service import MAX_FILE_BYTES,resolve_upload,run_action,save_upload
 from agentie.core.local_router import route_local_actions
+from agentie.core.mcp_catalog import presets as mcp_presets
 from agentie.core.mcp_client import plugin_state,route_mcp_command
 from agentie.core.memory_store import add_message
 from agentie.core.observability import finish_trace,get_trace,record_event,record_route,recent_traces,start_trace,summary_card,trace_card
@@ -20,12 +22,13 @@ from agentie.core.provider_gate import local_fallback_message,provider_allowed
 from agentie.core.reference_router import remember_active_from_card,try_active_reference
 from agentie.core.routine_worker import poll_routine_events,start_routine_worker
 from agentie.core.runner import run_agent
+from agentie.core.skill_registry import list_skills
 from agentie.tools import local_utility_tools as local_utils
 from agentie.tools.approval_tools import resolve_approval
 from agentie.tools.advanced_utility_tools import SCHEDULES
 from agentie.tools.productivity_tools import REMINDERS
 
-app=FastAPI(title="Agentie API",version="1.8.1",description="Local-first Agentie runtime with observability, cost tracking, memory, routines, jobs, RAG, MCP discovery, plugins, skills and local artifact generation")
+app=FastAPI(title="Agentie API",version="1.9.0",description="Local-first Agentie runtime with observability, cost tracking, memory, routines, jobs, RAG, capability routing, MCP, plugins, skills and local artifact generation")
 FRONTEND_DIR=Path(__file__).parent/"frontend";FRONTEND_FILE=FRONTEND_DIR/"index.html";CARDS_JS=FRONTEND_DIR/"cards.js";EVENTS_JS=FRONTEND_DIR/"events.js";UPLOAD_JS=FRONTEND_DIR/"upload.js";PLUGINS_JS=FRONTEND_DIR/"plugins.js"
 class AgentRequest(BaseModel):
     message:str=Field(min_length=1,max_length=20_000);agent_type:str=Field(default="general",pattern="^(general|research|coding|manager|github)$");session_id:str|None=Field(default=None,max_length=200)
@@ -102,7 +105,7 @@ async def startup_event():start_routine_worker()
 @app.get("/")
 async def chat_ui():
     if not FRONTEND_FILE.exists():raise HTTPException(404,"Frontend not found.")
-    html=FRONTEND_FILE.read_text(encoding="utf-8")+'\n<script src="/cards.js?v=181"></script>\n<script src="/events.js?v=181"></script>\n<script src="/upload.js?v=181"></script>\n<script src="/plugins.js?v=181"></script>\n';return HTMLResponse(html,headers={"Cache-Control":"no-store, no-cache, must-revalidate, max-age=0"})
+    html=FRONTEND_FILE.read_text(encoding="utf-8")+'\n<script src="/cards.js?v=190"></script>\n<script src="/events.js?v=190"></script>\n<script src="/upload.js?v=190"></script>\n<script src="/plugins.js?v=190"></script>\n';return HTMLResponse(html,headers={"Cache-Control":"no-store, no-cache, must-revalidate, max-age=0"})
 @app.get("/cards.js")
 async def cards_js():return Response(CARDS_JS.read_text(encoding="utf-8"),media_type="application/javascript",headers={"Cache-Control":"no-store"})
 @app.get("/events.js")
@@ -112,9 +115,10 @@ async def upload_js():return Response(UPLOAD_JS.read_text(encoding="utf-8"),medi
 @app.get("/plugins.js")
 async def plugins_js():return Response(PLUGINS_JS.read_text(encoding="utf-8"),media_type="application/javascript",headers={"Cache-Control":"no-store"})
 @app.get("/plugins/state")
-async def plugins_state():return plugin_state()
+async def plugins_state():
+    state=plugin_state();state["plugins"]=list_skills();registered={str(x.get("name") or "").lower() for x in state.get("mcp_servers",[])};state["mcp_presets"]=[{**item,"installed":item["id"].lower() in registered} for item in mcp_presets()];return state
 @app.get("/health")
-async def health():return {"status":"ok","service":"agentie-v2","version":"1.8.1"}
+async def health():return {"status":"ok","service":"agentie-v2","version":"1.9.0"}
 @app.post("/files/upload")
 async def file_upload(file:UploadFile=File(...)):
     try:
@@ -190,7 +194,13 @@ async def agent_run(request:AgentRequest,http_request:Request):
             if follow.get("cancelled") or not follow.get("command"):
                 message=str(follow.get("message",""));_record_local(session_key,request.message,message,None,request.agent_type,"clarification");return AgentResponse(message=message,result=message,card=None,agent_type=request.agent_type,routed_by="clarification")
             effective=str(follow["command"])
-        routed=_route_request_actions(effective);local_results=routed.get("results",[]);unresolved=routed.get("unresolved",[]);clarification=None;remaining=[]
+        routed=_route_request_actions(effective);local_results=routed.get("results",[]);unresolved=routed.get("unresolved",[])
+        capability_remaining=[]
+        for clause in unresolved:
+            capability=await route_capability_request(clause,request.agent_type)
+            if capability is not None:local_results.append(capability)
+            else:capability_remaining.append(clause)
+        unresolved=capability_remaining;clarification=None;remaining=[]
         for clause in unresolved:
             incomplete=detect_incomplete_intent(session_key,clause)
             if incomplete and clarification is None:clarification=str(incomplete.get("message",""))
@@ -204,7 +214,7 @@ async def agent_run(request:AgentRequest,http_request:Request):
             if clarification:
                 card=_multi_card(local_results,clarification);summary=_result_summary(local_results,clarification);_record_local(session_key,request.message,summary,card,request.agent_type,"clarification");return AgentResponse(message="",result=clarification,card=card,agent_type=request.agent_type,routed_by="clarification")
             if len(local_results)==1:
-                item=local_results[0];message=str(item.get("message",""));card=item.get("card");_record_local(session_key,request.message,message,card,request.agent_type,"local");return AgentResponse(message=message,result=message,card=card,agent_type=request.agent_type,routed_by="local")
+                item=local_results[0];message=str(item.get("message",""));card=item.get("card");route="capability" if isinstance(card,dict) and card.get("type")=="mcp_approval" else "local";_record_local(session_key,request.message,message,card,request.agent_type,route);return AgentResponse(message=message,result=message,card=card,agent_type=request.agent_type,routed_by=route)
             card=_multi_card(local_results);summary=_result_summary(local_results);_record_local(session_key,request.message,summary,card,request.agent_type,"local");return AgentResponse(message="",result="",card=card,agent_type=request.agent_type,routed_by="local")
         if not local_results and clarification and not unresolved:
             _record_local(session_key,request.message,clarification,None,request.agent_type,"clarification");return AgentResponse(message=clarification,result=clarification,card=None,agent_type=request.agent_type,routed_by="clarification")
