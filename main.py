@@ -12,11 +12,12 @@ from pydantic import BaseModel, Field
 
 from agentie.core.local_router import route_local_actions
 from agentie.core.runner import run_agent
+from agentie.tools import local_utility_tools as local_utils
 from agentie.tools.approval_tools import resolve_approval
 from agentie.tools.advanced_utility_tools import SCHEDULES
 from agentie.tools.productivity_tools import REMINDERS
 
-app = FastAPI(title="Agentie API", version="0.8.0", description="Local-first Agentie runtime with fuzzy intent routing, inline cards, and persistent utilities")
+app = FastAPI(title="Agentie API", version="0.8.1", description="Local-first Agentie runtime with fuzzy intent routing, inline cards, and persistent utilities")
 FRONTEND_DIR = Path(__file__).parent / "frontend"
 FRONTEND_FILE = FRONTEND_DIR / "index.html"
 CARDS_JS = FRONTEND_DIR / "cards.js"
@@ -74,6 +75,28 @@ def _schedule_due(item: dict, now: datetime) -> bool:
     return False
 
 
+def _refresh_timer_cards(results: list[dict]) -> None:
+    """Re-arm relative timers immediately before returning the completed response.
+
+    Multi-action requests may spend time on Wikipedia, weather, or an LLM fallback
+    after the timer clause is parsed. Re-arming here makes a requested 15-second
+    timer actually start when the user receives the result.
+    """
+    for result in results:
+        card = result.get("card")
+        if not isinstance(card, dict) or card.get("type") != "timer":
+            continue
+        timer_id = str(card.get("id", ""))
+        seconds = float(card.get("duration_seconds") or 0)
+        if not timer_id or seconds <= 0:
+            continue
+        refreshed = local_utils._restart_timer(timer_id, seconds)
+        if refreshed:
+            card["status"] = refreshed.get("status", "running")
+            card["due_at"] = refreshed.get("due_at")
+            card["duration_seconds"] = seconds
+
+
 def _multi_card(results: list[dict], extra_message: str | None = None) -> dict:
     items = [{"message": r.get("message", ""), "card": r.get("card")} for r in results]
     if extra_message:
@@ -85,7 +108,7 @@ def _multi_card(results: list[dict], extra_message: str | None = None) -> dict:
 async def chat_ui():
     if not FRONTEND_FILE.exists(): raise HTTPException(status_code=404, detail="Frontend not found.")
     html = FRONTEND_FILE.read_text(encoding="utf-8")
-    html += '\n<script src="/cards.js?v=080"></script>\n<script src="/events.js?v=080"></script>\n'
+    html += '\n<script src="/cards.js?v=081"></script>\n<script src="/events.js?v=081"></script>\n'
     return HTMLResponse(html, headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"})
 
 
@@ -103,7 +126,7 @@ async def events_js():
 
 @app.get("/health")
 async def health() -> dict[str, str]:
-    return {"status":"ok","service":"agentie-v2","version":"0.8.0"}
+    return {"status":"ok","service":"agentie-v2","version":"0.8.1"}
 
 
 @app.get("/local/events/poll")
@@ -140,15 +163,14 @@ async def agent_run(request: AgentRequest) -> AgentResponse:
         local_results: list[dict] = routed.get("results", [])
         unresolved: list[str] = routed.get("unresolved", [])
 
-        # Everything was understood by deterministic/free routing.
         if local_results and not unresolved:
+            _refresh_timer_cards(local_results)
             if len(local_results) == 1:
                 item = local_results[0]
                 message = str(item.get("message", ""))
                 return AgentResponse(message=message, result=message, card=item.get("card"), agent_type=request.agent_type, routed_by="local")
             return AgentResponse(message="", result="", card=_multi_card(local_results), agent_type=request.agent_type, routed_by="local")
 
-        # Mixed request: keep completed local work and send only unresolved clauses to the model.
         if local_results and unresolved:
             unresolved_prompt = (
                 "Handle only the following unresolved parts of the user's request. Do not repeat or redo other actions.\n\n"
@@ -157,11 +179,10 @@ async def agent_run(request: AgentRequest) -> AgentResponse:
             try:
                 llm_result = await run_agent(unresolved_prompt, request.agent_type)
             except Exception as exc:
-                # A provider/credit failure must not erase successfully completed local actions.
                 llm_result = "I completed the other actions, but I couldn't process: " + "; ".join(unresolved) + f". ({exc})"
+            _refresh_timer_cards(local_results)
             return AgentResponse(message="", result=llm_result, card=_multi_card(local_results, llm_result), agent_type=request.agent_type, routed_by="hybrid")
 
-        # Nothing matched locally; use the model normally.
         result = await run_agent(request.message, request.agent_type)
         return AgentResponse(message=result, result=result, card=None, agent_type=request.agent_type, routed_by="llm")
     except RuntimeError as exc:
