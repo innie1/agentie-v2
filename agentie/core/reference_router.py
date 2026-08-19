@@ -1,4 +1,4 @@
-import json,re
+import json,re,uuid
 from datetime import datetime,timedelta
 from typing import Any
 from agentie.core.memory_store import get_context,set_context
@@ -28,23 +28,93 @@ def _ensure_jobs_resumed():
         resume_unfinished(_job_step_runner);start_routine_worker()
     except RuntimeError:_JOBS_RESUMED=False
     except Exception:pass
-def _looks_like_background_job(message):
-    text=re.sub(r"\s+"," ",message.strip());low=text.lower();local_hits=len(re.findall(r"\b(timer|alarm|remind|time|weather|calculate|convert|note|system status|stopwatch|routine)\b",low));complex_hits=len(_JOB_SIGNAL_RE.findall(low))
-    if re.search(r"\b(delegate|deep search|run (?:this )?as a job|background job|parallel agents?)\b",low):return True
-    if local_hits>=2 and complex_hits==0:return False
-    return complex_hits>=2 or (complex_hits>=1 and len(text)>=180)
-def remember_active_from_card(session_id,card):
-    if not isinstance(card,dict):return
-    if card.get('type')=='multi':
-        for item in reversed(card.get('items') or []):
-            child=item.get('card') if isinstance(item,dict) else None
-            if isinstance(child,dict):remember_active_from_card(session_id,child)
-            if get_context(session_id,'active_object'):return
-        return
-    t=str(card.get('type') or '')
-    if t in {'timer','alarm','reminder','schedule','uploaded_file','note','task','tasks','job_progress','routine','routines','agent_role','agent_roles'}:
-        set_context(session_id,'active_object',{'type':t,'card':card})
-        if t=='job_progress' and card.get('id'):set_context(session_id,'active_job_id',str(card['id']))
+
+def _direct_role_command(message):
+    try:
+        from agentie.core.role_store import route_role_command
+        return route_role_command(message)
+    except Exception:return None
+
+def _clean_memory_words(text):
+    stop={'what','is','was','were','the','a','an','my','i','did','do','you','me','tell','told','remember','recall','earlier','important','detail','details','name','chose','choose','call','called','for','about','again','please'}
+    return {w for w in re.findall(r"[a-z0-9][a-z0-9_-]*",text.lower()) if w not in stop}
+
+def _best_saved_memory(query):
+    from agentie.core.memory_store import get_memory,list_memories,search_memories
+    q=query.strip(' .?!"“”')
+    exact=get_memory('user',q)
+    if exact is not None:return {'key':q,'value':exact,'score':1.0}
+    qwords=_clean_memory_words(q);best=None
+    for item in list_memories('user',100):
+        key=str(item.get('key',''));value=str(item.get('value',''));words=_clean_memory_words(key+' '+value)
+        overlap=len(qwords & words)/max(1,len(qwords))
+        if q.lower() in key.lower() or key.lower() in q.lower():overlap=max(overlap,.92)
+        candidate={'key':key,'value':value,'score':overlap}
+        if best is None or candidate['score']>best['score']:best=candidate
+    if best and best['score']>=.45:return best
+    try:result=search_memories(q,scope='user',limit=8)
+    except Exception:return best if best and best['score']>=.25 else None
+    memory_hits=[h for h in result.get('hits',[]) if h.get('kind')=='memory']
+    if not memory_hits:return best if best and best['score']>=.25 else None
+    top=memory_hits[0];text=str(top.get('text',''))
+    if ': ' in text:key,value=text.split(': ',1)
+    else:key,value='memory',text
+    return {'key':key,'value':value,'score':float(top.get('score') or 0),'backend':result.get('backend')}
+
+def _direct_memory_query(message):
+    text=' '.join(message.strip().split());low=text.lower().strip(' .?!')
+    query=None
+    patterns=[
+        r"^(?:what(?:'s| is| was)|tell me)\s+my\s+(.+)$",
+        r"^what did i (?:call|name)\s+(?:my|the)\s+(.+)$",
+        r"^what was the name i (?:chose|choose|picked|gave) for (?:my|the)\s+(.+)$",
+        r"^what (?:important )?(?:project )?detail did i tell you (?:earlier|before)$",
+        r"^what (?:important )?project detail did i (?:tell|give) you.*$",
+        r"^what do you remember about (.+)$",
+        r"^(?:search|check|look in) (?:your )?memory (?:for|about) (.+)$",
+    ]
+    for i,p in enumerate(patterns):
+        m=re.match(p,low,re.I)
+        if not m:continue
+        if i in {3,4}:query='project'
+        else:query=m.group(1).strip()
+        break
+    if query is None:
+        # Broad but clearly memory-oriented paraphrases only; ordinary questions remain untouched.
+        if re.search(r"\b(?:remember|memory|told you earlier|told you before|said earlier|said before)\b",low):query=low
+        else:return None
+    aliases=[]
+    if query in {'project','project name'}:aliases=['project codename','project name','project']
+    elif 'codename' in query:aliases=[query,'project codename']
+    else:aliases=[query]
+    best=None
+    for q in aliases:
+        hit=_best_saved_memory(q)
+        if hit and (best is None or hit.get('score',0)>best.get('score',0)):best=hit
+    if not best:return {'message':"I couldn't find a relevant saved memory.",'card':{'type':'semantic_memory','query':query,'hits':[]},'routed_by':'memory'}
+    return {'message':f"I remember {best['key']}: {best['value']}",'card':{'type':'memory','key':best['key'],'value':best['value'],'scope':'user'},'routed_by':'memory'}
+
+def _direct_reminder_create(message):
+    text=' '.join(message.strip().split())
+    patterns=[
+        re.compile(r"^(?:please\s+)?remind\s+me\s+in\s+(\d+(?:\.\d+)?)\s*(seconds?|secs?|sec|s|minutes?|mins?|min|m|hours?|hrs?|hr|h)\s+(?:to\s+)?(.+)$",re.I),
+        re.compile(r"^(?:please\s+)?remind\s+me\s+(?:to\s+)?(.+?)\s+in\s+(\d+(?:\.\d+)?)\s*(seconds?|secs?|sec|s|minutes?|mins?|min|m|hours?|hrs?|hr|h)$",re.I),
+    ]
+    m=patterns[0].match(text)
+    if m:value=float(m.group(1));unit=m.group(2);reminder_text=m.group(3)
+    else:
+        m=patterns[1].match(text)
+        if not m:return None
+        reminder_text=m.group(1);value=float(m.group(2));unit=m.group(3)
+    sec=value*(3600 if unit.lower().startswith('h') else 60 if unit.lower().startswith('m') else 1)
+    if sec<=0:return {'message':'Reminder duration must be greater than zero.','card':None,'routed_by':'reminder'}
+    reminder_text=reminder_text.strip(' .?!"“”')
+    if not reminder_text:return {'message':'What should I remind you about?','card':None,'routed_by':'reminder'}
+    items=_load_reminders();now=datetime.now().astimezone();item={'id':uuid.uuid4().hex[:8],'text':reminder_text,'status':'scheduled','created_at':now.isoformat(timespec='seconds'),'due_at':(now+timedelta(seconds=sec)).isoformat(timespec='seconds'),'repeat_minutes':0}
+    items.append(item);productivity._save(productivity.REMINDERS,items)
+    card={'type':'reminder',**item}
+    return {'message':f"Reminder set for {value:g} {unit.lower()} from now — {reminder_text}.",'card':card,'routed_by':'reminder'}
+
 def _job_command(session_id,message):
     from agentie.core.job_engine import cancel_job,create_job,get_job,job_card,job_events,start_job
     text=re.sub(r"\s+"," ",message.strip());low=text.lower().strip(' .?!');active_id=str(get_context(session_id,'active_job_id','') or '')
@@ -73,8 +143,33 @@ def _job_command(session_id,message):
     if explicit or _looks_like_background_job(text):
         j=create_job(session_id,goal);set_context(session_id,'active_job_id',j['id']);start_job(j['id'],_job_step_runner);card=job_card(j);set_context(session_id,'active_object',{'type':'job_progress','card':card});return {'message':f"Started job {j['id']} with {j['total_steps']} planned step(s). You can keep chatting while it runs.",'card':card,'routed_by':'job'}
     return None
+def _looks_like_background_job(message):
+    text=re.sub(r"\s+"," ",message.strip());low=text.lower();local_hits=len(re.findall(r"\b(timer|alarm|remind|time|weather|calculate|convert|note|system status|stopwatch|routine)\b",low));complex_hits=len(_JOB_SIGNAL_RE.findall(low))
+    if re.search(r"\b(delegate|deep search|run (?:this )?as a job|background job|parallel agents?)\b",low):return True
+    if local_hits>=2 and complex_hits==0:return False
+    return complex_hits>=2 or (complex_hits>=1 and len(text)>=180)
+def remember_active_from_card(session_id,card):
+    if not isinstance(card,dict):return
+    if card.get('type')=='multi':
+        for item in reversed(card.get('items') or []):
+            child=item.get('card') if isinstance(item,dict) else None
+            if isinstance(child,dict):remember_active_from_card(session_id,child)
+            if get_context(session_id,'active_object'):return
+        return
+    t=str(card.get('type') or '')
+    if t in {'timer','alarm','reminder','schedule','uploaded_file','note','task','tasks','job_progress','routine','routines','agent_role','agent_roles','memory'}:
+        set_context(session_id,'active_object',{'type':t,'card':card})
+        if t=='job_progress' and card.get('id'):set_context(session_id,'active_job_id',str(card['id']))
 def try_active_reference(session_id,message):
-    _ensure_jobs_resumed();job=_job_command(session_id,message)
+    _ensure_jobs_resumed()
+    role=_direct_role_command(message)
+    if role is not None:
+        role['routed_by']='role';return role
+    reminder=_direct_reminder_create(message)
+    if reminder is not None:return reminder
+    memory=_direct_memory_query(message)
+    if memory is not None:return memory
+    job=_job_command(session_id,message)
     if job is not None:return job
     active=get_context(session_id,'active_object')
     if not isinstance(active,dict):return None
@@ -85,11 +180,12 @@ def try_active_reference(session_id,message):
         if duration and ref and (change or add):
             requested=_seconds(duration)
             if add:
-                try:due=datetime.fromisoformat(str(card.get('due_at')));now=datetime.now(due.tzinfo) if due.tzinfo else datetime.now();requested+=max(0.0,(due-now).total_seconds())
-                except Exception:requested+=float(card.get('duration_seconds') or 0)
+                # Add to the configured timer duration, not to whatever milliseconds happen to remain.
+                # This makes 15s + 10s deterministically become a 25s timer and keeps the same timer id.
+                requested+=float(card.get('duration_seconds') or 0)
             r=local_utils._restart_timer(tid,requested)
             if not r:return None
-            nc=dict(card);nc.update({'type':typ,'id':tid,'status':r.get('status','running'),'duration_seconds':requested,'due_at':r.get('due_at')});set_context(session_id,'active_object',{'type':typ,'card':nc});p=int(requested) if float(requested).is_integer() else round(requested,1);return {'message':f"{'Timer' if typ=='timer' else 'Alarm'} updated to {p} seconds from now.",'card':nc,'routed_by':'active_reference'}
+            nc=dict(card);nc.update({'type':typ,'id':tid,'status':r.get('status','running'),'duration_seconds':requested,'due_at':r.get('due_at')});set_context(session_id,'active_object',{'type':typ,'card':nc});p=int(requested) if float(requested).is_integer() else round(requested,1);return {'message':f"{'Timer' if typ=='timer' else 'Alarm'} updated to {p} seconds.",'card':nc,'routed_by':'active_reference'}
         if ref and re.search(r"\b(?:cancel|stop|dismiss)\b",text):
             with local_utils._TIMER_LOCK:
                 item=local_utils._TIMERS.get(tid)
