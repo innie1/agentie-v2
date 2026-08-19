@@ -44,8 +44,11 @@ def supabase_insert(table: str, record_json: str, approval_id: str) -> str:
     """
     if not table.replace("_", "").isalnum():
         raise ValueError("Invalid table name.")
-    if not approval_is_granted(approval_id, f"supabase_insert:{table}"):
-        raise PermissionError("A matching approved Supabase insert request is required.")
+    action = f"supabase_insert:{table}"
+    if not approval_is_granted(action):
+        raise PermissionError(
+            f"A matching approved request is required. Expected approval action: {action}"
+        )
     record = json.loads(record_json)
     if not isinstance(record, dict):
         raise ValueError("record_json must contain one JSON object.")
