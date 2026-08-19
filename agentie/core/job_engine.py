@@ -8,23 +8,20 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Awaitable, Callable
 
-WORKSPACE = Path.cwd() / "workspace"
-DB_PATH = WORKSPACE / "agentie_jobs.sqlite3"
-_LOCK = threading.Lock()
-_RUNNING: dict[str, asyncio.Task] = {}
-StepRunner = Callable[[str, str, str], Awaitable[str]]
+WORKSPACE=Path.cwd()/"workspace"
+DB_PATH=WORKSPACE/"agentie_jobs.sqlite3"
+_LOCK=threading.Lock();_RUNNING:dict[str,asyncio.Task]={}
+StepRunner=Callable[[str,str,str],Awaitable[str]]
 
-
-def _now() -> str: return datetime.now(timezone.utc).isoformat(timespec="seconds")
+def _now():return datetime.now(timezone.utc).isoformat(timespec="seconds")
 def _connect():
-    WORKSPACE.mkdir(parents=True, exist_ok=True); c=sqlite3.connect(DB_PATH,timeout=10); c.row_factory=sqlite3.Row; c.execute("PRAGMA journal_mode=WAL"); return c
-
+    WORKSPACE.mkdir(parents=True,exist_ok=True);c=sqlite3.connect(DB_PATH,timeout=10);c.row_factory=sqlite3.Row;c.execute("PRAGMA journal_mode=WAL");return c
 def init_db():
     with _LOCK,_connect() as c:c.executescript("""
     CREATE TABLE IF NOT EXISTS jobs(id TEXT PRIMARY KEY,session_id TEXT NOT NULL,goal TEXT NOT NULL,status TEXT NOT NULL,created_at TEXT NOT NULL,updated_at TEXT NOT NULL,final_output TEXT,error TEXT,provider_calls INTEGER NOT NULL DEFAULT 0,budget_provider_calls INTEGER NOT NULL DEFAULT 8);
     CREATE TABLE IF NOT EXISTS job_steps(job_id TEXT NOT NULL,id TEXT NOT NULL,position INTEGER NOT NULL,title TEXT NOT NULL,instruction TEXT NOT NULL,specialist TEXT NOT NULL,status TEXT NOT NULL,depends_on_json TEXT NOT NULL,output TEXT,error TEXT,attempts INTEGER NOT NULL DEFAULT 0,started_at TEXT,finished_at TEXT,PRIMARY KEY(job_id,id));
     CREATE TABLE IF NOT EXISTS job_events(id INTEGER PRIMARY KEY AUTOINCREMENT,job_id TEXT NOT NULL,kind TEXT NOT NULL,message TEXT NOT NULL,metadata_json TEXT,created_at TEXT NOT NULL);
-    CREATE INDEX IF NOT EXISTS idx_job_steps_job ON job_steps(job_id,position); CREATE INDEX IF NOT EXISTS idx_job_events_job ON job_events(job_id,id);
+    CREATE INDEX IF NOT EXISTS idx_job_steps_job ON job_steps(job_id,position);CREATE INDEX IF NOT EXISTS idx_job_events_job ON job_events(job_id,id);
     """)
 def _event(j,k,m,meta=None):
     with _LOCK,_connect() as c:c.execute("INSERT INTO job_events(job_id,kind,message,metadata_json,created_at) VALUES(?,?,?,?,?)",(j,k,m,json.dumps(meta or {},ensure_ascii=False),_now()))
@@ -35,26 +32,29 @@ def _specialist(t):
     if re.search(r"\b(research|search|web|latest|sources?|compare|investigate|find out|news)\b",x):return "research"
     return "general"
 def make_plan(goal):
-    clean=re.sub(r"\s+"," ",goal.strip()); low=clean.lower(); research=bool(re.search(r"\b(research|search|latest|compare|investigate|sources?|web|deep research)\b",low)); synthesis=bool(re.search(r"\b(report|summary|summarize|write|draft|document|pdf|presentation|research)\b",low)); coding=bool(re.search(r"\b(code|build|implement|fix|debug|refactor|test)\b",low))
+    clean=re.sub(r"\s+"," ",goal.strip());low=clean.lower();research=bool(re.search(r"\b(research|search|latest|compare|investigate|sources?|web|deep research)\b",low));synthesis=bool(re.search(r"\b(report|summary|summarize|write|draft|document|pdf|presentation|research)\b",low));coding=bool(re.search(r"\b(code|build|implement|fix|debug|refactor|test)\b",low))
     if research and synthesis:return [{"id":"s1","title":"Deep research","instruction":clean,"specialist":"deep_research","depends_on":[]}]
     if coding and re.search(r"\b(test|verify|check)\b",low):return [{"id":"s1","title":"Implement","instruction":clean,"specialist":"coding","depends_on":[]},{"id":"s2","title":"Verify","instruction":"Verify the implementation, run appropriate checks, and report failures clearly.","specialist":"coding","depends_on":["s1"]}]
-    sequential=bool(re.search(r"\bthen\b",clean,re.I)); clauses=[x.strip(" .") for x in re.split(r"\s*(?:;|\bthen\b|\band then\b)\s*",clean,flags=re.I) if x.strip(" .")]
+    sequential=bool(re.search(r"\bthen\b",clean,re.I));clauses=[x.strip(" .") for x in re.split(r"\s*(?:;|\bthen\b|\band then\b)\s*",clean,flags=re.I) if x.strip(" .")]
     if len(clauses)==1:
-        parts=re.split(r"\s*,\s*(?:and\s+)?|\s+and\s+",clean,flags=re.I); action=re.compile(r"^(?:research|search|find|compare|analyze|analyse|write|create|build|fix|test|inspect|read|summarize|summarise|check|look|calculate|convert|show)\b",re.I)
+        parts=re.split(r"\s*,\s*(?:and\s+)?|\s+and\s+",clean,flags=re.I);action=re.compile(r"^(?:research|search|find|compare|analyze|analyse|write|create|build|fix|test|inspect|read|summarize|summarise|check|look|calculate|convert|show)\b",re.I)
         if len(parts)>1 and sum(bool(action.search(p.strip())) for p in parts)>=2:clauses=[p.strip(" .") for p in parts if p.strip(" .")]
-    out=[]; prev=None
+    out=[];prev=None
     for i,clause in enumerate(clauses[:8],1):
-        sid=f"s{i}"; out.append({"id":sid,"title":clause[:64],"instruction":clause,"specialist":_specialist(clause),"depends_on":[prev] if sequential and prev else []}); prev=sid
+        sid=f"s{i}";out.append({"id":sid,"title":clause[:64],"instruction":clause,"specialist":_specialist(clause),"depends_on":[prev] if sequential and prev else []});prev=sid
     return out or [{"id":"s1","title":"Complete goal","instruction":clean,"specialist":_specialist(clean),"depends_on":[]}]
-def create_job(session_id,goal,budget_provider_calls=8):
-    init_db(); jid=uuid.uuid4().hex[:10]; now=_now(); plan=make_plan(goal); budget=max(0,min(int(budget_provider_calls),50))
+def create_job(session_id,goal,budget_provider_calls=8,preferred_role=None):
+    init_db();jid=uuid.uuid4().hex[:10];now=_now();plan=make_plan(goal);budget=max(0,min(int(budget_provider_calls),50));preferred=str(preferred_role or "").strip().lower()
+    if preferred:
+        for step in plan:
+            if step["specialist"]!="deep_research":step["specialist"]=preferred
     with _LOCK,_connect() as c:
         c.execute("INSERT INTO jobs(id,session_id,goal,status,created_at,updated_at,budget_provider_calls) VALUES(?,?,?,?,?,?,?)",(jid,session_id,goal,"queued",now,now,budget))
         for pos,s in enumerate(plan):c.execute("INSERT INTO job_steps(job_id,id,position,title,instruction,specialist,status,depends_on_json) VALUES(?,?,?,?,?,?,?,?)",(jid,s["id"],pos,s["title"],s["instruction"],s["specialist"],"queued",json.dumps(s.get("depends_on",[]))))
-    _event(jid,"plan",f"Created plan with {len(plan)} step(s).",{"steps":plan});return get_job(jid)
+    _event(jid,"plan",f"Created plan with {len(plan)} step(s).",{"steps":plan,"preferred_role":preferred or None});return get_job(jid)
 def get_job(jid):
     init_db()
-    with _LOCK,_connect() as c:j=c.execute("SELECT * FROM jobs WHERE id=?",(jid,)).fetchone(); rows=c.execute("SELECT * FROM job_steps WHERE job_id=? ORDER BY position",(jid,)).fetchall() if j else []
+    with _LOCK,_connect() as c:j=c.execute("SELECT * FROM jobs WHERE id=?",(jid,)).fetchone();rows=c.execute("SELECT * FROM job_steps WHERE job_id=? ORDER BY position",(jid,)).fetchall() if j else []
     if not j:raise KeyError(jid)
     steps=[]
     for r in rows:i=dict(r);i["depends_on"]=json.loads(i.pop("depends_on_json") or "[]");steps.append(i)
@@ -100,6 +100,7 @@ async def _run_one(jid,step,runner):
             from agentie.core.deep_research import run_deep_research
             result=await run_deep_research(instruction,runner,job["session_id"]);output=result["report"]
             _event(jid,"research_sources",f"Deep research collected {len(result['sources'])} sources.",{"queries":result["queries"],"sources":result["sources"]})
+            _event(jid,"citation_verification","Citation verification completed.",result.get("verification") or {})
         else:output=await runner(instruction,step["specialist"],job["session_id"])
         _set_step(jid,step["id"],status="completed",output=output,error=None,finished_at=_now());_event(jid,"step_completed",f"Completed: {step['title']}",{"step_id":step["id"]})
     except asyncio.CancelledError:_set_step(jid,step["id"],status="cancelled",finished_at=_now());raise
