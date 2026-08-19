@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shlex
 import subprocess
 from pathlib import Path
@@ -25,13 +26,7 @@ def _file_items() -> list[dict[str, Any]]:
     for path in sorted(WORKSPACE.iterdir(), key=lambda p: (not p.is_dir(), p.name.lower())):
         try:
             stat = path.stat()
-            items.append({
-                "name": path.name,
-                "kind": "folder" if path.is_dir() else "file",
-                "size_bytes": 0 if path.is_dir() else stat.st_size,
-                "modified": stat.st_mtime,
-                "suffix": path.suffix.lower(),
-            })
+            items.append({"name": path.name, "kind": "folder" if path.is_dir() else "file", "size_bytes": 0 if path.is_dir() else stat.st_size, "modified": stat.st_mtime, "suffix": path.suffix.lower()})
         except OSError:
             continue
     return items
@@ -75,8 +70,6 @@ def _terminal(command: str) -> dict[str, Any]:
     if not parts:
         return {"command": raw, "output": "", "exit_code": 0}
     cmd = parts[0].lower()
-    # This desktop terminal is intentionally workspace-scoped. It is not a raw
-    # host shell. More powerful execution belongs in a hardened VM/container.
     if cmd in {"pwd", "cd"}:
         return {"command": raw, "output": str(WORKSPACE.resolve()), "exit_code": 0}
     if cmd in {"ls", "dir"}:
@@ -110,13 +103,39 @@ def desktop_card(app: str = "home", **data: Any) -> dict[str, Any]:
     return {"type": "desktop_view", "app": app, **data}
 
 
+def _natural_command(text: str) -> str | None:
+    low = " ".join(text.lower().split()).strip(" .?!")
+    if low in {"show desktop", "open desktop", "desktop", "go home", "show home", "computer home", "open home"}:
+        return "home"
+    if re.fullmatch(r"(?:open|show|view|look at) (?:my |the )?(?:workspace )?files", low) or low in {"files", "file manager", "open file manager"}:
+        return "files"
+    if re.fullmatch(r"(?:open|show|view) (?:my )?notes", low) or low == "notes":
+        return "notes"
+    if re.fullmatch(r"(?:open|show|view) (?:my )?tasks", low) or low == "tasks":
+        return "tasks"
+    if re.fullmatch(r"(?:open|show|view) (?:my )?plugins", low) or low in {"plugins", "open plugins"}:
+        return "plugins"
+    if low in {"open terminal", "show terminal", "terminal", "open the terminal"}:
+        return "terminal"
+    m = re.match(r"^(?:run|execute)\s+(.+?)\s+(?:in|using)\s+(?:the\s+)?terminal$", text, re.I)
+    if m:
+        return "terminal " + m.group(1).strip()
+    m = re.match(r"^(?:in\s+(?:the\s+)?terminal\s+)?run\s+(.+)$", text, re.I)
+    if m and not re.search(r"\bpython\b", low):
+        return "terminal " + m.group(1).strip()
+    return None
+
+
 def route_desktop_request(message: str) -> dict[str, Any] | None:
     text = " ".join(str(message or "").strip().split())
     lower = text.lower()
     prefix = "desktop control:"
-    if not lower.startswith(prefix):
-        return None
-    command = text[len(prefix):].strip()
+    if lower.startswith(prefix):
+        command = text[len(prefix):].strip()
+    else:
+        command = _natural_command(text)
+        if command is None:
+            return None
     low = command.lower()
     try:
         if low in {"home", "desktop", "show home"}:
@@ -124,8 +143,7 @@ def route_desktop_request(message: str) -> dict[str, Any] | None:
         if low in {"files", "open files", "show files"}:
             return {"message": "Workspace files.", "card": desktop_card("files", items=_file_items())}
         if low.startswith("open file "):
-            name = command[10:].strip()
-            item = _read_text(name)
+            name = command[10:].strip(); item = _read_text(name)
             return {"message": f"Opened {item['name']}.", "card": desktop_card("file", file=item)}
         if low in {"notes", "open notes"}:
             return {"message": "Notes.", "card": desktop_card("notes", items=_read_json("notes.json", []))}
