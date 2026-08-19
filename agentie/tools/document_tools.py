@@ -6,19 +6,32 @@ from agents import function_tool
 from pypdf import PdfReader
 
 WORKSPACE_DIR = Path.cwd() / "workspace"
+UPLOADS_DIR = WORKSPACE_DIR / "uploads"
 
 
 def _safe_path(filename: str) -> Path:
+    """Resolve a document from the workspace root or the uploads directory."""
     safe_name = Path(filename).name.strip()
     if not safe_name:
         raise ValueError("A filename is required.")
     WORKSPACE_DIR.mkdir(parents=True, exist_ok=True)
-    return WORKSPACE_DIR / safe_name
+    UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
+
+    direct = WORKSPACE_DIR / safe_name
+    if direct.exists() and direct.is_file():
+        return direct
+
+    uploaded = UPLOADS_DIR / safe_name
+    if uploaded.exists() and uploaded.is_file():
+        return uploaded
+
+    # Return the uploaded location for a consistent FileNotFoundError message.
+    return uploaded
 
 
 @function_tool
 def read_pdf(filename: str) -> str:
-    """Extract text from a PDF stored in Agentie's workspace."""
+    """Extract text from a PDF stored in Agentie's workspace or uploads directory."""
     target = _safe_path(filename)
     if not target.exists():
         raise FileNotFoundError(target.name)
@@ -32,7 +45,7 @@ def read_pdf(filename: str) -> str:
 
 @function_tool
 def read_csv(filename: str, max_rows: int = 100) -> str:
-    """Read a CSV file from Agentie's workspace and return rows as text."""
+    """Read a CSV file from Agentie's workspace or uploads directory and return rows as text."""
     target = _safe_path(filename)
     if not target.exists():
         raise FileNotFoundError(target.name)
