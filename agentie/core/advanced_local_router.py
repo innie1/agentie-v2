@@ -2,6 +2,7 @@ import json
 import re
 import zipfile
 from datetime import datetime
+from difflib import get_close_matches
 from pathlib import Path
 
 import yaml
@@ -21,17 +22,51 @@ def _load(path: Path, default):
     except Exception: return default
 
 
+def _looks_like_time_question(lower: str) -> bool:
+    words = re.findall(r"[a-z]+", lower)
+    corrected = []
+    for word in words:
+        if word in {"tiem", "teim", "tme", "tim"}: corrected.append("time")
+        elif word in {"wats", "wat", "whts"}: corrected.append("what")
+        else:
+            hit = get_close_matches(word, ["time", "clock"], n=1, cutoff=.78)
+            corrected.append(hit[0] if hit and len(word) >= 3 else word)
+    bag = set(corrected)
+    return ("time" in bag or "clock" in bag) and bool(bag & {"what", "whats", "hey", "tell", "give", "show", "current", "now", "please", "time", "clock"})
+
+
 def try_advanced_local_command(message: str) -> dict | None:
     text = " ".join(message.strip().split())
-    lower = text.lower()
+    lower = text.lower().strip(" .?!")
+
+    # Catch casual/typo-filled time questions before a stale timer clarification or provider fallback.
+    if _looks_like_time_question(lower) and "timer" not in lower:
+        now = datetime.now().astimezone()
+        return {"message": f"It is {now.strftime('%H:%M:%S')} on {now.strftime('%Y-%m-%d')}.", "card": {"type":"datetime","datetime":now.isoformat(timespec="seconds"),"timezone":str(now.tzinfo)}}
+
+    # Natural note forms: "save a note called X saying Y", "note X saying Y", etc.
+    note = re.match(r"^(?:please\s+)?(?:save|make|create|write)\s+(?:me\s+)?(?:a\s+)?note\s+(?:called|named|titled)\s+(.+?)\s+(?:saying|that says|with(?: the)? text|about)\s+(.+)$", text, re.I)
+    if not note:
+        note = re.match(r"^(?:note)\s+(.+?)\s+(?:saying|that says)\s+(.+)$", text, re.I)
+    if note:
+        title, content = note.group(1).strip(' \"“”'), note.group(2).strip(' \"“”')
+        notes = _load(productivity.NOTES, {})
+        notes[title[:120]] = {"content": content[:10000], "updated_at": datetime.now().isoformat(timespec="seconds")}
+        productivity._save(productivity.NOTES, notes)
+        return {"message": f"Saved note “{title}”.", "card": {"type":"note","title":title,"content":content}}
+
+    if re.search(r"\bwhat did i (?:just )?(?:ask you to )?save\b|\bwhat did i just save\b", lower):
+        notes = _load(productivity.NOTES, {})
+        if not notes: return {"message":"You don't have any saved notes yet.","card":None}
+        title, item = max(notes.items(), key=lambda kv: str((kv[1] or {}).get("updated_at", "")))
+        content = str((item or {}).get("content", ""))
+        return {"message":f"You most recently saved “{title}”.","card":{"type":"note","title":title,"content":content}}
 
     conversion = re.match(r"^(?:convert\s+)?(-?\d+(?:\.\d+)?)\s*(km|mi|m|ft|kg|lb|c|f|l|gal)\s+(?:to|in)\s+(km|mi|m|ft|kg|lb|c|f|l|gal)$", lower)
     if conversion:
-        value=float(conversion.group(1)); src=conversion.group(2); dst=conversion.group(3)
-        fn=productivity._CONVERSIONS.get((src,dst))
+        value=float(conversion.group(1)); src=conversion.group(2); dst=conversion.group(3); fn=productivity._CONVERSIONS.get((src,dst))
         if not fn: return {"message":"That conversion is not supported yet.","card":None}
-        result=fn(value)
-        return {"message":f"{value:g} {src} is {result:.6g} {dst}.","card":{"type":"conversion","value":value,"from_unit":src,"to_unit":dst,"result":result}}
+        result=fn(value); return {"message":f"{value:g} {src} is {result:.6g} {dst}.","card":{"type":"conversion","value":value,"from_unit":src,"to_unit":dst,"result":result}}
 
     date_diff = re.match(r"^(?:date difference|difference between)\s+(\d{4}-\d{2}-\d{2}(?:t\d{2}:\d{2}(?::\d{2})?)?)\s+(?:and|to)\s+(\d{4}-\d{2}-\d{2}(?:t\d{2}:\d{2}(?::\d{2})?)?)$", lower)
     if date_diff:
@@ -56,8 +91,7 @@ def try_advanced_local_command(message: str) -> dict | None:
         return {"message":f"Scratchpad value for “{key}”." if value is not None else "Scratchpad key not found.","card":{"type":"scratchpad","key":key,"value":value} if value is not None else None}
 
     if lower in {"list scratchpad","show scratchpad","scratchpad keys"}:
-        keys=sorted(_load(advanced.SCRATCHPAD,{}).keys())
-        return {"message":f"Scratchpad has {len(keys)} key(s).","card":{"type":"scratchpad_list","keys":keys}}
+        keys=sorted(_load(advanced.SCRATCHPAD,{}).keys()); return {"message":f"Scratchpad has {len(keys)} key(s).","card":{"type":"scratchpad_list","keys":keys}}
 
     zip_match=re.match(r"^zip\s+(.+?)\s+(?:into|to)\s+([\w.-]+\.zip)$",text,re.IGNORECASE)
     if zip_match:
