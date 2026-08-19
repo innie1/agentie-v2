@@ -6,6 +6,7 @@ import uvicorn
 from fastapi import FastAPI,File,HTTPException,Request,UploadFile
 from fastapi.responses import FileResponse,HTMLResponse,Response
 from pydantic import BaseModel,Field
+from agentie.core.attachment_reasoner import reason_about_documents
 from agentie.core.conversation_loop import consume_followup,detect_incomplete_intent
 from agentie.core.file_service import MAX_FILE_BYTES,resolve_upload,run_action,save_upload
 from agentie.core.local_router import route_local_actions
@@ -28,6 +29,8 @@ class AgentRequest(BaseModel):
     message:str=Field(min_length=1,max_length=20_000);agent_type:str=Field(default="general",pattern="^(general|research|coding|manager|github)$");session_id:str|None=Field(default=None,max_length=200)
 class AgentResponse(BaseModel):
     message:str;result:str;card:dict[str,Any]|None=None;agent_type:str;routed_by:str
+class AttachmentReasonRequest(BaseModel):
+    question:str=Field(min_length=1,max_length=12_000);filenames:list[str]=Field(min_length=1,max_length=8)
 class ApprovalDecision(BaseModel):approved:bool
 class FileAction(BaseModel):action:str=Field(pattern="^(inspect|checksum|extract|text|preview)$")
 
@@ -97,7 +100,7 @@ async def startup_event():start_routine_worker()
 @app.get("/")
 async def chat_ui():
     if not FRONTEND_FILE.exists():raise HTTPException(404,"Frontend not found.")
-    html=FRONTEND_FILE.read_text(encoding="utf-8")+'\n<script src="/cards.js?v=170"></script>\n<script src="/events.js?v=170"></script>\n<script src="/upload.js?v=170"></script>\n';return HTMLResponse(html,headers={"Cache-Control":"no-store, no-cache, must-revalidate, max-age=0"})
+    html=FRONTEND_FILE.read_text(encoding="utf-8")+'\n<script src="/cards.js?v=171"></script>\n<script src="/events.js?v=171"></script>\n<script src="/upload.js?v=171"></script>\n';return HTMLResponse(html,headers={"Cache-Control":"no-store, no-cache, must-revalidate, max-age=0"})
 @app.get("/cards.js")
 async def cards_js():return Response(CARDS_JS.read_text(encoding="utf-8"),media_type="application/javascript",headers={"Cache-Control":"no-store"})
 @app.get("/events.js")
@@ -127,6 +130,14 @@ async def file_action(filename:str,request:FileAction):
     except FileNotFoundError as exc:raise HTTPException(404,"Uploaded file not found.") from exc
     except ValueError as exc:raise HTTPException(400,str(exc)) from exc
     except Exception as exc:raise HTTPException(500,f"File action failed: {exc}") from exc
+@app.post("/files/reason")
+async def file_reason(request:AttachmentReasonRequest):
+    try:
+        cards,answer=await reason_about_documents(request.question,request.filenames)
+        return {"message":answer,"cards":cards,"routed_by":"attachment_reasoner"}
+    except FileNotFoundError as exc:raise HTTPException(404,f"Uploaded file not found: {exc}") from exc
+    except ValueError as exc:raise HTTPException(400,str(exc)) from exc
+    except Exception as exc:raise HTTPException(502,f"Attachment reasoning failed: {exc}") from exc
 @app.get("/local/events/poll")
 async def poll_local_events():
     now=datetime.now().astimezone();events=[];reminders=_load(REMINDERS,[]);changed=False
