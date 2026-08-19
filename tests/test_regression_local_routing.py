@@ -1,6 +1,7 @@
 import unittest
 from unittest.mock import patch
 
+from agentie.core.capability_preflight import _allowed_directories_request, _choice, _extension_search, _filename
 from agentie.core.capability_router import _looks_filesystem, _native_guarded
 from agentie.core.code_execution import route_code_command
 from agentie.core.local_router import route_local_actions
@@ -147,6 +148,47 @@ class CapabilityRoutingRegressionTests(unittest.TestCase):
     def test_curated_mcp_presets_are_available(self):
         ids = {item["id"] for item in presets()}
         self.assertTrue({"memory", "sequential-thinking", "everything", "fetch", "time-mcp", "git"}.issubset(ids))
+
+
+class CapabilityPreflightRegressionTests(unittest.TestCase):
+    def setUp(self):
+        self.server = {
+            "name": "filesystem",
+            "transport": "stdio",
+            "command": "cmd",
+            "args": ["/c", "npx", "-y", "@modelcontextprotocol/server-filesystem", r"C:\Users\user\agentie-v2\workspace"],
+        }
+        self.info = {
+            "tools": [
+                {"name": "search_files"},
+                {"name": "read_text_file"},
+                {"name": "get_file_info"},
+                {"name": "list_allowed_directories"},
+            ]
+        }
+
+    def test_pdf_search_uses_search_files_pattern(self):
+        self.assertEqual(_extension_search("Find all PDF files in this workspace."), "*.pdf")
+        tool, arguments = _choice("Find all PDF files in this workspace.", self.server, self.info)
+        self.assertEqual(tool, "search_files")
+        self.assertEqual(arguments["pattern"], "*.pdf")
+
+    def test_read_filename_is_not_confused_with_native_task_tracker(self):
+        self.assertEqual(_filename("Read tasks.json."), "tasks.json")
+        tool, arguments = _choice("Read tasks.json.", self.server, self.info)
+        self.assertEqual(tool, "read_text_file")
+        self.assertTrue(arguments["path"].endswith("tasks.json"))
+
+    def test_file_info_filename_maps_to_get_file_info(self):
+        tool, arguments = _choice("Show me information about tasks.json.", self.server, self.info)
+        self.assertEqual(tool, "get_file_info")
+        self.assertTrue(arguments["path"].endswith("tasks.json"))
+
+    def test_generic_allowed_directory_question_is_recognized(self):
+        self.assertTrue(_allowed_directories_request("What directories can I access?"))
+        tool, arguments = _choice("What directories can I access?", self.server, self.info)
+        self.assertEqual(tool, "list_allowed_directories")
+        self.assertEqual(arguments, {})
 
 
 if __name__ == "__main__":
