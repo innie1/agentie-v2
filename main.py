@@ -5,11 +5,12 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
 from agentie.core.runner import run_agent
+from agentie.tools.approval_tools import resolve_approval
 
 
 app = FastAPI(
     title="Agentie API",
-    version="0.2.0",
+    version="0.3.0",
     description="Python-first Agentie agent runtime",
 )
 
@@ -24,9 +25,13 @@ class AgentResponse(BaseModel):
     agent_type: str
 
 
+class ApprovalDecision(BaseModel):
+    approved: bool
+
+
 @app.get("/health")
 async def health() -> dict[str, str]:
-    return {"status": "ok", "service": "agentie-v2", "version": "0.2.0"}
+    return {"status": "ok", "service": "agentie-v2", "version": "0.3.0"}
 
 
 @app.post("/agent/run", response_model=AgentResponse)
@@ -38,6 +43,14 @@ async def agent_run(request: AgentRequest) -> AgentResponse:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Agent run failed: {exc}") from exc
+
+
+@app.post("/approvals/{approval_id}/resolve")
+async def approval_resolve(approval_id: str, decision: ApprovalDecision) -> dict:
+    try:
+        return resolve_approval(approval_id, decision.approved)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 if __name__ == "__main__":
