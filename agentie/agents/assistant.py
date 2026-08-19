@@ -9,69 +9,37 @@ from agentie.tools.registry import tools_for
 SYSTEM_INSTRUCTIONS = """
 You are Agentie, a capable digital worker.
 
-Your job is to understand the user's goal, use available tools when they improve
-accuracy or are required to complete the task, and return a clear final result.
+Your job is to understand the user's goal, use available tools when they improve accuracy or are required to complete the task, and return a clear final result.
 
 Rules:
 - Never claim a tool or action succeeded unless it actually ran successfully.
-- Use only the tools assigned to this agent profile.
 - Prefer tools over guessing when a tool can provide the answer.
 - Use web search, browser, or HTTP tools for current or externally verifiable information.
 - Use memory only for useful non-sensitive preferences, goals, and durable facts.
-- Use task tools for multi-step work that benefits from explicit progress tracking.
-- GitHub tools are read-only in this phase.
-- Supabase writes require an explicit approved action before execution.
-- For externally consequential or irreversible actions, create an approval request instead of performing the action.
+- Use task/job tools for multi-step work that benefits from explicit progress tracking.
+- Respect approval gates for consequential or irreversible actions.
+- A runtime role changes specialty and approach, not safety rules or permissions.
 - Keep answers concise unless the user asks for detail.
 """.strip()
 
 
 def _model_settings() -> ModelSettings:
-    # Keep OpenRouter fallback calls affordable. Users can raise this deliberately
-    # with AGENTIE_MAX_OUTPUT_TOKENS if a workflow genuinely needs longer output.
-    max_tokens = int(os.getenv("AGENTIE_MAX_OUTPUT_TOKENS", "4096"))
-    max_tokens = max(256, min(max_tokens, 16384))
-    return ModelSettings(max_tokens=max_tokens)
+    max_tokens=int(os.getenv("AGENTIE_MAX_OUTPUT_TOKENS","4096"));max_tokens=max(256,min(max_tokens,16384));return ModelSettings(max_tokens=max_tokens)
 
 
 def _specialist(profile: str) -> Agent:
-    return Agent(
-        name=f"Agentie {profile.title()} Specialist",
-        instructions=SYSTEM_INSTRUCTIONS + f"\n\nYou are the {profile} specialist. Focus only on that specialty.",
-        model=get_model(),
-        model_settings=_model_settings(),
-        tools=tools_for(profile),
-    )
+    return Agent(name=f"Agentie {profile.title()} Specialist",instructions=SYSTEM_INSTRUCTIONS+f"\n\nYou are the {profile} specialist. Focus on that specialty.",model=get_model(),model_settings=_model_settings(),tools=tools_for(profile))
 
 
-def build_assistant(agent_type: str = "general", mcp_servers=None) -> Agent:
-    profile = agent_type if agent_type in {"general", "research", "coding", "manager", "github"} else "general"
-    tools = list(tools_for(profile))
-
-    if profile == "manager":
-        research = _specialist("research")
-        coding = _specialist("coding")
-        github = _specialist("github")
-        tools.extend([
-            research.as_tool(
-                tool_name="delegate_research",
-                tool_description="Delegate a bounded research or web investigation task to the research specialist.",
-            ),
-            coding.as_tool(
-                tool_name="delegate_coding",
-                tool_description="Delegate a bounded code, file, Python, or document task to the coding specialist.",
-            ),
-            github.as_tool(
-                tool_name="delegate_github",
-                tool_description="Delegate a bounded GitHub repository inspection task to the GitHub specialist.",
-            ),
-        ])
-
-    return Agent(
-        name=f"Agentie {profile.title()} Agent",
-        instructions=SYSTEM_INSTRUCTIONS + f"\n\nCurrent agent profile: {profile}.",
-        model=get_model(),
-        model_settings=_model_settings(),
-        tools=tools,
-        mcp_servers=list(mcp_servers or []) if profile in {"general", "manager"} else [],
-    )
+def build_assistant(agent_type: str = "general", mcp_servers=None, role_info: dict | None = None) -> Agent:
+    profile=agent_type if agent_type in {"general","research","coding","manager","github"} else "general"
+    role_info=role_info or {"name":profile,"base":profile,"instruction":f"Act in the {profile} role."}
+    tool_profile=str(role_info.get("base") or profile)
+    if tool_profile not in {"general","research","coding","manager","github"}:tool_profile=profile
+    tools=list(tools_for(tool_profile))
+    if tool_profile=="manager":
+        research=_specialist("research");coding=_specialist("coding");github=_specialist("github")
+        tools.extend([research.as_tool(tool_name="delegate_research",tool_description="Delegate bounded evidence or research work."),coding.as_tool(tool_name="delegate_coding",tool_description="Delegate bounded coding, file, data, or document work."),github.as_tool(tool_name="delegate_github",tool_description="Delegate bounded GitHub repository inspection work.")])
+    role_name=str(role_info.get("name") or profile);role_instruction=str(role_info.get("instruction") or "")
+    instructions=SYSTEM_INSTRUCTIONS+f"\n\nBase agent: {profile}. Runtime role: {role_name}.\n{role_instruction}"
+    return Agent(name=f"Agentie {role_name.title()} Agent",instructions=instructions,model=get_model(),model_settings=_model_settings(),tools=tools,mcp_servers=list(mcp_servers or []) if tool_profile in {"general","manager"} else [])
