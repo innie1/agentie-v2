@@ -51,6 +51,26 @@
     addMeta(el, card.expression || 'Local calculation');
   }
 
+  function renderConversion(el, card) {
+    addTitle(el, 'Unit conversion');
+    const value = document.createElement('div');
+    value.className = 'card-value';
+    value.textContent = `${Number(card.result).toLocaleString(undefined, {maximumFractionDigits: 6})} ${card.to_unit || ''}`;
+    el.appendChild(value);
+    addMeta(el, `${card.value} ${card.from_unit || ''} → ${card.to_unit || ''}`);
+  }
+
+  function renderDateTime(el, card) {
+    addTitle(el, 'Local time');
+    const date = new Date(card.datetime);
+    const value = document.createElement('div');
+    value.className = 'card-value';
+    value.style.fontSize = '32px';
+    value.textContent = date.toLocaleTimeString();
+    el.appendChild(value);
+    addMeta(el, `${date.toLocaleDateString()} · ${card.timezone || 'local'}`);
+  }
+
   function renderReminder(el, card) {
     addTitle(el, card.repeat_minutes > 0 ? 'Recurring reminder' : 'Reminder');
     const value = document.createElement('div');
@@ -104,9 +124,7 @@
             headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({approved})
           });
-          if (response.ok) {
-            actions.replaceChildren(document.createTextNode(approved ? 'Approved' : 'Denied'));
-          }
+          if (response.ok) actions.replaceChildren(document.createTextNode(approved ? 'Approved' : 'Denied'));
         };
         approve.addEventListener('click', () => resolve(true));
         deny.addEventListener('click', () => resolve(false));
@@ -143,10 +161,7 @@
     el.appendChild(body);
   }
 
-  window.renderCard = function(card, message) {
-    const extra = new Set(['calculation', 'reminder', 'reminders', 'tasks', 'files', 'approvals', 'system', 'note']);
-    if (!extra.has(card.type)) return originalRenderCard(card, message);
-
+  function renderStandardExtra(card, message) {
     const wrap = document.createElement('div');
     wrap.className = 'card-wrap';
     const el = document.createElement('div');
@@ -159,6 +174,8 @@
     el.appendChild(topline);
 
     if (card.type === 'calculation') renderCalculation(el, card);
+    else if (card.type === 'unit_conversion') renderConversion(el, card);
+    else if (card.type === 'datetime') renderDateTime(el, card);
     else if (card.type === 'reminder') renderReminder(el, card);
     else if (card.type === 'reminders') renderReminders(el, card);
     else if (card.type === 'tasks') renderTasks(el, card);
@@ -167,5 +184,28 @@
     else if (card.type === 'system') renderSystem(el, card);
     else if (card.type === 'note') renderNote(el, card);
     return wrap;
+  }
+
+  window.renderCard = function(card, message) {
+    if (card.type === 'multi') {
+      const group = document.createElement('div');
+      group.style.display = 'grid';
+      group.style.gap = '12px';
+      (card.items || []).forEach(item => {
+        if (!item.card) {
+          const text = document.createElement('div');
+          text.className = 'card-meta';
+          text.textContent = item.message || '';
+          group.appendChild(text);
+          return;
+        }
+        group.appendChild(window.renderCard(item.card, item.message || ''));
+      });
+      return group;
+    }
+
+    const extra = new Set(['calculation', 'unit_conversion', 'datetime', 'reminder', 'reminders', 'tasks', 'files', 'approvals', 'system', 'note']);
+    if (!extra.has(card.type)) return originalRenderCard(card, message);
+    return renderStandardExtra(card, message);
   };
 })();
