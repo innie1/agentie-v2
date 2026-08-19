@@ -29,9 +29,11 @@ def get_approval(approval_id: str):
     return None
 
 
-def approval_is_granted(action: str) -> bool:
+def approval_is_granted(action: str, approval_id: str | None = None) -> bool:
     return any(
-        item.get("action") == action and item.get("status") == "approved"
+        item.get("action") == action
+        and item.get("status") == "approved"
+        and (approval_id is None or item.get("id") == approval_id)
         for item in _load()
     )
 
