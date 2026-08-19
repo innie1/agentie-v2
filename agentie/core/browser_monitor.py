@@ -276,7 +276,16 @@ async def capture_website(url: str, *, track_change: bool = False) -> dict[str, 
 
 async def route_browser_request(message: str) -> dict[str, Any] | None:
     text = " ".join(str(message or "").strip().split())
-    if not text or _scheduled_request(text) or not _looks_browser_request(text):
+    if not text or _scheduled_request(text):
+        return None
+    # Interactive commands use a persistent session. Import lazily to avoid a
+    # circular import because browser_automation publishes through this module.
+    from agentie.core.browser_automation import browser_session_command
+
+    interactive = await browser_session_command(text)
+    if interactive is not None:
+        return interactive
+    if not _looks_browser_request(text):
         return None
     target = _url(text)
     if not target:
