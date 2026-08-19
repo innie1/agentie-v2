@@ -10,6 +10,7 @@ from agentie.core.conversation_loop import consume_followup,detect_incomplete_in
 from agentie.core.file_service import MAX_FILE_BYTES,resolve_upload,run_action,save_upload
 from agentie.core.local_router import route_local_actions
 from agentie.core.memory_store import add_message
+from agentie.core.office_artifacts import try_office_request
 from agentie.core.pdf_service import try_pdf_request
 from agentie.core.provider_gate import local_fallback_message,provider_allowed
 from agentie.core.reference_router import remember_active_from_card,try_active_reference
@@ -20,7 +21,7 @@ from agentie.tools.approval_tools import resolve_approval
 from agentie.tools.advanced_utility_tools import SCHEDULES
 from agentie.tools.productivity_tools import REMINDERS
 
-app=FastAPI(title="Agentie API",version="1.5.0",description="Local-first Agentie runtime with memory, routines, dynamic roles, deep research, jobs, files, cards, downloads and provider gating")
+app=FastAPI(title="Agentie API",version="1.6.0",description="Local-first Agentie runtime with memory, routines, dynamic roles, deep research, jobs, RAG, skills and local artifact generation")
 FRONTEND_DIR=Path(__file__).parent/"frontend";FRONTEND_FILE=FRONTEND_DIR/"index.html";CARDS_JS=FRONTEND_DIR/"cards.js";EVENTS_JS=FRONTEND_DIR/"events.js";UPLOAD_JS=FRONTEND_DIR/"upload.js"
 class AgentRequest(BaseModel):
     message:str=Field(min_length=1,max_length=20_000);agent_type:str=Field(default="general",pattern="^(general|research|coding|manager|github)$");session_id:str|None=Field(default=None,max_length=200)
@@ -79,7 +80,7 @@ async def startup_event():start_routine_worker()
 @app.get("/")
 async def chat_ui():
     if not FRONTEND_FILE.exists():raise HTTPException(404,"Frontend not found.")
-    html=FRONTEND_FILE.read_text(encoding="utf-8")+'\n<script src="/cards.js?v=150"></script>\n<script src="/events.js?v=150"></script>\n<script src="/upload.js?v=150"></script>\n';return HTMLResponse(html,headers={"Cache-Control":"no-store, no-cache, must-revalidate, max-age=0"})
+    html=FRONTEND_FILE.read_text(encoding="utf-8")+'\n<script src="/cards.js?v=160"></script>\n<script src="/events.js?v=160"></script>\n<script src="/upload.js?v=160"></script>\n';return HTMLResponse(html,headers={"Cache-Control":"no-store, no-cache, must-revalidate, max-age=0"})
 @app.get("/cards.js")
 async def cards_js():return Response(CARDS_JS.read_text(encoding="utf-8"),media_type="application/javascript",headers={"Cache-Control":"no-store"})
 @app.get("/events.js")
@@ -87,7 +88,7 @@ async def events_js():return Response(EVENTS_JS.read_text(encoding="utf-8"),medi
 @app.get("/upload.js")
 async def upload_js():return Response(UPLOAD_JS.read_text(encoding="utf-8"),media_type="application/javascript",headers={"Cache-Control":"no-store"})
 @app.get("/health")
-async def health():return {"status":"ok","service":"agentie-v2","version":"1.5.0"}
+async def health():return {"status":"ok","service":"agentie-v2","version":"1.6.0"}
 @app.post("/files/upload")
 async def file_upload(file:UploadFile=File(...)):
     try:
@@ -134,6 +135,9 @@ async def agent_run(request:AgentRequest,http_request:Request):
         ref=try_active_reference(session_key,request.message)
         if ref is not None:
             message=str(ref.get("message",""));card=ref.get("card");_record_local(session_key,request.message,message,card,request.agent_type,"active_reference");return AgentResponse(message=message,result=message,card=card,agent_type=request.agent_type,routed_by="active_reference")
+        office=try_office_request(session_key,request.message)
+        if office is not None:
+            message=str(office.get("message",""));card=office.get("card");_record_local(session_key,request.message,message,card,request.agent_type,"local_artifact");return AgentResponse(message=message,result=message,card=card,agent_type=request.agent_type,routed_by="local_artifact")
         pdf=try_pdf_request(session_key,request.message)
         if pdf is not None:
             message=str(pdf.get("message",""));card=pdf.get("card");_record_local(session_key,request.message,message,card,request.agent_type,"local_pdf");return AgentResponse(message=message,result=message,card=card,agent_type=request.agent_type,routed_by="local_pdf")
@@ -148,8 +152,7 @@ async def agent_run(request:AgentRequest,http_request:Request):
             if incomplete and clarification is None:clarification=str(incomplete.get("message",""))
             else:remaining.append(clause)
         unresolved=remaining;provider_unresolved=[];blocked=[]
-        for clause in unresolved:
-            (provider_unresolved if provider_allowed(clause) else blocked).append(clause)
+        for clause in unresolved:(provider_unresolved if provider_allowed(clause) else blocked).append(clause)
         unresolved=provider_unresolved
         if blocked and not clarification:clarification=local_fallback_message(blocked[0])
         if local_results and not unresolved:
@@ -178,5 +181,4 @@ async def agent_run(request:AgentRequest,http_request:Request):
 async def approval_resolve(approval_id:str,decision:ApprovalDecision):
     try:return resolve_approval(approval_id,decision.approved)
     except ValueError as exc:raise HTTPException(400,str(exc)) from exc
-if __name__=="__main__":
-    uvicorn.run("main:app",host="0.0.0.0",port=int(os.getenv("PORT","8000")),reload=False)
+if __name__=="__main__":uvicorn.run("main:app",host="0.0.0.0",port=int(os.getenv("PORT","8000")),reload=False)
