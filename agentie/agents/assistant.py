@@ -1,4 +1,6 @@
-from agents import Agent
+import os
+
+from agents import Agent, ModelSettings
 
 from agentie.models.provider import get_model
 from agentie.tools.registry import tools_for
@@ -24,11 +26,20 @@ Rules:
 """.strip()
 
 
+def _model_settings() -> ModelSettings:
+    # Keep OpenRouter fallback calls affordable. Users can raise this deliberately
+    # with AGENTIE_MAX_OUTPUT_TOKENS if a workflow genuinely needs longer output.
+    max_tokens = int(os.getenv("AGENTIE_MAX_OUTPUT_TOKENS", "4096"))
+    max_tokens = max(256, min(max_tokens, 16384))
+    return ModelSettings(max_tokens=max_tokens)
+
+
 def _specialist(profile: str) -> Agent:
     return Agent(
         name=f"Agentie {profile.title()} Specialist",
         instructions=SYSTEM_INSTRUCTIONS + f"\n\nYou are the {profile} specialist. Focus only on that specialty.",
         model=get_model(),
+        model_settings=_model_settings(),
         tools=tools_for(profile),
     )
 
@@ -37,8 +48,6 @@ def build_assistant(agent_type: str = "general", mcp_servers=None) -> Agent:
     profile = agent_type if agent_type in {"general", "research", "coding", "manager", "github"} else "general"
     tools = list(tools_for(profile))
 
-    # Manager-style orchestration: the manager remains user-facing and can call
-    # specialists for bounded subtasks. This is the Agents SDK "agents as tools" pattern.
     if profile == "manager":
         research = _specialist("research")
         coding = _specialist("coding")
@@ -62,6 +71,7 @@ def build_assistant(agent_type: str = "general", mcp_servers=None) -> Agent:
         name=f"Agentie {profile.title()} Agent",
         instructions=SYSTEM_INSTRUCTIONS + f"\n\nCurrent agent profile: {profile}.",
         model=get_model(),
+        model_settings=_model_settings(),
         tools=tools,
         mcp_servers=list(mcp_servers or []) if profile in {"general", "manager"} else [],
     )
