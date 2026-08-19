@@ -7,6 +7,7 @@ from fastapi import FastAPI,File,HTTPException,Request,UploadFile
 from fastapi.responses import FileResponse,HTMLResponse,Response
 from pydantic import BaseModel,Field
 from agentie.core.attachment_reasoner import reason_about_documents
+from agentie.core.browser_monitor import SNAPSHOT_DIR,route_browser_request
 from agentie.core.capability_preflight import route_capability_preflight
 from agentie.core.capability_router import route_capability_request
 from agentie.core.code_execution import route_code_command
@@ -29,7 +30,7 @@ from agentie.tools.approval_tools import resolve_approval
 from agentie.tools.advanced_utility_tools import SCHEDULES
 from agentie.tools.productivity_tools import REMINDERS
 
-app=FastAPI(title="Agentie API",version="1.9.1",description="Local-first Agentie runtime with observability, cost tracking, memory, routines, jobs, RAG, capability routing, MCP, plugins, skills and local artifact generation")
+app=FastAPI(title="Agentie API",version="1.10.0",description="Local-first Agentie runtime with observability, cost tracking, memory, routines, jobs, RAG, browser monitoring, MCP, plugins, skills and local artifact generation")
 FRONTEND_DIR=Path(__file__).parent/"frontend";FRONTEND_FILE=FRONTEND_DIR/"index.html";CARDS_JS=FRONTEND_DIR/"cards.js";EVENTS_JS=FRONTEND_DIR/"events.js";UPLOAD_JS=FRONTEND_DIR/"upload.js";PLUGINS_JS=FRONTEND_DIR/"plugins.js"
 class AgentRequest(BaseModel):
     message:str=Field(min_length=1,max_length=20_000);agent_type:str=Field(default="general",pattern="^(general|research|coding|manager|github)$");session_id:str|None=Field(default=None,max_length=200)
@@ -106,7 +107,7 @@ async def startup_event():start_routine_worker()
 @app.get("/")
 async def chat_ui():
     if not FRONTEND_FILE.exists():raise HTTPException(404,"Frontend not found.")
-    html=FRONTEND_FILE.read_text(encoding="utf-8")+'\n<script src="/cards.js?v=191"></script>\n<script src="/events.js?v=191"></script>\n<script src="/upload.js?v=191"></script>\n<script src="/plugins.js?v=191"></script>\n';return HTMLResponse(html,headers={"Cache-Control":"no-store, no-cache, must-revalidate, max-age=0"})
+    html=FRONTEND_FILE.read_text(encoding="utf-8")+'\n<script src="/cards.js?v=200"></script>\n<script src="/events.js?v=200"></script>\n<script src="/upload.js?v=200"></script>\n<script src="/plugins.js?v=200"></script>\n';return HTMLResponse(html,headers={"Cache-Control":"no-store, no-cache, must-revalidate, max-age=0"})
 @app.get("/cards.js")
 async def cards_js():return Response(CARDS_JS.read_text(encoding="utf-8"),media_type="application/javascript",headers={"Cache-Control":"no-store"})
 @app.get("/events.js")
@@ -119,7 +120,14 @@ async def plugins_js():return Response(PLUGINS_JS.read_text(encoding="utf-8"),me
 async def plugins_state():
     state=plugin_state();state["plugins"]=list_skills();registered={str(x.get("name") or "").lower() for x in state.get("mcp_servers",[])};state["mcp_presets"]=[{**item,"installed":item["id"].lower() in registered} for item in mcp_presets()];return state
 @app.get("/health")
-async def health():return {"status":"ok","service":"agentie-v2","version":"1.9.1"}
+async def health():return {"status":"ok","service":"agentie-v2","version":"1.10.0"}
+@app.get("/web-snapshots/{filename}")
+async def web_snapshot(filename:str):
+    name=Path(filename).name
+    if name!=filename or not name.lower().endswith(".png"):raise HTTPException(400,"Invalid snapshot filename.")
+    path=SNAPSHOT_DIR/name
+    if not path.exists() or not path.is_file():raise HTTPException(404,"Website snapshot not found.")
+    return FileResponse(path=str(path),media_type="image/png",headers={"Cache-Control":"no-store"})
 @app.post("/files/upload")
 async def file_upload(file:UploadFile=File(...)):
     try:
@@ -190,6 +198,9 @@ async def agent_run(request:AgentRequest,http_request:Request):
         pdf=try_pdf_request(session_key,request.message)
         if pdf is not None:
             message=str(pdf.get("message",""));card=pdf.get("card");_record_local(session_key,request.message,message,card,request.agent_type,"local_pdf");return AgentResponse(message=message,result=message,card=card,agent_type=request.agent_type,routed_by="local_pdf")
+        browser=await route_browser_request(request.message)
+        if browser is not None:
+            message=str(browser.get("message",""));card=browser.get("card");_record_local(session_key,request.message,message,card,request.agent_type,"local_browser");return AgentResponse(message=message,result=message,card=card,agent_type=request.agent_type,routed_by="local_browser")
         follow=consume_followup(session_key,request.message);effective=request.message
         if follow:
             if follow.get("cancelled") or not follow.get("command"):
