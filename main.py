@@ -17,7 +17,7 @@ from agentie.tools.approval_tools import resolve_approval
 from agentie.tools.advanced_utility_tools import SCHEDULES
 from agentie.tools.productivity_tools import REMINDERS
 
-app = FastAPI(title="Agentie API", version="0.8.1", description="Local-first Agentie runtime with fuzzy intent routing, inline cards, and persistent utilities")
+app = FastAPI(title="Agentie API", version="0.8.2", description="Local-first Agentie runtime with fuzzy intent routing, inline cards, and persistent utilities")
 FRONTEND_DIR = Path(__file__).parent / "frontend"
 FRONTEND_FILE = FRONTEND_DIR / "index.html"
 CARDS_JS = FRONTEND_DIR / "cards.js"
@@ -75,6 +75,33 @@ def _schedule_due(item: dict, now: datetime) -> bool:
     return False
 
 
+def _route_request_actions(message: str) -> dict:
+    """Route natural multi-sentence requests without forcing one giant clause.
+
+    Split only on sentence punctuation followed by another obvious command-like
+    phrase. This preserves decimal numbers and ordinary punctuation inside notes.
+    Each sentence is then passed to the existing fuzzy/local router, which can
+    still split on 'then', commas, and 'and'.
+    """
+    command_start = (
+        r"(?:calculate|calculator|calc|convert|set|start|pause|stop|reset|remind|reminder|show|list|"
+        r"what|whats|tell|give|weather|wheather|forecast|temperature|wiki|wikipedia|look|rss|system|"
+        r"countdown|sha256|checksum|image|inspect|scratchpad|note|save|cancel|time|clock|hey)"
+    )
+    normalized = re.sub(r"\s+", " ", message.strip())
+    sentences = re.split(rf"(?<=[.!?])\s+(?={command_start}\b)", normalized, flags=re.IGNORECASE)
+    results: list[dict] = []
+    unresolved: list[str] = []
+    for sentence in sentences:
+        sentence = sentence.strip()
+        if not sentence:
+            continue
+        routed = route_local_actions(sentence)
+        results.extend(routed.get("results", []))
+        unresolved.extend(routed.get("unresolved", []))
+    return {"results": results, "unresolved": unresolved}
+
+
 def _refresh_timer_cards(results: list[dict]) -> None:
     """Re-arm relative timers immediately before returning the completed response.
 
@@ -108,7 +135,7 @@ def _multi_card(results: list[dict], extra_message: str | None = None) -> dict:
 async def chat_ui():
     if not FRONTEND_FILE.exists(): raise HTTPException(status_code=404, detail="Frontend not found.")
     html = FRONTEND_FILE.read_text(encoding="utf-8")
-    html += '\n<script src="/cards.js?v=081"></script>\n<script src="/events.js?v=081"></script>\n'
+    html += '\n<script src="/cards.js?v=082"></script>\n<script src="/events.js?v=082"></script>\n'
     return HTMLResponse(html, headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"})
 
 
@@ -126,7 +153,7 @@ async def events_js():
 
 @app.get("/health")
 async def health() -> dict[str, str]:
-    return {"status":"ok","service":"agentie-v2","version":"0.8.1"}
+    return {"status":"ok","service":"agentie-v2","version":"0.8.2"}
 
 
 @app.get("/local/events/poll")
@@ -159,7 +186,7 @@ async def poll_local_events() -> dict[str, Any]:
 @app.post("/agent/run", response_model=AgentResponse)
 async def agent_run(request: AgentRequest) -> AgentResponse:
     try:
-        routed = route_local_actions(request.message)
+        routed = _route_request_actions(request.message)
         local_results: list[dict] = routed.get("results", [])
         unresolved: list[str] = routed.get("unresolved", [])
 
