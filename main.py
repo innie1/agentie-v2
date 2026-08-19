@@ -7,7 +7,7 @@ from typing import Any
 
 import uvicorn
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, HTMLResponse
 from pydantic import BaseModel, Field
 
 from agentie.core.local_router import try_local_command
@@ -17,7 +17,9 @@ from agentie.tools.advanced_utility_tools import SCHEDULES
 from agentie.tools.productivity_tools import REMINDERS
 
 app = FastAPI(title="Agentie API", version="0.7.0", description="Local-first Agentie runtime with inline cards and persistent local utilities")
-FRONTEND_FILE = Path(__file__).parent / "frontend" / "index.html"
+FRONTEND_DIR = Path(__file__).parent / "frontend"
+FRONTEND_FILE = FRONTEND_DIR / "index.html"
+EVENTS_JS = FRONTEND_DIR / "events.js"
 
 
 class AgentRequest(BaseModel):
@@ -38,12 +40,9 @@ class ApprovalDecision(BaseModel):
 
 
 def _load(path: Path, default):
-    if not path.exists():
-        return default
-    try:
-        return json.loads(path.read_text(encoding="utf-8"))
-    except Exception:
-        return default
+    if not path.exists(): return default
+    try: return json.loads(path.read_text(encoding="utf-8"))
+    except Exception: return default
 
 
 def _save(path: Path, value) -> None:
@@ -52,93 +51,70 @@ def _save(path: Path, value) -> None:
 
 
 def _schedule_due(item: dict, now: datetime) -> bool:
-    if item.get("status") != "active":
-        return False
-    cadence = str(item.get("cadence", "")).lower()
-    hhmm = item.get("time_hhmm") or "09:00"
-    try:
-        hour, minute = map(int, hhmm.split(":"))
-    except Exception:
-        hour, minute = 9, 0
-    last_raw = item.get("last_fired_at")
-    last = datetime.fromisoformat(last_raw) if last_raw else None
+    if item.get("status") != "active": return False
+    cadence = str(item.get("cadence", "")).lower(); hhmm = item.get("time_hhmm") or "09:00"
+    try: hour, minute = map(int, hhmm.split(":"))
+    except Exception: hour, minute = 9, 0
+    last_raw = item.get("last_fired_at"); last = datetime.fromisoformat(last_raw) if last_raw else None
     if cadence.startswith("every "):
         m = re.match(r"every\s+(\d+(?:\.\d+)?)\s*(minutes?|hours?)", cadence)
-        if not m:
-            return False
+        if not m: return False
         seconds = float(m.group(1)) * (3600 if m.group(2).startswith("hour") else 60)
         base = last or datetime.fromisoformat(item.get("created_at"))
-        if base.tzinfo and now.tzinfo is None:
-            now = now.astimezone(base.tzinfo)
+        if base.tzinfo and now.tzinfo is None: now = now.astimezone(base.tzinfo)
         return (now - base).total_seconds() >= seconds
     today_trigger = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
-    if now < today_trigger:
-        return False
-    if last and last.date() == now.date():
-        return False
-    if cadence == "daily":
-        return True
-    if cadence == "weekdays":
-        return now.weekday() < 5
+    if now < today_trigger or (last and last.date() == now.date()): return False
+    if cadence == "daily": return True
+    if cadence == "weekdays": return now.weekday() < 5
     if cadence.startswith("weekly "):
-        names = {"monday": 0, "tuesday": 1, "wednesday": 2, "thursday": 3, "friday": 4, "saturday": 5, "sunday": 6}
-        return now.weekday() == names.get(cadence.split(" ", 1)[1], -1)
+        names = {"monday":0,"tuesday":1,"wednesday":2,"thursday":3,"friday":4,"saturday":5,"sunday":6}
+        return now.weekday() == names.get(cadence.split(" ",1)[1], -1)
     return False
 
 
 @app.get("/")
 async def chat_ui():
-    if not FRONTEND_FILE.exists():
-        raise HTTPException(status_code=404, detail="Frontend not found.")
-    return FileResponse(FRONTEND_FILE, media_type="text/html")
+    if not FRONTEND_FILE.exists(): raise HTTPException(status_code=404, detail="Frontend not found.")
+    html = FRONTEND_FILE.read_text(encoding="utf-8") + '\n<script src="/events.js"></script>\n'
+    return HTMLResponse(html)
+
+
+@app.get("/events.js")
+async def events_js():
+    if not EVENTS_JS.exists(): raise HTTPException(status_code=404, detail="Events script not found.")
+    return FileResponse(EVENTS_JS, media_type="application/javascript")
 
 
 @app.get("/health")
 async def health() -> dict[str, str]:
-    return {"status": "ok", "service": "agentie-v2", "version": "0.7.0"}
+    return {"status":"ok","service":"agentie-v2","version":"0.7.0"}
 
 
 @app.get("/local/events/poll")
 async def poll_local_events() -> dict[str, Any]:
-    now = datetime.now().astimezone()
-    events: list[dict[str, Any]] = []
-
-    reminders = _load(REMINDERS, [])
-    reminders_changed = False
+    now = datetime.now().astimezone(); events: list[dict[str, Any]] = []
+    reminders = _load(REMINDERS, []); changed = False
     for item in reminders:
-        if item.get("status") != "scheduled":
-            continue
+        if item.get("status") != "scheduled": continue
         try:
-            due = datetime.fromisoformat(item.get("due_at"))
-            if due.tzinfo is None:
-                due = due.astimezone()
-        except Exception:
-            continue
+            due = datetime.fromisoformat(item.get("due_at")); due = due.astimezone() if due.tzinfo else due.astimezone()
+        except Exception: continue
         if due <= now:
-            events.append({"message": f"Reminder: {item.get('text', '')}", "card": {"type": "reminder", **item}})
+            events.append({"message":f"Reminder: {item.get('text','')}","card":{"type":"reminder",**item}})
             repeat = float(item.get("repeat_minutes") or 0)
-            if repeat > 0:
-                item["due_at"] = (now + timedelta(minutes=repeat)).isoformat(timespec="seconds")
-            else:
-                item["status"] = "delivered"
-            item["last_fired_at"] = now.isoformat(timespec="seconds")
-            reminders_changed = True
-    if reminders_changed:
-        _save(REMINDERS, reminders)
-
-    schedules = _load(SCHEDULES, [])
-    schedules_changed = False
+            item["due_at"] = (now + timedelta(minutes=repeat)).isoformat(timespec="seconds") if repeat > 0 else item.get("due_at")
+            if repeat <= 0: item["status"] = "delivered"
+            item["last_fired_at"] = now.isoformat(timespec="seconds"); changed = True
+    if changed: _save(REMINDERS, reminders)
+    schedules = _load(SCHEDULES, []); changed = False
     for item in schedules:
         try:
             if _schedule_due(item, now):
-                events.append({"message": f"Scheduled reminder: {item.get('text', '')}", "card": {"type": "schedule", **item}})
-                item["last_fired_at"] = now.isoformat(timespec="seconds")
-                schedules_changed = True
-        except Exception:
-            continue
-    if schedules_changed:
-        _save(SCHEDULES, schedules)
-
+                events.append({"message":f"Scheduled reminder: {item.get('text','')}","card":{"type":"schedule",**item}})
+                item["last_fired_at"] = now.isoformat(timespec="seconds"); changed = True
+        except Exception: continue
+    if changed: _save(SCHEDULES, schedules)
     return {"events": events}
 
 
@@ -159,12 +135,9 @@ async def agent_run(request: AgentRequest) -> AgentResponse:
 
 @app.post("/approvals/{approval_id}/resolve")
 async def approval_resolve(approval_id: str, decision: ApprovalDecision) -> dict:
-    try:
-        return resolve_approval(approval_id, decision.approved)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    try: return resolve_approval(approval_id, decision.approved)
+    except ValueError as exc: raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 if __name__ == "__main__":
-    port = int(os.getenv("PORT", "8000"))
-    uvicorn.run("main:app", host="0.0.0.0", port=port, reload=False)
+    port = int(os.getenv("PORT", "8000")); uvicorn.run("main:app", host="0.0.0.0", port=port, reload=False)
