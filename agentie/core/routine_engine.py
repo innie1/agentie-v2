@@ -40,7 +40,7 @@ def _parse_named_routine(text:str,trigger_phrase:str)->tuple[str|None,str]:
     if m:explicit=m.group(1).strip(' \"“”.,:;-');body=m.group(2).strip()
     else:body=re.sub(r"^(?:please\s+)?(?:create|make|set up|setup|add)\s+(?:me\s+)?(?:a\s+)?routine\s+(?:to|that|which)?\s*","",compact,flags=re.I).strip()
     body=re.sub(re.escape(trigger_phrase)," ",body,flags=re.I);body=re.sub(r"\s+"," ",body).strip(" ,.;:-")
-    body=re.sub(r"^(checks|reminds|researches|summarizes|saves|runs|looks|tells)\b",lambda m:{'checks':'check','reminds':'remind','researches':'research','summarizes':'summarize','saves':'save','runs':'run','looks':'look','tells':'tell'}[m.group(1).lower()],body,flags=re.I)
+    body=re.sub(r"^(checks|reminds|researches|summarizes|saves|runs|looks|tells|monitors|watches|visits|screenshots|captures)\b",lambda m:{'checks':'check','reminds':'remind','researches':'research','summarizes':'summarize','saves':'save','runs':'run','looks':'look','tells':'tell','monitors':'monitor','watches':'watch','visits':'visit','screenshots':'screenshot','captures':'capture'}[m.group(1).lower()],body,flags=re.I)
     return explicit,body
 def create_routine(text:str,agent_role:str|None=None):
     parsed=_parse_trigger(text)
@@ -49,8 +49,6 @@ def create_routine(text:str,agent_role:str|None=None):
     if not action:raise ValueError("Tell me what the routine should do.")
     sig=_signature(trigger,action);items=list_routines();existing=next((x for x in items if x.get("signature")==sig and x.get("status")!="deleted"),None)
     if existing:return existing,False
-    # Repair routines created by the old parser (e.g. name "Called Morning Build Check That Checks My")
-    # when the user repeats the intended named routine command after upgrading.
     if explicit_name:
         needle=_norm(explicit_name);legacy=next((x for x in items if x.get('status')!='deleted' and _norm(str(x.get('trigger','')))==_norm(trigger) and (_norm(str(x.get('name',''))).startswith('called '+needle) or _norm(str(x.get('action',''))).startswith('called '+needle))),None)
         if legacy:
@@ -72,7 +70,8 @@ def route_routine_command(message:str):
     text=" ".join(message.strip().split());lower=text.lower()
     if re.search(r"\b(show|list|what are|my)\b.*\broutines?\b",lower) or lower in {"routines","show routines"}:
         items=[x for x in list_routines() if x.get("status")!="deleted"];return {"message":f"You have {len(items)} routine(s).","card":{"type":"routines","items":items}}
-    if re.search(r"\b(create|make|set up|setup|add)\b.*\broutine\b",lower) or ("every " in lower and any(v in lower for v in ["check ","research ","summarize ","save ","run ","look ","tell ","remind "])):
+    implicit_verbs=["check ","research ","summarize ","save ","run ","look ","tell ","remind ","monitor ","watch ","visit ","screenshot ","capture "]
+    if re.search(r"\b(create|make|set up|setup|add)\b.*\broutine\b",lower) or ("every " in lower and any(v in lower for v in implicit_verbs)):
         rm=re.search(r"\b(?:using|with|as)\s+(?:the\s+)?([a-z][a-z -]{1,40})\s+agent\b",lower);role=rm.group(1).strip() if rm else None
         try:item,created=create_routine(text,role)
         except ValueError as exc:return {"message":str(exc),"card":None}
@@ -96,8 +95,6 @@ def _due(item:dict[str,Any],now:datetime)->bool:
         sec=float(m.group(1))*(3600 if m.group(2)=="hours" else 60);base=last or created;return (now-base).total_seconds()>=sec
     tm=re.search(r"at (\d{1,2}):(\d{2})",trig);hour,minute=(int(tm.group(1)),int(tm.group(2))) if tm else (9,0);target=now.replace(hour=hour,minute=minute,second=0,microsecond=0)
     if now<target or (last and last.date()==now.date()):return False
-    # If this routine was created today after today's scheduled time, today's occurrence was never
-    # scheduled for it. Wait until the next eligible day instead of treating it as overdue.
     if not last and created.date()==now.date() and created>target:return False
     if trig.startswith("daily"):return True
     if trig.startswith("weekdays"):return now.weekday()<5
