@@ -45,11 +45,19 @@ def clear_role(agent_name:str)->dict[str,str]:
 def list_roles()->dict[str,Any]:
     data=_load();return {"assignments":data.get("assignments",{}),"available":sorted(set(ROLE_PRESETS)|set(data.get("custom_roles",{})))}
 def route_role_command(message:str)->dict[str,Any]|None:
-    text=" ".join(message.strip().split());lower=text.lower()
+    text=" ".join(message.strip().split());lower=text.lower().strip(" .?!")
     if re.search(r"\b(show|list|what are)\b.*\b(agent )?roles?\b",lower):
         state=list_roles();return {"message":"Here are the current agent role assignments.","card":{"type":"agent_roles",**state}}
-    m=re.search(r"\b(?:make|set|assign|change)\s+(?:the\s+)?(general|research|coding|manager|github)(?:\s+agent)?\s+(?:to|as|into)\s+(?:a|an|the)?\s*([a-z][a-z0-9 -]{1,50})\b",lower)
-    if not m:m=re.search(r"\b(general|research|coding|manager|github)(?:\s+agent)?\s+should\s+(?:act|work|serve)\s+as\s+(?:a|an|the)?\s*([a-z][a-z0-9 -]{1,50})\b",lower)
+    patterns=[
+        r"\b(?:make|set|assign|change)\s+(?:the\s+)?(general|research|coding|manager|github)(?:\s+agent)?\s+(?:to|as|into)\s+(?:a|an|the)?\s*([a-z][a-z0-9 -]{1,50})$",
+        r"\b(?:make|set|assign|change)\s+(?:the\s+)?(general|research|coding|manager|github)(?:\s+agent)?\s+(?:to\s+)?(?:the\s+)?role\s+of\s+(?:a|an|the)?\s*([a-z][a-z0-9 -]{1,50})$",
+        r"\b(?:assign|give)\s+(?:the\s+)?(general|research|coding|manager|github)(?:\s+agent)?\s+(?:the\s+)?role\s+(?:of\s+)?(?:a|an|the)?\s*([a-z][a-z0-9 -]{1,50})$",
+        r"\b(general|research|coding|manager|github)(?:\s+agent)?\s+should\s+(?:act|work|serve)\s+as\s+(?:a|an|the)?\s*([a-z][a-z0-9 -]{1,50})$",
+    ]
+    m=None
+    for pattern in patterns:
+        m=re.search(pattern,lower)
+        if m:break
     if m:
         agent,role=m.group(1),m.group(2).strip(" .");resolved=assign_role(agent,role);return {"message":f"{agent.title()} agent is now acting as {resolved['name']}.","card":{"type":"agent_role","agent":agent,**resolved}}
     m=re.search(r"\b(?:reset|clear|remove)\s+(?:the\s+)?(general|research|coding|manager|github)(?:\s+agent)?\s+role\b",lower)
