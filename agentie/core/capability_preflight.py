@@ -29,7 +29,14 @@ def _filesystem_server() -> dict[str, Any] | None:
 
 
 def _filename(text: str) -> str | None:
-    match = re.search(rf"(?<![\w.-])([\w][\w .()\-]*\.(?:{_EXT_PATTERN}))(?![\w.-])", text, re.I)
+    # Accept normal sentence punctuation after a filename (for example
+    # "Read tasks.json.") without accidentally matching the prefix of a longer
+    # dotted filename such as "tasks.json.backup".
+    match = re.search(
+        rf"(?<![\w.-])([\w][\w .()\-]*\.(?:{_EXT_PATTERN}))(?=$|[\s,;:!?]|\.(?:\s|$))",
+        text,
+        re.I,
+    )
     return match.group(1).strip(" .?!\"'`") if match else None
 
 
