@@ -1,4 +1,5 @@
 import json
+import re
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -6,6 +7,20 @@ from pathlib import Path
 from agents import function_tool
 
 STORE = Path.cwd() / "workspace" / "approvals.json"
+
+# Conservative read-only classification. Unknown MCP tools still require approval.
+_READ_ONLY_PREFIXES = (
+    "read_", "list_", "get_", "search_", "find_", "inspect_", "fetch_",
+    "show_", "describe_", "query_",
+)
+_READ_ONLY_EXACT = {
+    "fetch", "directory_tree", "git_status", "git_log", "git_diff", "git_diff_unstaged",
+    "git_diff_staged", "git_show", "status", "log", "diff",
+}
+_MUTATING_WORDS = {
+    "write", "edit", "create", "delete", "remove", "move", "rename", "update", "set", "add",
+    "send", "post", "put", "patch", "execute", "run", "commit", "push", "merge", "apply",
+}
 
 
 def _load():
@@ -22,6 +37,22 @@ def _save(items):
     STORE.write_text(json.dumps(items, indent=2, ensure_ascii=False), encoding="utf-8")
 
 
+def _mcp_parts(action: str) -> tuple[str, str] | None:
+    # Action format: mcp:<server>:<tool>:<json arguments>
+    match = re.match(r"^mcp:([^:]+):([^:]+):", str(action or ""))
+    return (match.group(1), match.group(2)) if match else None
+
+
+def mcp_tool_is_read_only(tool_name: str) -> bool:
+    name = str(tool_name or "").lower().strip()
+    if not name:
+        return False
+    tokens = {token for token in re.split(r"[^a-z0-9]+", name) if token}
+    if tokens & _MUTATING_WORDS:
+        return False
+    return name in _READ_ONLY_EXACT or name.startswith(_READ_ONLY_PREFIXES)
+
+
 def get_approval(approval_id: str):
     for item in _load():
         if item.get("id") == approval_id:
@@ -30,17 +61,42 @@ def get_approval(approval_id: str):
 
 
 def approval_is_granted(action: str, approval_id: str | None = None) -> bool:
-    return any(
-        item.get("action") == action
-        and item.get("status") == "approved"
-        and not item.get("consumed_at")
-        and (approval_id is None or item.get("id") == approval_id)
-        for item in _load()
-    )
+    """Check approval policy and consume one-time MCP approvals when used.
+
+    Read-only MCP tools auto-run. Persistent grants are scoped to one MCP server/tool.
+    A normal approval is consumed on the next exact action so "Approve once" really is once.
+    """
+    parts = _mcp_parts(action)
+    if parts and mcp_tool_is_read_only(parts[1]):
+        return True
+
+    items = _load()
+    if parts:
+        server, tool = parts
+        for item in items:
+            if item.get("status") != "always":
+                continue
+            meta = item.get("metadata") or {}
+            if meta.get("kind") == "mcp" and meta.get("server") == server and meta.get("tool") == tool:
+                return True
+
+    for item in items:
+        if (
+            item.get("action") == action
+            and item.get("status") == "approved"
+            and not item.get("consumed_at")
+            and (approval_id is None or item.get("id") == approval_id)
+        ):
+            # MCP approvals are one-shot. Preserve legacy behavior for non-MCP approvals.
+            if parts:
+                item["consumed_at"] = datetime.now(timezone.utc).isoformat()
+                item["status"] = "consumed"
+                _save(items)
+            return True
+    return False
 
 
 def consume_approval(action: str) -> bool:
-    """Consume one previously approved action exactly once."""
     items = _load()
     for item in items:
         if item.get("action") == action and item.get("status") == "approved" and not item.get("consumed_at"):
@@ -65,22 +121,55 @@ def create_approval(action: str, reason: str, metadata: dict | None = None):
     }
     if metadata:
         item["metadata"] = metadata
+    else:
+        parts = _mcp_parts(action)
+        if parts:
+            item["metadata"] = {"kind": "mcp", "server": parts[0], "tool": parts[1]}
     items.append(item)
     _save(items)
     return item
 
 
-def resolve_approval(approval_id: str, approved: bool):
+def resolve_approval(approval_id: str, approved: bool, remember: bool = False):
     items = _load()
     for item in items:
         if item.get("id") == approval_id:
             if item.get("status") != "pending":
                 raise ValueError("Approval has already been resolved.")
-            item["status"] = "approved" if approved else "denied"
+            if approved and remember:
+                parts = _mcp_parts(str(item.get("action") or ""))
+                if not parts:
+                    raise ValueError("Persistent approval is only supported for MCP tool actions.")
+                item["status"] = "always"
+                item["metadata"] = {"kind": "mcp", "server": parts[0], "tool": parts[1]}
+            else:
+                item["status"] = "approved" if approved else "denied"
             item["resolved_at"] = datetime.now(timezone.utc).isoformat()
             _save(items)
             return item
     raise ValueError("Approval not found.")
+
+
+def list_persistent_mcp_permissions() -> list[dict]:
+    out = []
+    for item in _load():
+        if item.get("status") != "always":
+            continue
+        meta = item.get("metadata") or {}
+        if meta.get("kind") == "mcp":
+            out.append({"id": item.get("id"), "server": meta.get("server"), "tool": meta.get("tool"), "created_at": item.get("resolved_at") or item.get("created_at")})
+    return out
+
+
+def revoke_persistent_mcp_permission(approval_id: str) -> bool:
+    items = _load()
+    for item in items:
+        if item.get("id") == approval_id and item.get("status") == "always":
+            item["status"] = "revoked"
+            item["revoked_at"] = datetime.now(timezone.utc).isoformat()
+            _save(items)
+            return True
+    return False
 
 
 @function_tool
