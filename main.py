@@ -11,7 +11,7 @@ from agentie.core.code_execution import route_code_command
 from agentie.core.conversation_loop import consume_followup,detect_incomplete_intent
 from agentie.core.file_service import MAX_FILE_BYTES,resolve_upload,run_action,save_upload
 from agentie.core.local_router import route_local_actions
-from agentie.core.mcp_client import route_mcp_command
+from agentie.core.mcp_client import plugin_state,route_mcp_command
 from agentie.core.memory_store import add_message
 from agentie.core.observability import finish_trace,get_trace,record_event,record_route,recent_traces,start_trace,summary_card,trace_card
 from agentie.core.office_artifacts import try_office_request
@@ -25,8 +25,8 @@ from agentie.tools.approval_tools import resolve_approval
 from agentie.tools.advanced_utility_tools import SCHEDULES
 from agentie.tools.productivity_tools import REMINDERS
 
-app=FastAPI(title="Agentie API",version="1.8.0",description="Local-first Agentie runtime with observability, cost tracking, memory, routines, jobs, RAG, MCP discovery, skills and local artifact generation")
-FRONTEND_DIR=Path(__file__).parent/"frontend";FRONTEND_FILE=FRONTEND_DIR/"index.html";CARDS_JS=FRONTEND_DIR/"cards.js";EVENTS_JS=FRONTEND_DIR/"events.js";UPLOAD_JS=FRONTEND_DIR/"upload.js"
+app=FastAPI(title="Agentie API",version="1.8.1",description="Local-first Agentie runtime with observability, cost tracking, memory, routines, jobs, RAG, MCP discovery, plugins, skills and local artifact generation")
+FRONTEND_DIR=Path(__file__).parent/"frontend";FRONTEND_FILE=FRONTEND_DIR/"index.html";CARDS_JS=FRONTEND_DIR/"cards.js";EVENTS_JS=FRONTEND_DIR/"events.js";UPLOAD_JS=FRONTEND_DIR/"upload.js";PLUGINS_JS=FRONTEND_DIR/"plugins.js"
 class AgentRequest(BaseModel):
     message:str=Field(min_length=1,max_length=20_000);agent_type:str=Field(default="general",pattern="^(general|research|coding|manager|github)$");session_id:str|None=Field(default=None,max_length=200)
 class AgentResponse(BaseModel):
@@ -102,15 +102,19 @@ async def startup_event():start_routine_worker()
 @app.get("/")
 async def chat_ui():
     if not FRONTEND_FILE.exists():raise HTTPException(404,"Frontend not found.")
-    html=FRONTEND_FILE.read_text(encoding="utf-8")+'\n<script src="/cards.js?v=171"></script>\n<script src="/events.js?v=171"></script>\n<script src="/upload.js?v=171"></script>\n';return HTMLResponse(html,headers={"Cache-Control":"no-store, no-cache, must-revalidate, max-age=0"})
+    html=FRONTEND_FILE.read_text(encoding="utf-8")+'\n<script src="/cards.js?v=181"></script>\n<script src="/events.js?v=181"></script>\n<script src="/upload.js?v=181"></script>\n<script src="/plugins.js?v=181"></script>\n';return HTMLResponse(html,headers={"Cache-Control":"no-store, no-cache, must-revalidate, max-age=0"})
 @app.get("/cards.js")
 async def cards_js():return Response(CARDS_JS.read_text(encoding="utf-8"),media_type="application/javascript",headers={"Cache-Control":"no-store"})
 @app.get("/events.js")
 async def events_js():return Response(EVENTS_JS.read_text(encoding="utf-8"),media_type="application/javascript",headers={"Cache-Control":"no-store"})
 @app.get("/upload.js")
 async def upload_js():return Response(UPLOAD_JS.read_text(encoding="utf-8"),media_type="application/javascript",headers={"Cache-Control":"no-store"})
+@app.get("/plugins.js")
+async def plugins_js():return Response(PLUGINS_JS.read_text(encoding="utf-8"),media_type="application/javascript",headers={"Cache-Control":"no-store"})
+@app.get("/plugins/state")
+async def plugins_state():return plugin_state()
 @app.get("/health")
-async def health():return {"status":"ok","service":"agentie-v2","version":"1.8.0"}
+async def health():return {"status":"ok","service":"agentie-v2","version":"1.8.1"}
 @app.post("/files/upload")
 async def file_upload(file:UploadFile=File(...)):
     try:
