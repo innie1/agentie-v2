@@ -54,7 +54,6 @@ def skills_for_agent(agent_type:str)->list[dict[str,Any]]:return [s for s in lis
 
 
 def _run_web_synthesis(query:str)->dict[str,Any]:
-    """Run the async isolated web synthesizer from the synchronous local router."""
     trace_id=current_trace_id()
     def worker():
         if trace_id:set_current_trace(trace_id)
@@ -63,12 +62,15 @@ def _run_web_synthesis(query:str)->dict[str,Any]:
         return pool.submit(worker).result()
 
 
+def _friendly_synthesis_failure(exc:Exception)->str:
+    text=str(exc).lower()
+    if "429" in text or "quota" in text or "resource_exhausted" in text or "rate limit" in text:
+        return "I found the web sources, but the AI summary is temporarily unavailable because the model quota was reached. You can still open the sources below."
+    return "I found the web sources, but I couldn't generate the AI summary right now. You can still open the sources below."
+
+
 def route_skill_command(message:str)->dict[str,Any]|None:
     text=" ".join(message.strip().split());lower=text.lower().strip(" .?!")
-
-    # Explicit web search is deterministic: retrieve first, then synthesize once.
-    # "sources only" / "links only" deliberately keeps the zero-model-call path.
-    # Deep research is excluded here so it can flow into the durable research job engine.
     web=re.match(r"^(?:please\s+)?(?:search(?:\s+the)?\s+web|web search|search online|look up online|find online|look on the web)\s+(?:for|about|on)?\s*(.+)$",text,re.I)
     if web and skill_enabled("research"):
         query=web.group(1).strip(" .?!")
@@ -76,13 +78,13 @@ def route_skill_command(message:str)->dict[str,Any]|None:
             query=re.sub(r"\b(?:sources only|links only|results only|just (?:the )?(?:sources|links|results)|do not summarize|don't summarize|no summary)\b", "", query, flags=re.I).strip(" ,.-")
             try:sources=search_sources(query,8)
             except Exception as exc:return {"message":f"Web search failed: {exc}","card":None}
-            return {"message":f"Found {len(sources)} web source(s) for “{query}”.","card":source_card(query,sources,"",0)}
+            return {"message":"","card":source_card(query,sources,"",0)}
         try:return _run_web_synthesis(query)
         except Exception as exc:
-            # A provider outage should not throw away useful search results.
             try:sources=search_sources(query,8)
-            except Exception:return {"message":f"Web search failed: {exc}","card":None}
-            return {"message":f"I found the web results, but synthesis failed: {exc}","card":source_card(query,sources,"",0)}
+            except Exception:return {"message":"Web search is temporarily unavailable.","card":None}
+            card=source_card(query,sources,"",0);card["synthesis_unavailable"]=True
+            return {"message":_friendly_synthesis_failure(exc),"card":card}
 
     if lower in {"skills","show skills","list skills","my skills"}:
         items=list_skills();return {"message":f"Agentie has {len(items)} registered skill(s).","card":{"type":"skills","items":items}}
