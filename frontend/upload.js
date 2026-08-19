@@ -13,7 +13,8 @@
     .attachment-chip strong,.attachment-chip small{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.attachment-chip small{color:var(--muted);margin-top:2px}.attachment-chip button{padding:0!important;border:0!important;background:transparent!important;color:var(--muted)!important;font-size:16px;cursor:pointer}.attachment-chip.uploading{opacity:.65}.attachment-chip.failed{border-color:#ef4444}
     .file-actions{display:flex;gap:6px;flex-wrap:wrap;margin-top:10px}.file-actions button,.file-actions a{padding:6px 9px;border:1px solid var(--border);border-radius:9px;background:var(--panel);color:var(--text);cursor:pointer;font-size:12px;text-decoration:none}
     .file-preview{max-height:240px;overflow:auto;margin-top:9px;padding:9px;background:var(--soft);border-radius:10px;font:11px ui-monospace,SFMono-Regular,Menlo,monospace;white-space:pre-wrap;word-break:break-word}.file-badge{display:inline-flex;padding:3px 7px;border-radius:999px;background:var(--soft);font-size:11px;color:var(--muted);margin-top:7px}
-    .multi-text-result{grid-column:1/-1;width:100%;box-sizing:border-box;padding:14px 16px;border:1px solid var(--border);border-radius:14px;background:var(--panel);white-space:pre-wrap;font-size:14px;line-height:1.55}
+    .multi-text-result{grid-column:1/-1;width:100%;box-sizing:border-box;padding:14px 16px;border:1px solid var(--border);border-radius:14px;background:var(--panel);font-size:14px;line-height:1.55}
+    .rich-text{line-height:1.62;white-space:normal}.rich-text p{margin:0 0 10px}.rich-text p:last-child{margin-bottom:0}.rich-text h1,.rich-text h2,.rich-text h3{margin:5px 0 9px;line-height:1.3}.rich-text h1{font-size:20px}.rich-text h2{font-size:17px}.rich-text h3{font-size:15px}.rich-text ul,.rich-text ol{margin:5px 0 11px;padding-left:22px}.rich-text li{margin:4px 0}.rich-text strong{font-weight:700}.rich-text em{font-style:italic}.rich-text code{font:12px ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--soft);padding:2px 5px;border-radius:5px}.rich-text hr{border:0;border-top:1px solid var(--border);margin:13px 0}
   `;
   document.head.appendChild(style);
 
@@ -24,7 +25,7 @@
 
   const drafts=document.createElement('div');drafts.className='attachment-drafts';composer.prepend(drafts);
   const attach=document.createElement('button');attach.type='button';attach.className='attach-button';attach.title='Attach files';attach.setAttribute('aria-label','Attach files');attach.textContent='+';composer.insertBefore(attach,input);
-  const pending=[];let busy=false;
+  const pending=[];
 
   const humanBytes=v=>{let n=Number(v||0),i=0,u=['B','KB','MB','GB'];while(n>=1024&&i<u.length-1){n/=1024;i++}return `${n>=10||i===0?Math.round(n):n.toFixed(1)} ${u[i]}`};
   const kindOf=n=>{const e=String(n||'').split('.').pop().toLowerCase();if(e==='pdf')return'pdf';if(e==='zip')return'zip';if(['png','jpg','jpeg','webp','gif','bmp'].includes(e))return'image';if(e==='csv')return'csv';if(e==='json')return'json';if(['yaml','yml'].includes(e))return'yaml';return'text'};
@@ -41,6 +42,41 @@
     messages?.appendChild(row);window.scrollTo({top:document.body.scrollHeight,behavior:'smooth'});return row;
   }
 
+  function appendInline(parent,text){
+    const source=String(text||'');
+    const token=/(`[^`]+`|\*\*[^*]+\*\*|__[^_]+__|\*[^*]+\*|_[^_]+_)/g;
+    let last=0,m;
+    while((m=token.exec(source))){
+      if(m.index>last)parent.appendChild(document.createTextNode(source.slice(last,m.index)));
+      const raw=m[0];let el;
+      if(raw.startsWith('`')){el=document.createElement('code');el.textContent=raw.slice(1,-1)}
+      else if(raw.startsWith('**')||raw.startsWith('__')){el=document.createElement('strong');el.textContent=raw.slice(2,-2)}
+      else{el=document.createElement('em');el.textContent=raw.slice(1,-1)}
+      parent.appendChild(el);last=token.lastIndex;
+    }
+    if(last<source.length)parent.appendChild(document.createTextNode(source.slice(last)));
+  }
+
+  function richText(text){
+    const root=document.createElement('div');root.className='rich-text';
+    const lines=String(text||'').replace(/\r/g,'').split('\n');
+    let list=null,listType='';
+    const closeList=()=>{list=null;listType=''};
+    for(const rawLine of lines){
+      const line=rawLine.trim();
+      if(!line){closeList();continue}
+      if(/^---+$/.test(line)){closeList();root.appendChild(document.createElement('hr'));continue}
+      let m=line.match(/^(#{1,3})\s+(.+)$/);
+      if(m){closeList();const h=document.createElement(`h${m[1].length}`);appendInline(h,m[2]);root.appendChild(h);continue}
+      m=line.match(/^[-*•]\s+(.+)$/);
+      if(m){if(!list||listType!=='ul'){closeList();list=document.createElement('ul');listType='ul';root.appendChild(list)}const li=document.createElement('li');appendInline(li,m[1]);list.appendChild(li);continue}
+      m=line.match(/^\d+[.)]\s+(.+)$/);
+      if(m){if(!list||listType!=='ol'){closeList();list=document.createElement('ol');listType='ol';root.appendChild(list)}const li=document.createElement('li');appendInline(li,m[1]);list.appendChild(li);continue}
+      closeList();const p=document.createElement('p');appendInline(p,line);root.appendChild(p);
+    }
+    return root;
+  }
+
   function stage(files){
     for(const file of files){
       if(!file)continue;
@@ -49,7 +85,7 @@
       const chip=document.createElement('div');chip.className='attachment-chip';item.chip=chip;
       const ico=document.createElement('div');ico.textContent=icon(kindOf(file.name));ico.style.fontSize='17px';
       const copy=document.createElement('div');const strong=document.createElement('strong');strong.textContent=file.name;const small=document.createElement('small');small.textContent=humanBytes(file.size);copy.append(strong,small);
-      const x=document.createElement('button');x.type='button';x.textContent='×';x.title='Remove attachment';x.onclick=()=>{if(busy)return;const i=pending.indexOf(item);if(i>=0)pending.splice(i,1);chip.remove();composer.classList.toggle('has-attachments',pending.length>0)};
+      const x=document.createElement('button');x.type='button';x.textContent='×';x.title='Remove attachment';x.onclick=()=>{const i=pending.indexOf(item);if(i>=0)pending.splice(i,1);chip.remove();composer.classList.toggle('has-attachments',pending.length>0)};
       chip.append(ico,copy,x);drafts.appendChild(chip);
     }
     composer.classList.toggle('has-attachments',pending.length>0);input.focus();
@@ -62,12 +98,11 @@
 
   async function upload(item){
     if(item.card)return item.card;
-    item.chip?.classList.add('uploading');const small=item.chip?.querySelector('small');if(small)small.textContent='Uploading…';
     try{
       const fd=new FormData();fd.append('file',item.file,item.file.name);
       const r=await fetch('/files/upload',{method:'POST',body:fd});const d=await r.json();if(!r.ok)throw Error(d.detail||'Upload failed');
-      item.card=d.card;item.chip?.classList.remove('uploading','failed');if(small)small.textContent='Ready';return d.card;
-    }catch(err){item.chip?.classList.remove('uploading');item.chip?.classList.add('failed');if(small)small.textContent=`Failed · ${err.message}`;throw err}
+      item.card=d.card;return d.card;
+    }catch(err){throw err}
   }
 
   async function fileAction(name,act){
@@ -76,13 +111,23 @@
   }
 
   async function submitAttachments(){
-    if(busy||!pending.length)return;
+    if(!pending.length)return;
     const question=input.value.trim();
-    busy=true;send.disabled=true;attach.disabled=true;
-    const visible=question||`Attached ${pending.length===1?pending[0].file.name:`${pending.length} files`}`;
-    addUser(visible);const working=addWorking();
+    const batch=pending.splice(0,pending.length);
+    const visible=question||`Attached ${batch.length===1?batch[0].file.name:`${batch.length} files`}`;
+
+    // Commit the draft immediately. The composer is ready for the user's next
+    // message while this attachment request continues in the background.
+    input.value='';
+    drafts.replaceChildren();
+    composer.classList.remove('has-attachments');
+    input.dispatchEvent(new Event('input',{bubbles:true}));
+    addUser(visible);
+    const working=addWorking();
+    input.focus();
+
     try{
-      const cards=[];for(const item of pending)cards.push(await upload(item));
+      const cards=[];for(const item of batch)cards.push(await upload(item));
       for(const card of cards)window.addAssistant?.('',card);
 
       if(question){
@@ -92,10 +137,7 @@
       }else{
         working.remove();window.addAssistant?.('Attachment uploaded. Add a message if you want me to read, summarize, inspect, or analyze it.',null);
       }
-
-      input.value='';drafts.replaceChildren();pending.splice(0,pending.length);composer.classList.remove('has-attachments');
     }catch(err){working.remove();window.addAssistant?.(`Attachment request failed: ${err.message}`,null)}
-    finally{busy=false;send.disabled=false;attach.disabled=false;input.focus()}
   }
 
   send.addEventListener('click',e=>{if(!pending.length)return;e.preventDefault();e.stopImmediatePropagation();submitAttachments()},true);
@@ -119,7 +161,7 @@
     if(c.type==='zip_extract'){const[w,e]=box(`🗜 Extracted ${c.filename}`);const p=document.createElement('div');p.className='file-preview';p.textContent=(c.files||[]).slice(0,50).join('\n');e.appendChild(p);return w}
     return null;
   }
-  const textNode=t=>{const e=document.createElement('div');e.className='multi-text-result';e.textContent=t;return e};
+  const textNode=t=>{const e=document.createElement('div');e.className='multi-text-result';e.appendChild(richText(t));return e};
   window.renderCard=function(card,message){
     if(card&&['uploaded_file','file_text','data_preview','zip_extract'].includes(card.type))return renderFile(card);
     if(card&&card.type==='multi'){
@@ -127,4 +169,16 @@
     }
     return previousRender(card,message);
   };
+
+  // Format all normal assistant model text, not only attachment responses.
+  const originalAddAssistant=window.addAssistant;
+  if(typeof originalAddAssistant==='function'){
+    window.addAssistant=function(message,card){
+      const text=String(message||'');
+      if(!text||card)return originalAddAssistant(message,card);
+      const messages=document.getElementById('messages');const row=document.createElement('div');row.className='assistant-row';
+      const wrap=document.createElement('div');const bubble=document.createElement('div');bubble.className='bubble assistant';bubble.appendChild(richText(text));wrap.appendChild(bubble);row.appendChild(wrap);messages?.appendChild(row);
+      window.scrollTo({top:document.body.scrollHeight,behavior:'smooth'});
+    };
+  }
 })();
