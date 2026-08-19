@@ -1,8 +1,9 @@
 import unittest
+from unittest.mock import patch
 
 from agentie.core.code_execution import route_code_command
 from agentie.core.local_router import route_local_actions
-from agentie.core.mcp_client import _infer_natural_tool, _split_local_command
+from agentie.core.mcp_client import _infer_natural_tool, _mentioned_server, _split_local_command
 from agentie.core.reference_router import _direct_timer_create
 
 
@@ -114,6 +115,13 @@ class MCPNaturalLanguageTests(unittest.TestCase):
         )
         self.assertEqual(tool, "list_allowed_directories")
         self.assertEqual(arguments, {})
+
+    def test_direct_plugin_name_is_recognized_without_using_or_with(self):
+        with patch("agentie.core.mcp_client.list_servers", return_value=[self.server]):
+            self.assertEqual(
+                _mentioned_server("What directories can the filesystem plugin access?"),
+                "filesystem",
+            )
 
 
 if __name__ == "__main__":
