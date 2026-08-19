@@ -54,19 +54,16 @@ def _recover_flattened_code(code: str) -> str:
     if not text:
         return text
 
-    # Separate obvious new statements after completed expressions/literals.
     text = re.sub(
         r"(?<=[\]\})])\s+(?=(?:[A-Za-z_]\w*\s*=|for\s+|while\s+|if\s+|def\s+|class\s+|try\s*:|with\s+|return\s+|raise\s+|assert\s+|print\s*\(|write_(?:text|json)\s*\())",
         "\n",
         text,
     )
-    # Separate statements that commonly follow a function call or one-line suite.
     text = re.sub(
         r"(?<=\))\s+(?=(?:[A-Za-z_]\w*\s*=|for\s+|while\s+|if\s+|return\s+|raise\s+|assert\s+|print\s*\(|write_(?:text|json)\s*\())",
         "\n",
         text,
     )
-    # Separate adjacent assignments such as: x = 1 y = 2
     text = re.sub(r"(?<=\d)\s+(?=[A-Za-z_]\w*\s*=)", "\n", text)
     return text
 
@@ -115,27 +112,24 @@ def _extract_code(message: str) -> str | None:
     if not text:
         return None
 
-    # Prefer an explicitly-labelled Python fence anywhere in the message. This makes
-    # copied examples robust even when surrounded by prose or another markdown fence.
     python_fence = re.search(r"```(?:python|py)\s*\n?(.*?)```", text, re.I | re.S)
     if python_fence:
         return python_fence.group(1).strip()
 
-    # A plain code fence is accepted when the surrounding request clearly asks to run code.
     plain_fence = re.search(r"```\s*\n?(.*?)```", text, re.S)
     if plain_fence and re.search(r"\b(?:run|execute)\b.*\b(?:python|code)\b", text[: plain_fence.start()] + " " + text[plain_fence.end():], re.I | re.S):
         return plain_fence.group(1).strip()
 
     patterns = [
-        r"(?:^|\n)\s*(?:please\s+)?(?:run|execute)\s+(?:this\s+)?(?:python\s+)?(?:code\s*)?:\s*(.+)$",
+        r"(?:^|\n)\s*(?:please\s+)?(?:run|execute)\s+(?:this\s+)?python\s*:\s*(.+)$",
+        r"(?:^|\n)\s*(?:please\s+)?(?:run|execute)\s+(?:this\s+)?python\s+(.+)$",
+        r"(?:^|\n)\s*(?:please\s+)?(?:run|execute)\s+(?:this\s+)?code\s*:\s*(.+)$",
         r"(?:^|\n)\s*(?:please\s+)?python\s*:\s*(.+)$",
-        r"(?:^|\n)\s*(?:please\s+)?run\s+python\s+(.+)$",
     ]
     for pattern in patterns:
         match = re.search(pattern, text, re.I | re.S)
         if match:
             value = match.group(1).strip()
-            # Drop common copied explanatory tails after a closing code fence marker.
             value = value.split("```", 1)[0].strip() if "```" in value else value
             return value
     return None
