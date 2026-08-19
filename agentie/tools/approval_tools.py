@@ -36,6 +36,23 @@ def approval_is_granted(action: str) -> bool:
     )
 
 
+def create_approval(action: str, reason: str):
+    items = _load()
+    for item in items:
+        if item.get("action") == action and item.get("status") == "pending":
+            return item
+    item = {
+        "id": str(uuid.uuid4())[:8],
+        "action": action[:500],
+        "reason": reason[:1000],
+        "status": "pending",
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    items.append(item)
+    _save(items)
+    return item
+
+
 def resolve_approval(approval_id: str, approved: bool):
     items = _load()
     for item in items:
@@ -52,20 +69,7 @@ def resolve_approval(approval_id: str, approved: bool):
 @function_tool
 def request_approval(action: str, reason: str) -> str:
     """Create a pending approval request before an externally consequential action."""
-    items = _load()
-    for item in items:
-        if item.get("action") == action and item.get("status") == "pending":
-            return json.dumps(item)
-    item = {
-        "id": str(uuid.uuid4())[:8],
-        "action": action[:500],
-        "reason": reason[:1000],
-        "status": "pending",
-        "created_at": datetime.now(timezone.utc).isoformat(),
-    }
-    items.append(item)
-    _save(items)
-    return json.dumps(item)
+    return json.dumps(create_approval(action, reason))
 
 
 @function_tool
