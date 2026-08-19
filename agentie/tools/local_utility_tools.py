@@ -15,24 +15,8 @@ _STOPWATCH = {"running": False, "started_at": None, "elapsed": 0.0}
 _STOPWATCH_LOCK = threading.Lock()
 
 
-def _popup(title: str, message: str) -> None:
-    def show() -> None:
-        try:
-            import tkinter as tk
-            from tkinter import messagebox
-
-            root = tk.Tk()
-            root.withdraw()
-            root.attributes("-topmost", True)
-            messagebox.showinfo(title, message, parent=root)
-            root.destroy()
-        except Exception:
-            pass
-
-    threading.Thread(target=show, daemon=True).start()
-
-
 def _run_timer(timer_id: str, seconds: float, label: str) -> None:
+    """Advance timer state in the background without OS-level notifications."""
     time.sleep(max(0.0, seconds))
     with _TIMER_LOCK:
         item = _TIMERS.get(timer_id)
@@ -40,7 +24,6 @@ def _run_timer(timer_id: str, seconds: float, label: str) -> None:
             return
         item["status"] = "finished"
         item["finished_at"] = datetime.now().isoformat(timespec="seconds")
-    _popup("Agentie", f"{label} finished.")
 
 
 def _create_timer(seconds: float, label: str, kind: str = "timer") -> dict:
@@ -63,7 +46,7 @@ def _create_timer(seconds: float, label: str, kind: str = "timer") -> dict:
 
 @function_tool
 def set_timer(seconds: float, label: str = "Timer") -> str:
-    """Set a local in-process timer and show a desktop popup when it finishes."""
+    """Set a local in-process timer for rendering in Agentie's chat UI."""
     if seconds <= 0 or seconds > 7 * 24 * 3600:
         raise ValueError("Timer must be between 1 second and 7 days.")
     return json.dumps(_create_timer(seconds, label, "timer"))
@@ -148,13 +131,12 @@ def stopwatch_status() -> str:
 
 @function_tool
 def show_notification(title: str, message: str) -> str:
-    """Show a small local desktop popup notification."""
-    _popup(title[:80], message[:500])
-    return "Notification displayed."
+    """Return notification text for the Agentie UI instead of creating an OS popup."""
+    return f"{title[:80]}: {message[:500]}"
 
 
 def _fetch_json(url: str) -> dict:
-    req = Request(url, headers={"User-Agent": "Agentie/0.4"})
+    req = Request(url, headers={"User-Agent": "Agentie/0.5"})
     with urlopen(req, timeout=10) as response:
         return json.loads(response.read(500_000).decode("utf-8"))
 
