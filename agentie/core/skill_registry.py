@@ -12,7 +12,7 @@ STATE=WORKSPACE/"skills_state.json"
 DEFAULT_SKILLS={
   "local-utils":{"name":"Local Utilities","description":"Timers, reminders, calculations, conversions, notes and system utilities.","agents":["general","manager","coding"],"enabled":True,"capabilities":["timer","alarm","reminder","calculator","conversion","notes","system"]},
   "research":{"name":"Research","description":"Web search, page reading and deep research with citations.","agents":["general","research","manager"],"enabled":True,"capabilities":["web_search","browser_read","deep_research","citation_verify"]},
-  "files":{"name":"Files & Documents","description":"Upload, inspect, search, generate and download local artifacts.","agents":["general","research","coding","manager"],"enabled":True,"capabilities":["files","pdf","zip","collections","rag"]},
+  "files":{"name":"Files & Documents","description":"Upload, inspect, search, generate and download local artifacts including PDF, DOCX, XLSX and PPTX.","agents":["general","research","coding","manager"],"enabled":True,"capabilities":["files","pdf","docx","xlsx","pptx","zip","collections","rag"]},
   "jobs":{"name":"Jobs & Delegation","description":"Durable background jobs, parallel agents, routines and dynamic roles.","agents":["general","manager","research","coding","github"],"enabled":True,"capabilities":["jobs","delegation","routines","roles"]},
   "github":{"name":"GitHub","description":"Repository inspection and GitHub-specialist workflows.","agents":["github","coding","manager"],"enabled":True,"capabilities":["github_read"]},
 }
