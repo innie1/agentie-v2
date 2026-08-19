@@ -7,7 +7,7 @@ from typing import Any
 
 import uvicorn
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse, Response
 from pydantic import BaseModel, Field
 
 from agentie.core.advanced_local_router import try_advanced_local_command
@@ -17,9 +17,10 @@ from agentie.tools.approval_tools import resolve_approval
 from agentie.tools.advanced_utility_tools import SCHEDULES
 from agentie.tools.productivity_tools import REMINDERS
 
-app = FastAPI(title="Agentie API", version="0.7.0", description="Local-first Agentie runtime with inline cards and persistent local utilities")
+app = FastAPI(title="Agentie API", version="0.7.1", description="Local-first Agentie runtime with inline cards and persistent local utilities")
 FRONTEND_DIR = Path(__file__).parent / "frontend"
 FRONTEND_FILE = FRONTEND_DIR / "index.html"
+CARDS_JS = FRONTEND_DIR / "cards.js"
 EVENTS_JS = FRONTEND_DIR / "events.js"
 
 class AgentRequest(BaseModel):
@@ -70,16 +71,23 @@ def _schedule_due(item: dict, now: datetime) -> bool:
 @app.get("/")
 async def chat_ui():
     if not FRONTEND_FILE.exists(): raise HTTPException(status_code=404, detail="Frontend not found.")
-    return HTMLResponse(FRONTEND_FILE.read_text(encoding="utf-8") + '\n<script src="/events.js"></script>\n')
+    html = FRONTEND_FILE.read_text(encoding="utf-8")
+    html += '\n<script src="/cards.js?v=071"></script>\n<script src="/events.js?v=071"></script>\n'
+    return HTMLResponse(html, headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"})
+
+@app.get("/cards.js")
+async def cards_js():
+    if not CARDS_JS.exists(): raise HTTPException(status_code=404, detail="Card renderer not found.")
+    return Response(CARDS_JS.read_text(encoding="utf-8"), media_type="application/javascript", headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"})
 
 @app.get("/events.js")
 async def events_js():
     if not EVENTS_JS.exists(): raise HTTPException(status_code=404, detail="Events script not found.")
-    return FileResponse(EVENTS_JS, media_type="application/javascript")
+    return Response(EVENTS_JS.read_text(encoding="utf-8"), media_type="application/javascript", headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"})
 
 @app.get("/health")
 async def health() -> dict[str, str]:
-    return {"status":"ok","service":"agentie-v2","version":"0.7.0"}
+    return {"status":"ok","service":"agentie-v2","version":"0.7.1"}
 
 @app.get("/local/events/poll")
 async def poll_local_events() -> dict[str, Any]:
