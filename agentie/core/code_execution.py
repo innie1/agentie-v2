@@ -21,8 +21,6 @@ MAX_CAPTURE_CHARS = 12_000
 MAX_ARTIFACT_BYTES = 10 * 1024 * 1024
 DEFAULT_TIMEOUT_SECONDS = 10
 
-# This is a constrained local executor, not a hardened OS/container sandbox.
-# Block the obvious filesystem/network/process escape surfaces in user code.
 _BLOCKED_IMPORT_ROOTS = {
     "os", "sys", "subprocess", "socket", "http", "urllib", "requests", "httpx",
     "pathlib", "shutil", "glob", "tempfile", "importlib", "ctypes", "multiprocessing",
@@ -94,7 +92,6 @@ def _extract_code(message: str) -> str | None:
 
 
 def _bootstrap(user_code: str) -> str:
-    # Helpers deliberately expose only basename-based reads from uploads and writes to cwd.
     return f'''import json as _json\nfrom pathlib import Path as _Path\n\n_RUN_DIR = _Path.cwd().resolve()\n_UPLOADS = _Path({str(UPLOADS.resolve())!r})\n\ndef _safe_basename(name):\n    value = _Path(str(name)).name\n    if not value or value in {{'.', '..'}}:\n        raise ValueError('A simple filename is required.')\n    return value[:180]\n\ndef read_text(name, max_chars=100000):\n    path = (_UPLOADS / _safe_basename(name)).resolve()\n    if path.parent != _UPLOADS.resolve() or not path.is_file():\n        raise FileNotFoundError(_safe_basename(name))\n    return path.read_text(encoding='utf-8', errors='replace')[:int(max_chars)]\n\ndef read_json(name):\n    return _json.loads(read_text(name))\n\ndef write_text(name, content):\n    path = (_RUN_DIR / _safe_basename(name)).resolve()\n    if path.parent != _RUN_DIR:\n        raise ValueError('Invalid output path.')\n    path.write_text(str(content), encoding='utf-8')\n    return path.name\n\ndef write_json(name, value):\n    return write_text(name, _json.dumps(value, indent=2, ensure_ascii=False))\n\n# ----- user code -----\n{user_code}\n'''
 
 
@@ -125,8 +122,7 @@ def execute_python(code: str) -> dict[str, Any]:
     run_dir = RUNS / run_id
     run_dir.mkdir(parents=True, exist_ok=False)
     script_name = "run.py"
-    script = run_dir / script_name
-    script.write_text(_bootstrap(code), encoding="utf-8")
+    (run_dir / script_name).write_text(_bootstrap(code), encoding="utf-8")
     timeout = _timeout_seconds()
     env = {
         "PYTHONIOENCODING": "utf-8",
@@ -212,15 +208,12 @@ def route_code_command(message: str) -> dict[str, Any] | None:
     items: list[dict[str, Any]] = [{
         "message": message,
         "card": {
-            "type": "formatted_text",
-            "format": f"Python · {status} · {result['duration_ms']:.0f} ms · exit {result['exit_code']}",
-            "text": "\n\n".join(sections),
+            "type": "note",
+            "title": f"Python · {status} · {result['duration_ms']:.0f} ms · exit {result['exit_code']}",
+            "content": "\n\n".join(sections),
         },
     }]
     for artifact in result["artifacts"]:
         items.append({"message": f"Created {artifact['name']}.", "card": artifact})
 
-    return {
-        "message": message,
-        "card": {"type": "multi", "items": items},
-    }
+    return {"message": message, "card": {"type": "multi", "items": items}}
