@@ -6,11 +6,12 @@ from pathlib import Path
 from typing import Any
 
 import uvicorn
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.responses import HTMLResponse, Response
 from pydantic import BaseModel, Field
 
 from agentie.core.conversation_loop import consume_followup, detect_incomplete_intent
+from agentie.core.file_service import MAX_FILE_BYTES, run_action, save_upload
 from agentie.core.local_router import route_local_actions
 from agentie.core.runner import run_agent
 from agentie.tools import local_utility_tools as local_utils
@@ -18,11 +19,12 @@ from agentie.tools.approval_tools import resolve_approval
 from agentie.tools.advanced_utility_tools import SCHEDULES
 from agentie.tools.productivity_tools import REMINDERS
 
-app = FastAPI(title="Agentie API", version="0.9.0", description="Local-first Agentie runtime with conversational slot filling, fuzzy routing, inline cards, and persistent utilities")
+app = FastAPI(title="Agentie API", version="1.0.0", description="Local-first Agentie runtime with conversational routing, uploads, inline cards, and persistent utilities")
 FRONTEND_DIR = Path(__file__).parent / "frontend"
 FRONTEND_FILE = FRONTEND_DIR / "index.html"
 CARDS_JS = FRONTEND_DIR / "cards.js"
 EVENTS_JS = FRONTEND_DIR / "events.js"
+UPLOAD_JS = FRONTEND_DIR / "upload.js"
 
 
 class AgentRequest(BaseModel):
@@ -41,6 +43,10 @@ class AgentResponse(BaseModel):
 
 class ApprovalDecision(BaseModel):
     approved: bool
+
+
+class FileAction(BaseModel):
+    action: str = Field(pattern="^(inspect|checksum|extract|text|preview)$")
 
 
 def _load(path: Path, default):
@@ -78,7 +84,6 @@ def _schedule_due(item: dict, now: datetime) -> bool:
 
 
 def _route_request_actions(message: str) -> dict:
-    """Route natural multi-sentence requests without forcing one giant clause."""
     command_start = (
         r"(?:calculate|calculator|calc|convert|set|start|pause|stop|reset|remind|reminder|show|list|"
         r"what|whats|tell|give|weather|wheather|forecast|temperature|wiki|wikipedia|look|rss|system|"
@@ -86,38 +91,28 @@ def _route_request_actions(message: str) -> dict:
     )
     normalized = re.sub(r"\s+", " ", message.strip())
     sentences = re.split(rf"(?<=[.!?])\s+(?={command_start}\b)", normalized, flags=re.IGNORECASE)
-    results: list[dict] = []
-    unresolved: list[str] = []
+    results: list[dict] = []; unresolved: list[str] = []
     for sentence in sentences:
-        sentence = sentence.strip()
-        if not sentence:
-            continue
-        routed = route_local_actions(sentence)
-        results.extend(routed.get("results", []))
-        unresolved.extend(routed.get("unresolved", []))
+        if not sentence.strip(): continue
+        routed = route_local_actions(sentence.strip())
+        results.extend(routed.get("results", [])); unresolved.extend(routed.get("unresolved", []))
     return {"results": results, "unresolved": unresolved}
 
 
 def _refresh_timer_cards(results: list[dict]) -> None:
     for result in results:
         card = result.get("card")
-        if not isinstance(card, dict) or card.get("type") != "timer":
-            continue
-        timer_id = str(card.get("id", ""))
-        seconds = float(card.get("duration_seconds") or 0)
-        if not timer_id or seconds <= 0:
-            continue
+        if not isinstance(card, dict) or card.get("type") != "timer": continue
+        timer_id = str(card.get("id", "")); seconds = float(card.get("duration_seconds") or 0)
+        if not timer_id or seconds <= 0: continue
         refreshed = local_utils._restart_timer(timer_id, seconds)
         if refreshed:
-            card["status"] = refreshed.get("status", "running")
-            card["due_at"] = refreshed.get("due_at")
-            card["duration_seconds"] = seconds
+            card["status"] = refreshed.get("status", "running"); card["due_at"] = refreshed.get("due_at"); card["duration_seconds"] = seconds
 
 
 def _multi_card(results: list[dict], extra_message: str | None = None) -> dict:
     items = [{"message": r.get("message", ""), "card": r.get("card")} for r in results]
-    if extra_message:
-        items.append({"message": extra_message, "card": None})
+    if extra_message: items.append({"message": extra_message, "card": None})
     return {"type": "multi", "items": items}
 
 
@@ -125,25 +120,55 @@ def _multi_card(results: list[dict], extra_message: str | None = None) -> dict:
 async def chat_ui():
     if not FRONTEND_FILE.exists(): raise HTTPException(status_code=404, detail="Frontend not found.")
     html = FRONTEND_FILE.read_text(encoding="utf-8")
-    html += '\n<script src="/cards.js?v=090"></script>\n<script src="/events.js?v=090"></script>\n'
+    html += '\n<script src="/cards.js?v=100"></script>\n<script src="/events.js?v=100"></script>\n<script src="/upload.js?v=100"></script>\n'
     return HTMLResponse(html, headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"})
 
 
 @app.get("/cards.js")
 async def cards_js():
     if not CARDS_JS.exists(): raise HTTPException(status_code=404, detail="Card renderer not found.")
-    return Response(CARDS_JS.read_text(encoding="utf-8"), media_type="application/javascript", headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"})
+    return Response(CARDS_JS.read_text(encoding="utf-8"), media_type="application/javascript", headers={"Cache-Control": "no-store"})
 
 
 @app.get("/events.js")
 async def events_js():
     if not EVENTS_JS.exists(): raise HTTPException(status_code=404, detail="Events script not found.")
-    return Response(EVENTS_JS.read_text(encoding="utf-8"), media_type="application/javascript", headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"})
+    return Response(EVENTS_JS.read_text(encoding="utf-8"), media_type="application/javascript", headers={"Cache-Control": "no-store"})
+
+
+@app.get("/upload.js")
+async def upload_js():
+    if not UPLOAD_JS.exists(): raise HTTPException(status_code=404, detail="Upload script not found.")
+    return Response(UPLOAD_JS.read_text(encoding="utf-8"), media_type="application/javascript", headers={"Cache-Control": "no-store"})
 
 
 @app.get("/health")
 async def health() -> dict[str, str]:
-    return {"status":"ok","service":"agentie-v2","version":"0.9.0"}
+    return {"status":"ok","service":"agentie-v2","version":"1.0.0"}
+
+
+@app.post("/files/upload")
+async def file_upload(file: UploadFile = File(...)) -> dict[str, Any]:
+    try:
+        content = await file.read(MAX_FILE_BYTES + 1)
+        if len(content) > MAX_FILE_BYTES: raise HTTPException(status_code=413, detail="File exceeds the 50 MB local upload limit.")
+        card = save_upload(file.filename or "upload.bin", content)
+        return {"message": f"Uploaded {card['name']}.", "card": card}
+    except HTTPException: raise
+    except ValueError as exc: raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc: raise HTTPException(status_code=500, detail=f"Upload failed: {exc}") from exc
+    finally:
+        await file.close()
+
+
+@app.post("/files/{filename}/action")
+async def file_action(filename: str, request: FileAction) -> dict[str, Any]:
+    try:
+        message, card = run_action(filename, request.action)
+        return {"message": message, "card": card}
+    except FileNotFoundError as exc: raise HTTPException(status_code=404, detail="Uploaded file not found.") from exc
+    except ValueError as exc: raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc: raise HTTPException(status_code=500, detail=f"File action failed: {exc}") from exc
 
 
 @app.get("/local/events/poll")
@@ -177,11 +202,7 @@ async def poll_local_events() -> dict[str, Any]:
 async def agent_run(request: AgentRequest, http_request: Request) -> AgentResponse:
     try:
         session_key = request.session_id or f"{http_request.client.host if http_request.client else 'local'}:{request.agent_type}"
-
-        # If the previous turn was waiting for one missing detail, interpret this
-        # message as that detail before treating it as a brand-new request.
-        followup = consume_followup(session_key, request.message)
-        effective_message = request.message
+        followup = consume_followup(session_key, request.message); effective_message = request.message
         if followup:
             if followup.get("cancelled") or not followup.get("command"):
                 message = str(followup.get("message", ""))
@@ -189,19 +210,12 @@ async def agent_run(request: AgentRequest, http_request: Request) -> AgentRespon
             effective_message = str(followup["command"])
 
         routed = _route_request_actions(effective_message)
-        local_results: list[dict] = routed.get("results", [])
-        unresolved: list[str] = routed.get("unresolved", [])
-
-        # Before paying for an LLM, check whether an unresolved clause is simply
-        # a known local intent with a missing slot (duration, city, alarm time...).
-        clarification_message: str | None = None
-        remaining_unresolved: list[str] = []
+        local_results: list[dict] = routed.get("results", []); unresolved: list[str] = routed.get("unresolved", [])
+        clarification_message: str | None = None; remaining_unresolved: list[str] = []
         for clause in unresolved:
             incomplete = detect_incomplete_intent(session_key, clause)
-            if incomplete and clarification_message is None:
-                clarification_message = str(incomplete.get("message", ""))
-            else:
-                remaining_unresolved.append(clause)
+            if incomplete and clarification_message is None: clarification_message = str(incomplete.get("message", ""))
+            else: remaining_unresolved.append(clause)
         unresolved = remaining_unresolved
 
         if local_results and not unresolved:
@@ -209,8 +223,7 @@ async def agent_run(request: AgentRequest, http_request: Request) -> AgentRespon
             if clarification_message:
                 return AgentResponse(message="", result=clarification_message, card=_multi_card(local_results, clarification_message), agent_type=request.agent_type, routed_by="clarification")
             if len(local_results) == 1:
-                item = local_results[0]
-                message = str(item.get("message", ""))
+                item = local_results[0]; message = str(item.get("message", ""))
                 return AgentResponse(message=message, result=message, card=item.get("card"), agent_type=request.agent_type, routed_by="local")
             return AgentResponse(message="", result="", card=_multi_card(local_results), agent_type=request.agent_type, routed_by="local")
 
@@ -218,29 +231,20 @@ async def agent_run(request: AgentRequest, http_request: Request) -> AgentRespon
             return AgentResponse(message=clarification_message, result=clarification_message, card=None, agent_type=request.agent_type, routed_by="clarification")
 
         if local_results and unresolved:
-            unresolved_prompt = (
-                "Handle only the following unresolved parts of the user's request. Do not repeat or redo other actions.\n\n"
-                + "\n".join(f"- {part}" for part in unresolved)
-            )
-            try:
-                llm_result = await run_agent(unresolved_prompt, request.agent_type)
-            except Exception as exc:
-                llm_result = "I completed the other actions, but I couldn't process: " + "; ".join(unresolved) + f". ({exc})"
-            if clarification_message:
-                llm_result = (llm_result + "\n\n" + clarification_message).strip()
+            unresolved_prompt = "Handle only the following unresolved parts of the user's request. Do not repeat or redo other actions.\n\n" + "\n".join(f"- {part}" for part in unresolved)
+            try: llm_result = await run_agent(unresolved_prompt, request.agent_type)
+            except Exception as exc: llm_result = "I completed the other actions, but I couldn't process: " + "; ".join(unresolved) + f". ({exc})"
+            if clarification_message: llm_result = (llm_result + "\n\n" + clarification_message).strip()
             _refresh_timer_cards(local_results)
             return AgentResponse(message="", result=llm_result, card=_multi_card(local_results, llm_result), agent_type=request.agent_type, routed_by="hybrid")
 
         if clarification_message and unresolved:
-            # Ask the local clarification first instead of spending an API call.
             return AgentResponse(message=clarification_message, result=clarification_message, card=None, agent_type=request.agent_type, routed_by="clarification")
 
         result = await run_agent(effective_message, request.agent_type)
         return AgentResponse(message=result, result=result, card=None, agent_type=request.agent_type, routed_by="llm")
-    except RuntimeError as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
-    except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"Agent run failed: {exc}") from exc
+    except RuntimeError as exc: raise HTTPException(status_code=500, detail=str(exc)) from exc
+    except Exception as exc: raise HTTPException(status_code=502, detail=f"Agent run failed: {exc}") from exc
 
 
 @app.post("/approvals/{approval_id}/resolve")
