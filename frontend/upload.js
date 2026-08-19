@@ -10,7 +10,7 @@
     .composer.file-drag{outline:2px dashed var(--success);outline-offset:4px}
     .upload-status{font-size:12px;color:var(--muted);padding:4px 2px}
     .file-actions{display:flex;gap:6px;flex-wrap:wrap;margin-top:10px}
-    .file-actions button{padding:6px 9px;border:1px solid var(--border);border-radius:9px;background:var(--panel);color:var(--text);cursor:pointer;font-size:12px}
+    .file-actions button,.file-actions a{padding:6px 9px;border:1px solid var(--border);border-radius:9px;background:var(--panel);color:var(--text);cursor:pointer;font-size:12px;text-decoration:none}
     .file-preview{max-height:220px;overflow:auto;margin-top:9px;padding:9px;background:var(--soft);border-radius:10px;font:11px ui-monospace,SFMono-Regular,Menlo,monospace;white-space:pre-wrap;word-break:break-word}
     .file-badge{display:inline-flex;padding:3px 7px;border-radius:999px;background:var(--soft);font-size:11px;color:var(--muted);margin-top:7px}
   `;
@@ -47,7 +47,6 @@
   }
 
   async function uploadOne(file) {
-    const working = window.addAssistant ? null : null;
     const row = document.createElement('div');
     row.className = 'assistant-row';
     const status = document.createElement('div');
@@ -92,6 +91,15 @@
     return ({pdf:'📕',zip:'🗜',image:'🖼',csv:'📊',json:'{}',yaml:'⚙',text:'📄'})[kind] || '📎';
   }
 
+  function addDownloadButton(box, name) {
+    const link = document.createElement('a');
+    link.textContent = 'Download';
+    link.href = `/files/${encodeURIComponent(name)}/download`;
+    link.download = name;
+    link.setAttribute('aria-label', `Download ${name}`);
+    box.appendChild(link);
+  }
+
   function addButton(box, label, name, action) {
     const button = document.createElement('button'); button.textContent = label;
     button.onclick = async () => {
@@ -120,6 +128,7 @@
       meta.textContent = details.join(' · '); el.appendChild(meta);
       if (c.inspection_error) { const err=document.createElement('div'); err.className='card-meta'; err.textContent=c.inspection_error; el.appendChild(err); }
       const actions = document.createElement('div'); actions.className = 'file-actions';
+      addDownloadButton(actions, c.name);
       addButton(actions, 'Inspect', c.name, 'inspect');
       addButton(actions, 'Checksum', c.name, 'checksum');
       if (c.kind === 'zip') addButton(actions, 'Extract', c.name, 'extract');
