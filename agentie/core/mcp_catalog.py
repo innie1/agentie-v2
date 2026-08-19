@@ -18,6 +18,16 @@ def presets() -> list[dict[str, Any]]:
     """Curated MCP presets. Presets are registration templates, not auto-installed code."""
     return [
         {
+            "id": "playwright",
+            "name": "Playwright",
+            "description": "Official Microsoft browser automation MCP for navigation, interaction and screenshots.",
+            "transport": "stdio",
+            "command": _npx("-y", "@playwright/mcp@latest", "--headless"),
+            "requires": "Node.js 20+ / npx",
+            "capabilities": ["browser", "navigation", "web_automation", "screenshot"],
+            "auto_route": False,
+        },
+        {
             "id": "memory",
             "name": "Memory",
             "description": "Knowledge-graph memory for entities, observations and relations.",
