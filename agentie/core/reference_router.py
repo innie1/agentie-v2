@@ -8,6 +8,7 @@ from agentie.tools import local_utility_tools as local_utils
 from agentie.tools import productivity_tools as productivity
 
 _DURATION_RE = re.compile(r"\b(\d+(?:\.\d+)?)\s*(seconds?|secs?|sec|s|minutes?|mins?|min|m|hours?|hrs?|hr|h)\b", re.I)
+_JOB_SIGNAL_RE = re.compile(r"\b(delegate|research|investigate|compare|analy[sz]e|build|implement|debug|refactor|github|repository|report|deep search|multi[- ]?step|parallel)\b", re.I)
 
 
 def _seconds(match: re.Match[str]) -> float:
@@ -22,6 +23,28 @@ def _load_reminders() -> list[dict]:
     except Exception: return []
 
 
+def _job_runner_session(session_id: str, job_id: str, specialist: str) -> str:
+    return f"{session_id}:job:{job_id}:{specialist}"
+
+
+async def _job_step_runner(instruction: str, specialist: str, session_id: str) -> str:
+    # Lazy import avoids coupling normal local routing to the provider runtime.
+    from agentie.core.runner import run_agent
+    active = get_context(session_id, "active_job_id", "job")
+    return await run_agent(instruction, specialist, _job_runner_session(session_id, str(active), specialist))
+
+
+def _looks_like_background_job(message: str) -> bool:
+    text = re.sub(r"\s+", " ", message.strip())
+    lower = text.lower()
+    # Never turn ordinary local utility batches into paid background jobs.
+    local_hits = len(re.findall(r"\b(timer|alarm|remind|time|weather|calculate|convert|note|system status|stopwatch)\b", lower))
+    complex_hits = len(_JOB_SIGNAL_RE.findall(lower))
+    if re.search(r"\b(delegate|deep search|run (?:this )?as a job|background job|parallel agents?)\b", lower): return True
+    if local_hits >= 2 and complex_hits == 0: return False
+    return complex_hits >= 2 or (complex_hits >= 1 and len(text) >= 180)
+
+
 def remember_active_from_card(session_id: str, card: dict[str, Any] | None) -> None:
     if not isinstance(card, dict): return
     if card.get("type") == "multi":
@@ -32,11 +55,60 @@ def remember_active_from_card(session_id: str, card: dict[str, Any] | None) -> N
                 if get_context(session_id, "active_object"): return
         return
     card_type = str(card.get("type") or "")
-    if card_type in {"timer", "alarm", "reminder", "schedule", "uploaded_file", "note", "task", "tasks"}:
+    if card_type in {"timer", "alarm", "reminder", "schedule", "uploaded_file", "note", "task", "tasks", "job_progress"}:
         set_context(session_id, "active_object", {"type": card_type, "card": card})
+        if card_type == "job_progress" and card.get("id"):
+            set_context(session_id, "active_job_id", str(card["id"]))
+
+
+def _job_command(session_id: str, message: str) -> dict[str, Any] | None:
+    from agentie.core.job_engine import cancel_job, create_job, get_job, job_card, job_events, start_job
+    text = re.sub(r"\s+", " ", message.strip())
+    lower = text.lower().strip(" .?!")
+    active_id = str(get_context(session_id, "active_job_id", "") or "")
+
+    status = re.match(r"^(?:show |check )?(?:job )?(?:status|progress)(?: (?:for|of))?\s*([a-f0-9]{6,12})?$", lower)
+    if status:
+        job_id = status.group(1) or active_id
+        if not job_id: return {"message":"Which job should I check?","card":None,"routed_by":"job"}
+        try: job = get_job(job_id)
+        except KeyError: return {"message":"I couldn't find that job.","card":None,"routed_by":"job"}
+        set_context(session_id, "active_job_id", job_id)
+        return {"message":f"Job {job_id}: {job['status']}.","card":job_card(job),"routed_by":"job"}
+
+    cancel = re.match(r"^(?:cancel|stop)\s+(?:the\s+)?job(?:\s+([a-f0-9]{6,12}))?$", lower)
+    if cancel:
+        job_id = cancel.group(1) or active_id
+        if not job_id: return {"message":"Which job should I cancel?","card":None,"routed_by":"job"}
+        try: job = cancel_job(job_id)
+        except KeyError: return {"message":"I couldn't find that job.","card":None,"routed_by":"job"}
+        return {"message":f"Job {job_id} cancelled.","card":job_card(job),"routed_by":"job"}
+
+    trace = re.match(r"^(?:show )?(?:job )?trace(?:\s+([a-f0-9]{6,12}))?$", lower)
+    if trace:
+        job_id = trace.group(1) or active_id
+        if not job_id: return {"message":"Which job trace should I show?","card":None,"routed_by":"job"}
+        try: events = job_events(job_id)
+        except Exception: return {"message":"I couldn't read that job trace.","card":None,"routed_by":"job"}
+        return {"message":f"Trace for job {job_id}.","card":{"type":"job_trace","id":job_id,"events":events},"routed_by":"job"}
+
+    explicit = re.match(r"^(?:delegate|start (?:a )?(?:background )?job(?: to)?|run (?:this )?as a job)\s*[:\-]?\s*(.+)$", text, re.I)
+    goal = explicit.group(1).strip() if explicit else text
+    if explicit or _looks_like_background_job(text):
+        job = create_job(session_id, goal)
+        set_context(session_id, "active_job_id", job["id"])
+        start_job(job["id"], _job_step_runner)
+        card = job_card(job)
+        set_context(session_id, "active_object", {"type":"job_progress","card":card})
+        return {"message":f"Started job {job['id']} with {job['total_steps']} planned step(s). You can keep chatting while it runs.","card":card,"routed_by":"job"}
+    return None
 
 
 def try_active_reference(session_id: str, message: str) -> dict[str, Any] | None:
+    # Job commands and complex delegation run before ordinary active-object references.
+    job_result = _job_command(session_id, message)
+    if job_result is not None: return job_result
+
     active = get_context(session_id, "active_object")
     if not isinstance(active, dict): return None
     card = active.get("card") if isinstance(active.get("card"), dict) else {}
@@ -53,7 +125,6 @@ def try_active_reference(session_id: str, message: str) -> dict[str, Any] | None
         if duration and reference_words and (change_words or add_words):
             requested = _seconds(duration)
             if add_words:
-                # Add to remaining time, not the original duration.
                 due_raw = card.get("due_at")
                 try:
                     due = datetime.fromisoformat(str(due_raw)); now = datetime.now(due.tzinfo) if due.tzinfo else datetime.now(); current = max(0.0, (due-now).total_seconds())
