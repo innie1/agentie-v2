@@ -44,15 +44,52 @@ def _timeout_seconds() -> int:
         return DEFAULT_TIMEOUT_SECONDS
 
 
-def _validate_code(code: str) -> None:
+def _recover_flattened_code(code: str) -> str:
+    """Best-effort recovery for code whose newlines were flattened by an upstream chat router.
+
+    This only runs after normal parsing fails. It handles common pasted scripts without
+    changing already-valid Python.
+    """
+    text = " ".join(str(code or "").replace("\r", " ").split())
+    if not text:
+        return text
+
+    # Separate obvious new statements after completed expressions/literals.
+    text = re.sub(
+        r"(?<=[\]\})])\s+(?=(?:[A-Za-z_]\w*\s*=|for\s+|while\s+|if\s+|def\s+|class\s+|try\s*:|with\s+|return\s+|raise\s+|assert\s+|print\s*\(|write_(?:text|json)\s*\())",
+        "\n",
+        text,
+    )
+    # Separate statements that commonly follow a function call or one-line suite.
+    text = re.sub(
+        r"(?<=\))\s+(?=(?:[A-Za-z_]\w*\s*=|for\s+|while\s+|if\s+|return\s+|raise\s+|assert\s+|print\s*\(|write_(?:text|json)\s*\())",
+        "\n",
+        text,
+    )
+    # Separate adjacent assignments such as: x = 1 y = 2
+    text = re.sub(r"(?<=\d)\s+(?=[A-Za-z_]\w*\s*=)", "\n", text)
+    return text
+
+
+def _parse_code(code: str) -> tuple[str, ast.AST]:
+    try:
+        return code, ast.parse(code, mode="exec")
+    except SyntaxError as original:
+        recovered = _recover_flattened_code(code)
+        if recovered != code:
+            try:
+                return recovered, ast.parse(recovered, mode="exec")
+            except SyntaxError:
+                pass
+        raise ValueError(f"Python syntax error on line {original.lineno}: {original.msg}") from original
+
+
+def _validate_code(code: str) -> str:
     if not code.strip():
         raise ValueError("No Python code was provided.")
     if len(code) > MAX_CODE_CHARS:
         raise ValueError(f"Python code is limited to {MAX_CODE_CHARS:,} characters per run.")
-    try:
-        tree = ast.parse(code, mode="exec")
-    except SyntaxError as exc:
-        raise ValueError(f"Python syntax error on line {exc.lineno}: {exc.msg}") from exc
+    parsed_code, tree = _parse_code(code)
 
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
@@ -70,24 +107,37 @@ def _validate_code(code: str) -> None:
             raise ValueError("Dunder attribute access is not allowed in local code execution.")
         elif isinstance(node, ast.Name) and node.id in {"__builtins__", "__loader__", "__spec__"}:
             raise ValueError(f"Name '{node.id}' is not allowed in local code execution.")
+    return parsed_code
 
 
 def _extract_code(message: str) -> str | None:
     text = str(message or "").strip()
-    fenced = re.search(r"```(?:python|py)?\s*\n?(.*?)```", text, re.I | re.S)
-    if fenced:
-        prefix = text[: fenced.start()].lower()
-        if re.search(r"\b(?:run|execute|python|code)\b", prefix) or prefix.strip() == "":
-            return fenced.group(1).strip()
+    if not text:
+        return None
+
+    # Prefer an explicitly-labelled Python fence anywhere in the message. This makes
+    # copied examples robust even when surrounded by prose or another markdown fence.
+    python_fence = re.search(r"```(?:python|py)\s*\n?(.*?)```", text, re.I | re.S)
+    if python_fence:
+        return python_fence.group(1).strip()
+
+    # A plain code fence is accepted when the surrounding request clearly asks to run code.
+    plain_fence = re.search(r"```\s*\n?(.*?)```", text, re.S)
+    if plain_fence and re.search(r"\b(?:run|execute)\b.*\b(?:python|code)\b", text[: plain_fence.start()] + " " + text[plain_fence.end():], re.I | re.S):
+        return plain_fence.group(1).strip()
+
     patterns = [
-        r"^(?:please\s+)?(?:run|execute)\s+(?:this\s+)?(?:python\s+)?(?:code\s*)?:\s*(.+)$",
-        r"^(?:please\s+)?python\s*:\s*(.+)$",
-        r"^(?:please\s+)?run\s+python\s+(.+)$",
+        r"(?:^|\n)\s*(?:please\s+)?(?:run|execute)\s+(?:this\s+)?(?:python\s+)?(?:code\s*)?:\s*(.+)$",
+        r"(?:^|\n)\s*(?:please\s+)?python\s*:\s*(.+)$",
+        r"(?:^|\n)\s*(?:please\s+)?run\s+python\s+(.+)$",
     ]
     for pattern in patterns:
-        match = re.match(pattern, text, re.I | re.S)
+        match = re.search(pattern, text, re.I | re.S)
         if match:
-            return match.group(1).strip()
+            value = match.group(1).strip()
+            # Drop common copied explanatory tails after a closing code fence marker.
+            value = value.split("```", 1)[0].strip() if "```" in value else value
+            return value
     return None
 
 
@@ -116,7 +166,7 @@ def _publish_artifacts(run_dir: Path, script_name: str) -> list[dict[str, Any]]:
 
 
 def execute_python(code: str) -> dict[str, Any]:
-    _validate_code(code)
+    code = _validate_code(code)
     RUNS.mkdir(parents=True, exist_ok=True)
     run_id = uuid.uuid4().hex[:10]
     run_dir = RUNS / run_id
