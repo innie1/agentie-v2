@@ -2,7 +2,7 @@ import unittest
 
 from agentie.core.code_execution import route_code_command
 from agentie.core.local_router import route_local_actions
-from agentie.core.mcp_client import _split_local_command
+from agentie.core.mcp_client import _infer_natural_tool, _split_local_command
 from agentie.core.reference_router import _direct_timer_create
 
 
@@ -78,6 +78,42 @@ class MCPTransportSafetyTests(unittest.TestCase):
             _split_local_command("powershell -Command whoami")
         with self.assertRaises(ValueError):
             _split_local_command("cmd /c whoami")
+
+
+class MCPNaturalLanguageTests(unittest.TestCase):
+    def setUp(self):
+        self.server = {
+            "name": "filesystem",
+            "transport": "stdio",
+            "command": "cmd",
+            "args": ["/c", "npx", "-y", "@modelcontextprotocol/server-filesystem", r"C:\Users\user\agentie-v2\workspace"],
+        }
+        self.info = {
+            "tools": [
+                {"name": "list_directory", "title": "List Directory"},
+                {"name": "list_allowed_directories", "title": "List Allowed Directories"},
+                {"name": "read_text_file", "title": "Read Text File"},
+                {"name": "get_file_info", "title": "Get File Info"},
+            ]
+        }
+
+    def test_natural_workspace_listing_maps_to_list_directory(self):
+        tool, arguments = _infer_natural_tool(
+            "Show me the files in my workspace using the filesystem plugin",
+            self.server,
+            self.info,
+        )
+        self.assertEqual(tool, "list_directory")
+        self.assertEqual(arguments["path"], r"C:\Users\user\agentie-v2\workspace")
+
+    def test_allowed_directory_question_needs_no_arguments(self):
+        tool, arguments = _infer_natural_tool(
+            "What directories can the filesystem plugin access?",
+            self.server,
+            self.info,
+        )
+        self.assertEqual(tool, "list_allowed_directories")
+        self.assertEqual(arguments, {})
 
 
 if __name__ == "__main__":
