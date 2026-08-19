@@ -2,6 +2,7 @@ import unittest
 
 from agentie.core.code_execution import route_code_command
 from agentie.core.local_router import route_local_actions
+from agentie.core.mcp_client import _split_local_command
 from agentie.core.reference_router import _direct_timer_create
 
 
@@ -54,6 +55,22 @@ class ExistingLocalBehaviorTests(unittest.TestCase):
         first = result["card"]["items"][0]["card"]
         self.assertEqual(first["type"], "note")
         self.assertIn("338350", first["content"])
+
+
+class MCPTransportSafetyTests(unittest.TestCase):
+    def test_local_npx_command_parses_without_starting_server(self):
+        command, args = _split_local_command("npx -y example-mcp --stdio")
+        self.assertIn(command.lower(), {"npx", "npx.cmd"})
+        self.assertEqual(args, ["-y", "example-mcp", "--stdio"])
+
+    def test_local_python_command_parses(self):
+        command, args = _split_local_command('python "server.py" --stdio')
+        self.assertIn(command.lower(), {"python", "python.exe"})
+        self.assertEqual(args, ["server.py", "--stdio"])
+
+    def test_shell_executables_are_not_accepted_as_mcp_servers(self):
+        with self.assertRaises(ValueError):
+            _split_local_command("powershell -Command whoami")
 
 
 if __name__ == "__main__":
