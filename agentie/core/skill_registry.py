@@ -72,12 +72,11 @@ def _friendly_synthesis_failure(exc:Exception)->str:
 
 
 def route_skill_command(message:str)->dict[str,Any]|None:
-    text=" ".join(message.strip().split());lower=text.lower().strip(" .?!")
-
     if skill_enabled("code-execution"):
-        code_result=route_code_command(text)
+        code_result=route_code_command(message)
         if code_result is not None:return code_result
 
+    text=" ".join(message.strip().split());lower=text.lower().strip(" .?!")
     web=re.match(r"^(?:please\s+)?(?:search(?:\s+the)?\s+web|web search|search online|look up online|find online|look on the web)\s+(?:for|about|on)?\s*(.+)$",text,re.I)
     if web and skill_enabled("research"):
         query=web.group(1).strip(" .?!")
