@@ -7,11 +7,11 @@ from typing import Any
 
 import uvicorn
 from fastapi import FastAPI, File, HTTPException, Request, UploadFile
-from fastapi.responses import HTMLResponse, Response
+from fastapi.responses import FileResponse, HTMLResponse, Response
 from pydantic import BaseModel, Field
 
 from agentie.core.conversation_loop import consume_followup, detect_incomplete_intent
-from agentie.core.file_service import MAX_FILE_BYTES, run_action, save_upload
+from agentie.core.file_service import MAX_FILE_BYTES, resolve_upload, run_action, save_upload
 from agentie.core.local_router import route_local_actions
 from agentie.core.memory_store import add_message
 from agentie.core.pdf_service import try_pdf_request
@@ -23,7 +23,7 @@ from agentie.tools.approval_tools import resolve_approval
 from agentie.tools.advanced_utility_tools import SCHEDULES
 from agentie.tools.productivity_tools import REMINDERS
 
-app = FastAPI(title="Agentie API", version="1.4.0", description="Local-first Agentie runtime with provider gating, persistent memory, active-object references, local PDF creation, uploads, cards, and conversational routing")
+app = FastAPI(title="Agentie API", version="1.4.1", description="Local-first Agentie runtime with provider gating, persistent memory, active-object references, local PDF creation, uploads, downloads, cards, and conversational routing")
 FRONTEND_DIR = Path(__file__).parent / "frontend"
 FRONTEND_FILE = FRONTEND_DIR / "index.html"
 CARDS_JS = FRONTEND_DIR / "cards.js"
@@ -137,7 +137,7 @@ def _result_summary(results: list[dict], fallback: str = "") -> str:
 async def chat_ui():
     if not FRONTEND_FILE.exists(): raise HTTPException(status_code=404, detail="Frontend not found.")
     html = FRONTEND_FILE.read_text(encoding="utf-8")
-    html += '\n<script src="/cards.js?v=140"></script>\n<script src="/events.js?v=140"></script>\n<script src="/upload.js?v=140"></script>\n'
+    html += '\n<script src="/cards.js?v=141"></script>\n<script src="/events.js?v=141"></script>\n<script src="/upload.js?v=141"></script>\n'
     return HTMLResponse(html, headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"})
 
 
@@ -161,7 +161,7 @@ async def upload_js():
 
 @app.get("/health")
 async def health() -> dict[str, str]:
-    return {"status":"ok","service":"agentie-v2","version":"1.4.0"}
+    return {"status":"ok","service":"agentie-v2","version":"1.4.1"}
 
 
 @app.post("/files/upload")
@@ -175,6 +175,17 @@ async def file_upload(file: UploadFile = File(...)) -> dict[str, Any]:
     except ValueError as exc: raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc: raise HTTPException(status_code=500, detail=f"Upload failed: {exc}") from exc
     finally: await file.close()
+
+
+@app.get("/files/{filename}/download")
+async def file_download(filename: str) -> FileResponse:
+    try:
+        path = resolve_upload(filename)
+        return FileResponse(path=str(path), filename=path.name, media_type="application/octet-stream")
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="File not found.") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @app.post("/files/{filename}/action")
@@ -249,8 +260,6 @@ async def agent_run(request: AgentRequest, http_request: Request) -> AgentRespon
                 remaining_unresolved.append(clause)
         unresolved = remaining_unresolved
 
-        # Provider gate: a parser miss on a local/free-first capability must never
-        # silently become a paid request. Keep only genuinely model-worthy clauses.
         provider_unresolved: list[str] = []
         blocked_local: list[str] = []
         for clause in unresolved:
@@ -294,7 +303,6 @@ async def agent_run(request: AgentRequest, http_request: Request) -> AgentRespon
             _record_local(session_key, request.message, clarification_message, None, request.agent_type, "clarification")
             return AgentResponse(message=clarification_message, result=clarification_message, card=None, agent_type=request.agent_type, routed_by="clarification")
 
-        # Last safety gate before any provider call.
         if not provider_allowed(effective_message):
             message = local_fallback_message(effective_message)
             _record_local(session_key, request.message, message, None, request.agent_type, "local_guard")
