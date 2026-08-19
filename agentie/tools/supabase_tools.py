@@ -40,14 +40,15 @@ def supabase_select(table: str, select: str = "*", limit: int = 20) -> str:
 def supabase_insert(table: str, record_json: str, approval_id: str) -> str:
     """Insert one JSON object into Supabase after an explicit approved request.
 
-    The approval action must exactly match `supabase_insert:<table>`.
+    The approval action must exactly match `supabase_insert:<table>` and the
+    supplied approval ID must be the specific approved request.
     """
     if not table.replace("_", "").isalnum():
         raise ValueError("Invalid table name.")
     action = f"supabase_insert:{table}"
-    if not approval_is_granted(action):
+    if not approval_is_granted(action, approval_id):
         raise PermissionError(
-            f"A matching approved request is required. Expected approval action: {action}"
+            f"Approval {approval_id} is not approved for action {action}."
         )
     record = json.loads(record_json)
     if not isinstance(record, dict):
