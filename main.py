@@ -19,7 +19,7 @@ from agentie.tools.approval_tools import resolve_approval
 from agentie.tools.advanced_utility_tools import SCHEDULES
 from agentie.tools.productivity_tools import REMINDERS
 
-app = FastAPI(title="Agentie API", version="1.0.0", description="Local-first Agentie runtime with conversational routing, uploads, inline cards, and persistent utilities")
+app = FastAPI(title="Agentie API", version="1.1.0", description="Local-first Agentie runtime with persistent conversation memory, uploads, inline cards, and conversational routing")
 FRONTEND_DIR = Path(__file__).parent / "frontend"
 FRONTEND_FILE = FRONTEND_DIR / "index.html"
 CARDS_JS = FRONTEND_DIR / "cards.js"
@@ -120,7 +120,7 @@ def _multi_card(results: list[dict], extra_message: str | None = None) -> dict:
 async def chat_ui():
     if not FRONTEND_FILE.exists(): raise HTTPException(status_code=404, detail="Frontend not found.")
     html = FRONTEND_FILE.read_text(encoding="utf-8")
-    html += '\n<script src="/cards.js?v=100"></script>\n<script src="/events.js?v=100"></script>\n<script src="/upload.js?v=100"></script>\n'
+    html += '\n<script src="/cards.js?v=110"></script>\n<script src="/events.js?v=110"></script>\n<script src="/upload.js?v=110"></script>\n'
     return HTMLResponse(html, headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"})
 
 
@@ -144,7 +144,7 @@ async def upload_js():
 
 @app.get("/health")
 async def health() -> dict[str, str]:
-    return {"status":"ok","service":"agentie-v2","version":"1.0.0"}
+    return {"status":"ok","service":"agentie-v2","version":"1.1.0"}
 
 
 @app.post("/files/upload")
@@ -232,7 +232,7 @@ async def agent_run(request: AgentRequest, http_request: Request) -> AgentRespon
 
         if local_results and unresolved:
             unresolved_prompt = "Handle only the following unresolved parts of the user's request. Do not repeat or redo other actions.\n\n" + "\n".join(f"- {part}" for part in unresolved)
-            try: llm_result = await run_agent(unresolved_prompt, request.agent_type)
+            try: llm_result = await run_agent(unresolved_prompt, request.agent_type, session_key)
             except Exception as exc: llm_result = "I completed the other actions, but I couldn't process: " + "; ".join(unresolved) + f". ({exc})"
             if clarification_message: llm_result = (llm_result + "\n\n" + clarification_message).strip()
             _refresh_timer_cards(local_results)
@@ -241,7 +241,7 @@ async def agent_run(request: AgentRequest, http_request: Request) -> AgentRespon
         if clarification_message and unresolved:
             return AgentResponse(message=clarification_message, result=clarification_message, card=None, agent_type=request.agent_type, routed_by="clarification")
 
-        result = await run_agent(effective_message, request.agent_type)
+        result = await run_agent(effective_message, request.agent_type, session_key)
         return AgentResponse(message=result, result=result, card=None, agent_type=request.agent_type, routed_by="llm")
     except RuntimeError as exc: raise HTTPException(status_code=500, detail=str(exc)) from exc
     except Exception as exc: raise HTTPException(status_code=502, detail=f"Agent run failed: {exc}") from exc
