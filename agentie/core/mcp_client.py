@@ -15,7 +15,7 @@ from agentie.tools.approval_tools import approval_is_granted, create_approval
 
 WORKSPACE = Path.cwd() / "workspace"
 REGISTRY = WORKSPACE / "mcp_servers.json"
-_ALLOWED_LOCAL_COMMANDS = {"python", "python.exe", "py", "py.exe", "node", "node.exe", "npx", "npx.cmd", "uv", "uv.exe", "uvx", "uvx.exe", "pipx", "pipx.exe"}
+_ALLOWED_LOCAL_COMMANDS = {"python", "python.exe", "py", "py.exe", "node", "node.exe", "npx", "npx.cmd", "uv", "uv.exe", "uvx", "uvx.exe", "pipx", "pipx.exe", "cmd", "cmd.exe"}
 
 
 def _load() -> dict[str, dict[str, Any]]:
@@ -56,9 +56,13 @@ def _split_local_command(command_line: str) -> tuple[str, list[str]]:
     command = parts[0].strip('"')
     base = Path(command).name.lower()
     if base not in _ALLOWED_LOCAL_COMMANDS:
-        allowed = ", ".join(sorted({Path(x).stem for x in _ALLOWED_LOCAL_COMMANDS}))
-        raise ValueError(f"Local MCP executables are limited to: {allowed}.")
+        allowed = ", ".join(sorted({Path(x).stem for x in _ALLOWED_LOCAL_COMMANDS if not x.startswith('cmd')}))
+        raise ValueError(f"Local MCP executables are limited to: {allowed}, plus the Windows cmd /c npx wrapper.")
     args = [part.strip('"') for part in parts[1:]]
+    if base in {"cmd", "cmd.exe"}:
+        wrapped = Path(args[1]).name.lower() if len(args) >= 2 else ""
+        if len(args) < 3 or args[0].lower() != "/c" or wrapped not in {"npx", "npx.cmd"}:
+            raise ValueError("For safety, cmd is only allowed as: cmd /c npx ... for an MCP server.")
     return command, args
 
 
@@ -127,10 +131,8 @@ def plugin_state() -> dict[str, Any]:
 
 def _safe_model_dump(value: Any) -> Any:
     if hasattr(value, "model_dump"):
-        try:
-            return value.model_dump(mode="json")
-        except Exception:
-            return value.model_dump()
+        try:return value.model_dump(mode="json")
+        except Exception:return value.model_dump()
     return value
 
 
@@ -144,13 +146,9 @@ def _client_for(server: dict[str, Any]) -> Client:
 
 async def inspect_server(name: str) -> dict[str, Any]:
     server = get_server(name)
-    if not server:
-        raise ValueError(f"MCP server '{name}' is not registered.")
+    if not server:raise ValueError(f"MCP server '{name}' is not registered.")
     async with _client_for(server) as client:
-        tool_result = await client.list_tools()
-        resource_result = await client.list_resources()
-        prompt_result = await client.list_prompts()
-        template_result = await client.list_resource_templates()
+        tool_result = await client.list_tools();resource_result = await client.list_resources();prompt_result = await client.list_prompts();template_result = await client.list_resource_templates()
         tools = [{"name": getattr(t, "name", None), "title": getattr(t, "title", None), "description": getattr(t, "description", None), "input_schema": _safe_model_dump(getattr(t, "input_schema", None))} for t in (getattr(tool_result, "tools", []) or [])]
         resources = [{"name": getattr(r, "name", None), "title": getattr(r, "title", None), "uri": str(getattr(r, "uri", "")), "description": getattr(r, "description", None)} for r in (getattr(resource_result, "resources", []) or [])]
         prompts = [{"name": getattr(p, "name", None), "title": getattr(p, "title", None), "description": getattr(p, "description", None)} for p in (getattr(prompt_result, "prompts", []) or [])]
@@ -166,95 +164,73 @@ def _approval_action(server_name: str, tool_name: str, arguments: dict[str, Any]
 
 def _content_text(block: Any) -> str:
     text = getattr(block, "text", None)
-    if text is not None:
-        return str(text)
+    if text is not None:return str(text)
     data = _safe_model_dump(block)
-    try:
-        return json.dumps(data, ensure_ascii=False, indent=2)
-    except Exception:
-        return str(data)
+    try:return json.dumps(data, ensure_ascii=False, indent=2)
+    except Exception:return str(data)
 
 
 async def execute_tool(server_name: str, tool_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
     server = get_server(server_name)
-    if not server:
-        raise ValueError(f"MCP server '{server_name}' is not registered.")
+    if not server:raise ValueError(f"MCP server '{server_name}' is not registered.")
     async with _client_for(server) as client:
-        result = await client.call_tool(tool_name, arguments)
-        blocks = getattr(result, "content", []) or []
-        text = "\n\n".join(_content_text(block) for block in blocks).strip()
+        result = await client.call_tool(tool_name, arguments);blocks = getattr(result, "content", []) or [];text = "\n\n".join(_content_text(block) for block in blocks).strip()
         if not text:
-            dumped = _safe_model_dump(result)
-            text = json.dumps(dumped, ensure_ascii=False, indent=2) if isinstance(dumped, (dict, list)) else str(dumped)
-        text = text[:12000]
-        is_error = bool(getattr(result, "is_error", False) or getattr(result, "isError", False))
+            dumped = _safe_model_dump(result);text = json.dumps(dumped, ensure_ascii=False, indent=2) if isinstance(dumped, (dict, list)) else str(dumped)
+        text = text[:12000];is_error = bool(getattr(result, "is_error", False) or getattr(result, "isError", False))
         return {"message": f"MCP tool '{tool_name}' {'returned an error' if is_error else 'completed'} on '{_clean_name(server_name)}'.", "card": {"type": "note", "title": f"MCP · {_clean_name(server_name)} / {tool_name}", "content": text or "Tool completed without text output."}}
 
 
 def _server_list_card(items: list[dict[str, Any]]) -> dict[str, Any]:
-    lines = []
+    lines=[]
     for item in items:
-        public = public_server(item)
-        label = "Local" if public["transport"] == "stdio" else "HTTP"
-        lines.append(f"{public['name']} · {label} — {public.get('display') or ''}")
-    return {"type": "note", "title": f"MCP servers · {len(items)}", "content": "\n".join(lines) if lines else "No MCP servers registered."}
+        public=public_server(item);label="Local" if public["transport"]=="stdio" else "HTTP";lines.append(f"{public['name']} · {label} — {public.get('display') or ''}")
+    return {"type":"note","title":f"MCP servers · {len(items)}","content":"\n".join(lines) if lines else "No MCP servers registered."}
 
 
 def _inspect_card(info: dict[str, Any]) -> dict[str, Any]:
-    transport = "Local stdio" if info.get("transport") == "stdio" else "Streamable HTTP"
-    lines = [f"Transport: {transport}", f"Connection: {info.get('display') or ''}", f"Protocol: {info.get('protocol_version') or 'unknown'}", f"Tools: {len(info.get('tools') or [])}", f"Resources: {len(info.get('resources') or [])}", f"Resource templates: {len(info.get('resource_templates') or [])}", f"Prompts: {len(info.get('prompts') or [])}", "Tool execution: approval required"]
+    transport="Local stdio" if info.get("transport")=="stdio" else "Streamable HTTP";lines=[f"Transport: {transport}",f"Connection: {info.get('display') or ''}",f"Protocol: {info.get('protocol_version') or 'unknown'}",f"Tools: {len(info.get('tools') or [])}",f"Resources: {len(info.get('resources') or [])}",f"Resource templates: {len(info.get('resource_templates') or [])}",f"Prompts: {len(info.get('prompts') or [])}","Tool execution: approval required"]
     if info.get("tools"):
         lines.append("\nTools")
-        for tool in info["tools"][:30]:
-            lines.append(f"- {tool.get('title') or tool.get('name') or 'tool'}")
-    return {"type": "note", "title": f"MCP · {info['name']}", "content": "\n".join(lines)}
+        for tool in info["tools"][:30]:lines.append(f"- {tool.get('title') or tool.get('name') or 'tool'}")
+    return {"type":"note","title":f"MCP · {info['name']}","content":"\n".join(lines)}
 
 
 async def route_mcp_command(message: str) -> dict[str, Any] | None:
-    text = " ".join(str(message or "").strip().split())
-    low = text.lower().strip(" .?!")
-    if low in {"mcp", "mcp servers", "list mcp servers", "show mcp servers", "show mcp"}:
-        items = list_servers()
-        return {"message": f"There are {len(items)} registered MCP server(s).", "card": _server_list_card(items)}
-
-    add_http = re.match(r"^(?:add|register|connect)\s+(?:an?\s+)?mcp\s+server\s+([\w.-]+)\s+(https?://\S+)$", text, re.I)
+    text=" ".join(str(message or "").strip().split());low=text.lower().strip(" .?!")
+    if low in {"mcp","mcp servers","list mcp servers","show mcp servers","show mcp"}:
+        items=list_servers();return {"message":f"There are {len(items)} registered MCP server(s).","card":_server_list_card(items)}
+    add_http=re.match(r"^(?:add|register|connect)\s+(?:an?\s+)?mcp\s+server\s+([\w.-]+)\s+(https?://\S+)$",text,re.I)
     if add_http:
-        try:item = add_http_server(add_http.group(1), add_http.group(2))
-        except ValueError as exc:return {"message": str(exc), "card": None}
-        return {"message": f"Registered HTTP MCP server '{item['name']}'.", "card": _server_list_card([item])}
-
-    add_local = re.match(r"^(?:add|register|connect)\s+(?:an?\s+)?mcp\s+server\s+([\w.-]+)\s+(?:using|with)\s+(.+)$", text, re.I)
+        try:item=add_http_server(add_http.group(1),add_http.group(2))
+        except ValueError as exc:return {"message":str(exc),"card":None}
+        return {"message":f"Registered HTTP MCP server '{item['name']}'.","card":_server_list_card([item])}
+    add_local=re.match(r"^(?:add|register|connect)\s+(?:an?\s+)?mcp\s+server\s+([\w.-]+)\s+(?:using|with)\s+(.+)$",text,re.I)
     if add_local:
-        try:item = add_local_server(add_local.group(1), add_local.group(2))
-        except ValueError as exc:return {"message": str(exc), "card": None}
-        return {"message": f"Registered local MCP server '{item['name']}'. It will only start when you inspect or use it.", "card": _server_list_card([item])}
-
-    remove = re.match(r"^(?:remove|delete|disconnect)\s+(?:the\s+)?mcp\s+server\s+([\w.-]+)$", text, re.I)
+        try:item=add_local_server(add_local.group(1),add_local.group(2))
+        except ValueError as exc:return {"message":str(exc),"card":None}
+        return {"message":f"Registered local MCP server '{item['name']}'. It will only start when you inspect or use it.","card":_server_list_card([item])}
+    remove=re.match(r"^(?:remove|delete|disconnect)\s+(?:the\s+)?mcp\s+server\s+([\w.-]+)$",text,re.I)
     if remove:
-        if not remove_server(remove.group(1)):return {"message": "That MCP server is not registered.", "card": None}
-        return {"message": f"Removed MCP server '{_clean_name(remove.group(1))}'.", "card": _server_list_card(list_servers())}
-
-    inspect = re.match(r"^(?:inspect|discover|test|check)\s+(?:the\s+)?mcp\s+(?:server\s+)?([\w.-]+)$", text, re.I)
+        if not remove_server(remove.group(1)):return {"message":"That MCP server is not registered.","card":None}
+        return {"message":f"Removed MCP server '{_clean_name(remove.group(1))}'.","card":_server_list_card(list_servers())}
+    inspect=re.match(r"^(?:inspect|discover|test|check)\s+(?:the\s+)?mcp\s+(?:server\s+)?([\w.-]+)$",text,re.I)
     if inspect:
-        try:info = await inspect_server(inspect.group(1))
-        except Exception as exc:return {"message": f"Could not connect to that MCP server: {str(exc)[:220]}", "card": None}
-        return {"message": f"Connected to MCP server '{info['name']}' and discovered its capabilities.", "card": _inspect_card(info)}
-
-    call = re.match(r"^(?:call|use|run)\s+mcp\s+([\w.-]+)\s+(?:tool\s+)?([\w.-]+)(?:\s+with\s+(.+))?$", text, re.I)
+        try:info=await inspect_server(inspect.group(1))
+        except Exception as exc:return {"message":f"Could not connect to that MCP server: {str(exc)[:220]}","card":None}
+        return {"message":f"Connected to MCP server '{info['name']}' and discovered its capabilities.","card":_inspect_card(info)}
+    call=re.match(r"^(?:call|use|run)\s+mcp\s+([\w.-]+)\s+(?:tool\s+)?([\w.-]+)(?:\s+with\s+(.+))?$",text,re.I)
     if call:
-        server_name, tool_name = call.group(1), call.group(2)
-        raw_args = (call.group(3) or "{}").strip()
+        server_name,tool_name=call.group(1),call.group(2);raw_args=(call.group(3) or "{}").strip()
         try:
-            arguments = json.loads(raw_args)
-            if not isinstance(arguments, dict):raise ValueError
-        except Exception:
-            return {"message": "MCP tool arguments must be a JSON object, for example: with {\"query\":\"hello\"}.", "card": None}
-        if not get_server(server_name):return {"message": f"MCP server '{server_name}' is not registered.", "card": None}
-        action = _approval_action(server_name, tool_name, arguments)
+            arguments=json.loads(raw_args)
+            if not isinstance(arguments,dict):raise ValueError
+        except Exception:return {"message":"MCP tool arguments must be a JSON object, for example: with {\"query\":\"hello\"}.","card":None}
+        if not get_server(server_name):return {"message":f"MCP server '{server_name}' is not registered.","card":None}
+        action=_approval_action(server_name,tool_name,arguments)
         if not approval_is_granted(action):
-            approval = create_approval(action, f"Allow MCP server '{_clean_name(server_name)}' to run tool '{tool_name}' with the shown arguments.")
-            return {"message": "This MCP tool call needs your approval before it can run.", "card": {"type": "mcp_approval", "approval": approval, "server": _clean_name(server_name), "tool": tool_name, "arguments": arguments, "command": text}}
-        try:return await execute_tool(server_name, tool_name, arguments)
-        except Exception as exc:return {"message": f"The approved MCP tool call could not complete: {str(exc)[:220]}", "card": None}
-
+            approval=create_approval(action,f"Allow MCP server '{_clean_name(server_name)}' to run tool '{tool_name}' with the shown arguments.")
+            return {"message":"This MCP tool call needs your approval before it can run.","card":{"type":"mcp_approval","approval":approval,"server":_clean_name(server_name),"tool":tool_name,"arguments":arguments,"command":text}}
+        try:return await execute_tool(server_name,tool_name,arguments)
+        except Exception as exc:return {"message":f"The approved MCP tool call could not complete: {str(exc)[:220]}","card":None}
     return None
