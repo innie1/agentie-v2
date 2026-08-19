@@ -1,4 +1,6 @@
+import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 from agentie.core.capability_preflight import _allowed_directories_request, _choice, _extension_search, _filename
@@ -8,6 +10,7 @@ from agentie.core.local_router import route_local_actions
 from agentie.core.mcp_catalog import presets
 from agentie.core.mcp_client import _infer_natural_tool, _mentioned_server, _split_local_command
 from agentie.core.reference_router import _direct_timer_create
+from agentie.tools import approval_tools
 
 
 class StableTimerIntentTests(unittest.TestCase):
@@ -189,6 +192,40 @@ class CapabilityPreflightRegressionTests(unittest.TestCase):
         tool, arguments = _choice("What directories can I access?", self.server, self.info)
         self.assertEqual(tool, "list_allowed_directories")
         self.assertEqual(arguments, {})
+
+
+class MCPApprovalPolicyTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.store_patch = patch.object(approval_tools, "STORE", Path(self.temp.name) / "approvals.json")
+        self.store_patch.start()
+
+    def tearDown(self):
+        self.store_patch.stop()
+        self.temp.cleanup()
+
+    def test_read_only_mcp_tools_auto_run(self):
+        for tool in ("read_text_file", "list_directory", "search_files", "get_file_info", "directory_tree"):
+            with self.subTest(tool=tool):
+                self.assertTrue(approval_tools.mcp_tool_is_read_only(tool))
+                self.assertTrue(approval_tools.approval_is_granted(f"mcp:filesystem:{tool}:{{}}"))
+        self.assertFalse(approval_tools.mcp_tool_is_read_only("write_file"))
+        self.assertFalse(approval_tools.approval_is_granted("mcp:filesystem:write_file:{}"))
+
+    def test_approve_once_is_consumed(self):
+        action = 'mcp:filesystem:write_file:{"path":"a.txt"}'
+        item = approval_tools.create_approval(action, "test")
+        approval_tools.resolve_approval(item["id"], True)
+        self.assertTrue(approval_tools.approval_is_granted(action))
+        self.assertFalse(approval_tools.approval_is_granted(action))
+
+    def test_always_allow_is_scoped_to_server_and_tool(self):
+        action = 'mcp:filesystem:write_file:{"path":"a.txt"}'
+        item = approval_tools.create_approval(action, "test")
+        approval_tools.resolve_approval(item["id"] + ":always", True)
+        self.assertTrue(approval_tools.approval_is_granted('mcp:filesystem:write_file:{"path":"b.txt"}'))
+        self.assertFalse(approval_tools.approval_is_granted('mcp:filesystem:edit_file:{"path":"b.txt"}'))
+        self.assertFalse(approval_tools.approval_is_granted('mcp:other:write_file:{"path":"b.txt"}'))
 
 
 if __name__ == "__main__":
