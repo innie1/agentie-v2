@@ -1,0 +1,197 @@
+from __future__ import annotations
+
+import hashlib
+import ipaddress
+import json
+import re
+import socket
+from datetime import datetime
+from difflib import SequenceMatcher
+from pathlib import Path
+from typing import Any
+from urllib.parse import urlparse
+
+from playwright.async_api import async_playwright
+
+WORKSPACE = Path.cwd() / "workspace"
+SNAPSHOT_DIR = WORKSPACE / "web_snapshots"
+STATE_FILE = WORKSPACE / "website_monitor_state.json"
+
+
+def _load_state() -> dict[str, dict[str, Any]]:
+    try:
+        return json.loads(STATE_FILE.read_text(encoding="utf-8")) if STATE_FILE.exists() else {}
+    except Exception:
+        return {}
+
+
+def _save_state(data: dict[str, dict[str, Any]]) -> None:
+    STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
+    STATE_FILE.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+
+
+def _url(text: str) -> str | None:
+    match = re.search(r"https?://[^\s<>\"']+", str(text or ""), re.I)
+    return match.group(0).rstrip(".,;!?)") if match else None
+
+
+def _scheduled_request(text: str) -> bool:
+    low = text.lower()
+    return bool(
+        re.search(r"\bevery\s+\d+(?:\.\d+)?\s*(?:minutes?|mins?|hours?|hrs?)\b", low)
+        or re.search(r"\b(?:every day|daily|every morning|every afternoon|every evening|every weekday|every monday|every tuesday|every wednesday|every thursday|every friday|every saturday|every sunday)\b", low)
+    )
+
+
+def _looks_browser_request(text: str) -> bool:
+    low = text.lower()
+    return bool(
+        _url(text)
+        and re.search(r"\b(?:check|open|visit|inspect|look at|view|screenshot|snapshot|capture|monitor|watch)\b", low)
+    )
+
+
+def website_routine_target(text: str) -> str | None:
+    low = str(text or "").lower()
+    if not _url(text):
+        return None
+    if not re.search(r"\b(?:monitor|watch|check|inspect|visit|screenshot|snapshot|capture)\b", low):
+        return None
+    return _url(text)
+
+
+def routine_always_show(text: str) -> bool:
+    low = str(text or "").lower()
+    return bool(re.search(r"\b(?:always show|show every|every screenshot|every check|always notify|notify every)\b", low))
+
+
+def _validate_url(url: str) -> str:
+    parsed = urlparse(url)
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+        raise ValueError("Website monitoring supports only http:// and https:// URLs.")
+    if parsed.username or parsed.password:
+        raise ValueError("URLs containing embedded credentials are not allowed.")
+    host = parsed.hostname.lower()
+    if host in {"localhost", "0.0.0.0"} or host.endswith(".localhost"):
+        raise ValueError("Localhost URLs are blocked by the website monitor.")
+    try:
+        direct = ipaddress.ip_address(host)
+        if direct.is_private or direct.is_loopback or direct.is_link_local or direct.is_reserved:
+            raise ValueError("Private and local network addresses are blocked by the website monitor.")
+    except ValueError as exc:
+        if "blocked" in str(exc):
+            raise
+    return url
+
+
+def _safe_slug(url: str) -> str:
+    host = urlparse(url).hostname or "website"
+    host = re.sub(r"[^a-zA-Z0-9._-]+", "-", host).strip("-")[:60] or "website"
+    digest = hashlib.sha256(url.encode("utf-8")).hexdigest()[:10]
+    stamp = datetime.now().astimezone().strftime("%Y%m%d-%H%M%S")
+    return f"{host}-{digest}-{stamp}.png"
+
+
+def _normalized_text(value: str) -> str:
+    return re.sub(r"\s+", " ", str(value or "")).strip()[:120000]
+
+
+def _meaningfully_changed(previous: dict[str, Any] | None, current_text: str, title: str) -> tuple[bool, float | None]:
+    if not previous:
+        return True, None
+    old = _normalized_text(previous.get("text", ""))
+    new = _normalized_text(current_text)
+    if not old and not new:
+        return previous.get("title") != title, 1.0
+    ratio = SequenceMatcher(None, old[:50000], new[:50000]).ratio()
+    title_changed = str(previous.get("title") or "") != str(title or "")
+    length_delta = abs(len(new) - len(old)) / max(1, len(old))
+    changed = title_changed or ratio < 0.985 or length_delta > 0.03
+    return changed, ratio
+
+
+def _card(url: str, title: str, filename: str, changed: bool, similarity: float | None, excerpt: str) -> dict[str, Any]:
+    return {
+        "type": "web_snapshot",
+        "url": url,
+        "title": title or url,
+        "image_url": f"/web-snapshots/{filename}",
+        "filename": filename,
+        "changed": changed,
+        "similarity": similarity,
+        "excerpt": excerpt[:900],
+        "captured_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+    }
+
+
+async def capture_website(url: str, *, track_change: bool = False) -> dict[str, Any]:
+    url = _validate_url(url)
+    SNAPSHOT_DIR.mkdir(parents=True, exist_ok=True)
+    filename = _safe_slug(url)
+    path = SNAPSHOT_DIR / filename
+
+    try:
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=True)
+            page = await browser.new_page(viewport={"width": 1440, "height": 1000})
+            try:
+                response = await page.goto(url, wait_until="domcontentloaded", timeout=30000)
+                try:
+                    await page.wait_for_load_state("networkidle", timeout=8000)
+                except Exception:
+                    pass
+                title = await page.title()
+                text = _normalized_text(await page.locator("body").inner_text(timeout=10000))
+                await page.screenshot(path=str(path), full_page=True)
+                status = response.status if response else None
+            finally:
+                await browser.close()
+    except Exception as exc:
+        message = str(exc)
+        if "Executable doesn't exist" in message or "playwright install" in message.lower():
+            raise RuntimeError("Chromium is not installed for Agentie yet. Run: python -m playwright install chromium") from exc
+        raise RuntimeError(f"Website capture failed: {message[:500]}") from exc
+
+    key = hashlib.sha256(url.encode("utf-8")).hexdigest()
+    state = _load_state()
+    previous = state.get(key) if track_change else None
+    changed, similarity = _meaningfully_changed(previous, text, title)
+    if track_change:
+        state[key] = {
+            "url": url,
+            "title": title,
+            "text": text,
+            "filename": filename,
+            "captured_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+        }
+        _save_state(state)
+
+    excerpt = text[:900]
+    result = {
+        "message": (
+            f"Checked {url}. The page has meaningfully changed since the previous check."
+            if track_change and changed and previous
+            else f"Checked {url}. No meaningful change was detected."
+            if track_change and previous
+            else f"Captured a screenshot of {url}."
+        ),
+        "card": _card(url, title, filename, changed, similarity, excerpt),
+        "status": status,
+        "changed": changed,
+        "first_check": previous is None,
+    }
+    return result
+
+
+async def route_browser_request(message: str) -> dict[str, Any] | None:
+    text = " ".join(str(message or "").strip().split())
+    if not text or _scheduled_request(text) or not _looks_browser_request(text):
+        return None
+    target = _url(text)
+    if not target:
+        return None
+    track = bool(re.search(r"\b(?:monitor|watch|change|changed|compare)\b", text, re.I))
+    try:
+        return await capture_website(target, track_change=track)
+    except (ValueError, RuntimeError) as exc:
+        return {"message": str(exc), "card": None}
