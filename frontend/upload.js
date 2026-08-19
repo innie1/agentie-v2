@@ -1,297 +1,58 @@
 (() => {
-  const composer = document.querySelector('.composer');
-  const messageInput = document.getElementById('messageInput');
-  const sendButton = document.getElementById('sendButton');
-  if (!composer || !messageInput || !sendButton) return;
+  const composer=document.querySelector('.composer');
+  const input=document.getElementById('messageInput');
+  const send=document.getElementById('sendButton');
+  const agent=document.getElementById('agentType');
+  if(!composer||!input||!send)return;
 
-  const style = document.createElement('style');
-  style.textContent = `
-    .attach-button{border:0;background:transparent;color:var(--muted);font-size:24px;line-height:1;padding:7px 9px;border-radius:10px;cursor:pointer;flex:0 0 auto}
-    .attach-button:hover{background:var(--soft);color:var(--text)}
-    .composer.file-drag{outline:2px dashed var(--success);outline-offset:4px}
-    .composer.has-attachments{flex-wrap:wrap}
-    .attachment-drafts{display:flex;gap:7px;flex-wrap:wrap;width:100%;padding:1px 2px 5px 46px;order:-1}
-    .attachment-drafts:empty{display:none}
-    .attachment-chip{display:grid;grid-template-columns:28px minmax(0,1fr) 22px;gap:7px;align-items:center;max-width:280px;padding:7px 8px;border:1px solid var(--border);border-radius:11px;background:var(--soft);font-size:11px}
-    .attachment-chip .attachment-icon{font-size:17px;text-align:center}
-    .attachment-chip .attachment-copy{min-width:0}
-    .attachment-chip strong,.attachment-chip small{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-    .attachment-chip small{color:var(--muted);margin-top:2px}
-    .attachment-chip button{padding:0!important;border:0!important;background:transparent!important;color:var(--muted)!important;font-size:16px;cursor:pointer}
-    .attachment-chip.uploading{opacity:.7}
-    .attachment-chip.failed{border-color:#ef4444}
-    .upload-status{font-size:12px;color:var(--muted);padding:4px 2px}
-    .file-actions{display:flex;gap:6px;flex-wrap:wrap;margin-top:10px}
-    .file-actions button,.file-actions a{padding:6px 9px;border:1px solid var(--border);border-radius:9px;background:var(--panel);color:var(--text);cursor:pointer;font-size:12px;text-decoration:none}
-    .file-preview{max-height:220px;overflow:auto;margin-top:9px;padding:9px;background:var(--soft);border-radius:10px;font:11px ui-monospace,SFMono-Regular,Menlo,monospace;white-space:pre-wrap;word-break:break-word}
-    .file-badge{display:inline-flex;padding:3px 7px;border-radius:999px;background:var(--soft);font-size:11px;color:var(--muted);margin-top:7px}
-  `;
-  document.head.appendChild(style);
+  const style=document.createElement('style');
+  style.textContent=`
+    .attach-button{border:0!important;background:transparent!important;color:var(--muted)!important;font-size:24px!important;line-height:1;padding:7px 9px!important;border-radius:10px!important;cursor:pointer;flex:0 0 auto}
+    .composer.file-drag{outline:2px dashed var(--success);outline-offset:4px}.composer.has-attachments{flex-wrap:wrap}
+    .attachment-drafts{display:flex;gap:7px;flex-wrap:wrap;width:100%;padding:1px 2px 5px 46px;order:-1}.attachment-drafts:empty{display:none}
+    .attachment-chip{display:grid;grid-template-columns:28px minmax(0,1fr) 22px;gap:7px;align-items:center;max-width:300px;padding:7px 8px;border:1px solid var(--border);border-radius:11px;background:var(--soft);font-size:11px}
+    .attachment-chip strong,.attachment-chip small{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.attachment-chip small{color:var(--muted);margin-top:2px}.attachment-chip button{padding:0!important;border:0!important;background:transparent!important;color:var(--muted)!important;font-size:16px;cursor:pointer}.attachment-chip.uploading{opacity:.65}.attachment-chip.failed{border-color:#ef4444}
+    .file-actions{display:flex;gap:6px;flex-wrap:wrap;margin-top:10px}.file-actions button,.file-actions a{padding:6px 9px;border:1px solid var(--border);border-radius:9px;background:var(--panel);color:var(--text);cursor:pointer;font-size:12px;text-decoration:none}
+    .file-preview{max-height:240px;overflow:auto;margin-top:9px;padding:9px;background:var(--soft);border-radius:10px;font:11px ui-monospace,SFMono-Regular,Menlo,monospace;white-space:pre-wrap;word-break:break-word}.file-badge{display:inline-flex;padding:3px 7px;border-radius:999px;background:var(--soft);font-size:11px;color:var(--muted);margin-top:7px}
+    .multi-text-result{grid-column:1/-1;width:100%;box-sizing:border-box;padding:14px 16px;border:1px solid var(--border);border-radius:14px;background:var(--panel);white-space:pre-wrap;font-size:14px;line-height:1.55}
+    .routing-info-card{min-height:0!important}.routing-info-card .routing-line{font-size:12px;line-height:1.5}
+  `;document.head.appendChild(style);
 
-  const picker = document.createElement('input');
-  picker.type = 'file';
-  picker.multiple = true;
-  picker.hidden = true;
-  picker.accept = '.pdf,.zip,.csv,.json,.yaml,.yml,.txt,.md,.png,.jpg,.jpeg,.webp,.gif,.bmp,.py,.js,.html,.css,.toml,.ini,.log';
-  document.body.appendChild(picker);
+  const picker=document.createElement('input');picker.type='file';picker.multiple=true;picker.hidden=true;picker.accept='.pdf,.zip,.csv,.json,.yaml,.yml,.txt,.md,.png,.jpg,.jpeg,.webp,.gif,.bmp,.py,.js,.html,.css,.toml,.ini,.log';document.body.appendChild(picker);
+  const drafts=document.createElement('div');drafts.className='attachment-drafts';composer.prepend(drafts);
+  const attach=document.createElement('button');attach.type='button';attach.className='attach-button';attach.title='Attach files';attach.setAttribute('aria-label','Attach files');attach.textContent='+';composer.insertBefore(attach,input);
+  const pending=[];let busy=false;
 
-  const drafts = document.createElement('div');
-  drafts.className = 'attachment-drafts';
-  composer.prepend(drafts);
+  const humanBytes=v=>{let n=Number(v||0),i=0,u=['B','KB','MB','GB'];while(n>=1024&&i<u.length-1){n/=1024;i++}return `${n>=10||i===0?Math.round(n):n.toFixed(1)} ${u[i]}`};
+  const kindOf=n=>{const e=String(n||'').split('.').pop().toLowerCase();if(e==='pdf')return'pdf';if(e==='zip')return'zip';if(['png','jpg','jpeg','webp','gif','bmp'].includes(e))return'image';if(e==='csv')return'csv';if(e==='json')return'json';if(['yaml','yml'].includes(e))return'yaml';return'text'};
+  const icon=k=>({pdf:'📕',zip:'🗜',image:'🖼',csv:'📊',json:'{}',yaml:'⚙',text:'📄'})[k]||'📎';
+  function stage(files){for(const file of files){if(!file)continue;if(pending.some(x=>x.file.name===file.name&&x.file.size===file.size&&x.file.lastModified===file.lastModified))continue;const item={file,card:null,chip:null};pending.push(item);const chip=document.createElement('div');chip.className='attachment-chip';item.chip=chip;const ico=document.createElement('div');ico.textContent=icon(kindOf(file.name));ico.style.fontSize='17px';const copy=document.createElement('div');const strong=document.createElement('strong');strong.textContent=file.name;const small=document.createElement('small');small.textContent=humanBytes(file.size);copy.append(strong,small);const x=document.createElement('button');x.type='button';x.textContent='×';x.title='Remove attachment';x.onclick=()=>{if(busy)return;const i=pending.indexOf(item);if(i>=0)pending.splice(i,1);chip.remove();composer.classList.toggle('has-attachments',pending.length>0)};chip.append(ico,copy,x);drafts.appendChild(chip)}composer.classList.toggle('has-attachments',pending.length>0);input.focus()}
+  attach.onclick=()=>picker.click();picker.onchange=()=>{stage([...picker.files]);picker.value=''};
+  ['dragenter','dragover'].forEach(t=>composer.addEventListener(t,e=>{e.preventDefault();composer.classList.add('file-drag')}));['dragleave','drop'].forEach(t=>composer.addEventListener(t,e=>{e.preventDefault();composer.classList.remove('file-drag')}));composer.addEventListener('drop',e=>stage([...e.dataTransfer.files]));
 
-  const attach = document.createElement('button');
-  attach.type = 'button';
-  attach.className = 'attach-button';
-  attach.title = 'Attach files';
-  attach.setAttribute('aria-label', 'Attach files');
-  attach.textContent = '+';
-  composer.insertBefore(attach, messageInput);
+  async function upload(item){if(item.card)return item.card;item.chip?.classList.add('uploading');const small=item.chip?.querySelector('small');if(small)small.textContent='Uploading…';try{const fd=new FormData();fd.append('file',item.file,item.file.name);const r=await fetch('/files/upload',{method:'POST',body:fd});const d=await r.json();if(!r.ok)throw Error(d.detail||'Upload failed');item.card=d.card;item.chip?.classList.remove('uploading','failed');if(small)small.textContent='Ready';return d.card}catch(err){item.chip?.classList.remove('uploading');item.chip?.classList.add('failed');if(small)small.textContent=`Failed · ${err.message}`;throw err}}
+  async function action(name,act){const r=await fetch(`/files/${encodeURIComponent(name)}/action`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:act})});const d=await r.json();if(!r.ok)throw Error(d.detail||'File action failed');return d}
+  function addUserFallback(text){if(window.addUser)return window.addUser(text);const m=document.getElementById('messages'),row=document.createElement('div'),b=document.createElement('div');row.className='user-row';b.className='bubble user';b.textContent=text;row.appendChild(b);m?.appendChild(row)}
+  function needsText(text){return /\b(read|summari[sz]e|summary|analy[sz]e|review|explain|contents?|key points?|overview|find|search|compare|extract)\b/i.test(text)}
+  function cleanInstruction(text){let s=text.replace(/\b(?:the\s+)?attached\s+(?:file|document|pdf)\b/gi,'the document').replace(/\bthis\s+(?:file|document|pdf)\b/gi,'the document');return s.trim()||'Summarize the document concisely.'}
 
-  const pending = [];
-  let sending = false;
+  async function submitAttachments(){if(busy||!pending.length)return;busy=true;send.disabled=true;attach.disabled=true;const original=input.value.trim();const visible=original||`Attached ${pending.length===1?pending[0].file.name:`${pending.length} files`}`;addUserFallback(visible);const working=window.addWorking?.();try{
+      const cards=[];for(const p of pending)cards.push(await upload(p));
+      const results=[];for(const c of cards)results.push({message:'',card:c});
+      let modelText='';
+      if(original&&needsText(original)){
+        const docs=[];for(const c of cards){if(c.inspection_error){docs.push(`DOCUMENT METADATA\nName: ${c.name}\nType: ${c.kind||c.suffix||'file'}\nSize: ${humanBytes(c.size_bytes)}\nRead error: ${c.inspection_error}`);continue}if(['pdf','text','csv','json','yaml'].includes(c.kind)){try{const d=await action(c.name,'text');docs.push(`DOCUMENT METADATA\nName: ${c.name}\nType: ${c.kind||c.suffix}\nSize: ${humanBytes(c.size_bytes)}${c.pages?`\nPages: ${c.pages}`:''}\n\nDOCUMENT CONTENT\n${String(d.card?.text||'').slice(0,35000)}`)}catch(err){docs.push(`DOCUMENT METADATA\nName: ${c.name}\nType: ${c.kind||c.suffix}\nSize: ${humanBytes(c.size_bytes)}\nRead error: ${err.message}`)}}else docs.push(`DOCUMENT METADATA\nName: ${c.name}\nType: ${c.kind||c.suffix||'file'}\nSize: ${humanBytes(c.size_bytes)}\nNo local text extraction is available for this type.`)}
+        const readable=docs.some(x=>/DOCUMENT CONTENT\n\S/.test(x));
+        if(readable){const prompt=`Answer the document question below using only the supplied document content. Do not list workspace files and do not try to reopen the attachment. If metadata or content is missing, say so clearly.\n\nUSER DOCUMENT QUESTION\n${cleanInstruction(original)}\n\n${docs.join('\n\n---\n\n')}`;const r=await fetch('/agent/run',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({message:prompt,agent_type:agent?.value||'general'})});const d=await r.json();if(!r.ok)throw Error(d.detail||'Request failed');modelText=d.message||d.result||'';if(d.card)results.push({message:'',card:d.card})}else modelText=docs.map(x=>x.includes('Read error:')?x.split('Read error:')[1].trim():'I could not extract readable text from this attachment.').join('\n');
+      }else if(original){modelText='Attachment uploaded. Use the file actions on the card, or ask me to read, summarize, inspect, or analyze it.'}
+      if(modelText)results.push({message:modelText,card:null});working?.remove();window.addAssistant?.('',{type:'multi',items:results});input.value='';drafts.replaceChildren();pending.splice(0,pending.length);composer.classList.remove('has-attachments');
+    }catch(err){working?.remove();window.addAssistant?.(`Attachment request failed: ${err.message}`,null)}finally{busy=false;send.disabled=false;attach.disabled=false;input.focus()}}
+  send.addEventListener('click',e=>{if(!pending.length)return;e.preventDefault();e.stopImmediatePropagation();submitAttachments()},true);input.addEventListener('keydown',e=>{if(!pending.length||e.key!=='Enter'||e.shiftKey)return;e.preventDefault();e.stopImmediatePropagation();submitAttachments()},true);
 
-  attach.addEventListener('click', () => picker.click());
-  picker.addEventListener('change', () => { stageFiles([...picker.files]); picker.value = ''; });
-
-  ['dragenter','dragover'].forEach(type => composer.addEventListener(type, event => {
-    event.preventDefault(); composer.classList.add('file-drag');
-  }));
-  ['dragleave','drop'].forEach(type => composer.addEventListener(type, event => {
-    event.preventDefault(); composer.classList.remove('file-drag');
-  }));
-  composer.addEventListener('drop', event => stageFiles([...event.dataTransfer.files]));
-
-  function humanBytes(value) {
-    let n = Number(value || 0); const units = ['B','KB','MB','GB']; let i = 0;
-    while (n >= 1024 && i < units.length - 1) { n /= 1024; i++; }
-    return `${n >= 10 || i === 0 ? Math.round(n) : n.toFixed(1)} ${units[i]}`;
-  }
-
-  function fileKind(name) {
-    const ext = String(name || '').split('.').pop().toLowerCase();
-    if (ext === 'pdf') return 'pdf';
-    if (ext === 'zip') return 'zip';
-    if (['png','jpg','jpeg','webp','gif','bmp'].includes(ext)) return 'image';
-    if (ext === 'csv') return 'csv';
-    if (ext === 'json') return 'json';
-    if (['yaml','yml'].includes(ext)) return 'yaml';
-    return 'text';
-  }
-
-  function icon(kind) {
-    return ({pdf:'📕',zip:'🗜',image:'🖼',csv:'📊',json:'{}',yaml:'⚙',text:'📄'})[kind] || '📎';
-  }
-
-  function stageFiles(files) {
-    for (const file of files) {
-      if (!file) continue;
-      const duplicate = pending.some(x => x.file.name === file.name && x.file.size === file.size && x.file.lastModified === file.lastModified);
-      if (duplicate) continue;
-      const item = {id: crypto.randomUUID?.() || `${Date.now()}-${Math.random()}`, file, state:'ready', uploaded:null, error:null, el:null};
-      pending.push(item); renderDraft(item);
-    }
-    composer.classList.toggle('has-attachments', pending.length > 0);
-    messageInput.focus();
-  }
-
-  function renderDraft(item) {
-    const chip = document.createElement('div');
-    chip.className = 'attachment-chip'; item.el = chip;
-    const ico = document.createElement('div'); ico.className = 'attachment-icon'; ico.textContent = icon(fileKind(item.file.name));
-    const copy = document.createElement('div'); copy.className = 'attachment-copy';
-    const strong = document.createElement('strong'); strong.textContent = item.file.name;
-    const small = document.createElement('small'); small.textContent = humanBytes(item.file.size);
-    copy.append(strong, small);
-    const remove = document.createElement('button'); remove.type='button'; remove.title='Remove attachment'; remove.setAttribute('aria-label',`Remove ${item.file.name}`); remove.textContent='×';
-    remove.onclick = () => {
-      if (sending) return;
-      const idx = pending.indexOf(item); if (idx >= 0) pending.splice(idx,1);
-      chip.remove(); composer.classList.toggle('has-attachments', pending.length > 0);
-    };
-    chip.append(ico, copy, remove); drafts.appendChild(chip);
-  }
-
-  async function uploadOne(item) {
-    item.state='uploading'; item.el?.classList.add('uploading');
-    const small=item.el?.querySelector('small'); if(small) small.textContent='Uploading…';
-    try {
-      const body = new FormData(); body.append('file', item.file, item.file.name);
-      const response = await fetch('/files/upload', {method:'POST', body});
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.detail || 'Upload failed');
-      item.state='uploaded'; item.uploaded=data.card; item.error=null;
-      item.el?.classList.remove('uploading','failed'); if(small) small.textContent='Ready';
-      return data.card;
-    } catch (error) {
-      item.state='failed'; item.error=error; item.el?.classList.remove('uploading'); item.el?.classList.add('failed'); if(small) small.textContent=`Failed · ${error.message}`;
-      throw error;
-    }
-  }
-
-  async function sendPending() {
-    if (sending) return;
-    const text = messageInput.value.trim();
-    if (!pending.length) return false;
-    sending=true; sendButton.disabled=true; attach.disabled=true;
-    try {
-      const uploaded=[];
-      for (const item of pending) uploaded.push(item.uploaded || await uploadOne(item));
-      const names=uploaded.map(c=>c.name).filter(Boolean);
-      const visible=text || (names.length===1 ? `Attached ${names[0]}` : `Attached ${names.length} files`);
-      if (typeof window.addUser === 'function') window.addUser(visible);
-      else {
-        const messages=document.getElementById('messages'); const row=document.createElement('div'); row.className='user-row';
-        const bubble=document.createElement('div'); bubble.className='bubble user'; bubble.textContent=visible; row.appendChild(bubble); messages?.appendChild(row);
-      }
-      // Show the submitted attachment cards only after Send, never when merely selected.
-      for (const card of uploaded) window.addAssistant?.('', card);
-
-      messageInput.value=''; drafts.replaceChildren(); pending.splice(0,pending.length); composer.classList.remove('has-attachments');
-
-      if (text) {
-        const context=`${text}\n\nAttached file${names.length===1?'':'s'}: ${names.join(', ')}. Use the attached workspace file${names.length===1?'':'s'} when the request refers to this/these file${names.length===1?'':'s'}.`;
-        const working=typeof window.addWorking==='function'?window.addWorking():null;
-        try {
-          const response=await fetch('/agent/run',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({message:context,agent_type:document.getElementById('agentType')?.value||'general'})});
-          const data=await response.json(); if(!response.ok)throw new Error(data.detail||'Request failed');
-          working?.remove(); const message=data.card?.type==='multi'?'':(data.message||data.result||''); window.addAssistant?.(message,data.card||null);
-        } catch(error) { working?.remove(); window.addAssistant?.(`Error: ${error.message}`,null); }
-      }
-      return true;
-    } finally {
-      sending=false; sendButton.disabled=false; attach.disabled=false; messageInput.focus();
-    }
-  }
-
-  // Intercept Send/Enter only while attachments are staged. Otherwise preserve the
-  // normal chat handlers exactly as they are.
-  sendButton.addEventListener('click', event => {
-    if (!pending.length) return;
-    event.preventDefault(); event.stopImmediatePropagation(); sendPending();
-  }, true);
-  messageInput.addEventListener('keydown', event => {
-    if (!pending.length || event.key !== 'Enter' || event.shiftKey) return;
-    event.preventDefault(); event.stopImmediatePropagation(); sendPending();
-  }, true);
-
-  const previousRender = window.renderCard;
-  window.renderCard = function(card, message) {
-    const special = new Set(['uploaded_file','file_text','data_preview','zip_extract']);
-    if (!card || !special.has(card.type)) return previousRender(card, message);
-    return renderFileResult(card, message);
-  };
-
-  function container(title) {
-    const wrap = document.createElement('div'); wrap.className = 'card-wrap';
-    const card = document.createElement('div'); card.className = 'result-card';
-    const heading = document.createElement('div'); heading.className = 'card-title'; heading.textContent = title;
-    card.appendChild(heading); wrap.appendChild(card); return [wrap, card];
-  }
-
-  function addDownloadButton(box, name) {
-    const link = document.createElement('a');
-    link.textContent = 'Download';
-    link.href = `/files/${encodeURIComponent(name)}/download`;
-    link.download = name;
-    link.setAttribute('aria-label', `Download ${name}`);
-    box.appendChild(link);
-  }
-
-  function addButton(box, label, name, action) {
-    const button = document.createElement('button'); button.textContent = label;
-    button.onclick = async () => {
-      button.disabled = true; const old = button.textContent; button.textContent = 'Working…';
-      try {
-        const response = await fetch(`/files/${encodeURIComponent(name)}/action`, {
-          method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({action})
-        });
-        const data = await response.json();
-        if (!response.ok) throw new Error(data.detail || 'File action failed');
-        window.addAssistant?.(data.message || '', data.card || null);
-      } catch (error) { window.addAssistant?.(`File action failed: ${error.message}`, null); }
-      finally { button.disabled = false; button.textContent = old; }
-    };
-    box.appendChild(button);
-  }
-
-  function renderFileResult(c) {
-    if (c.type === 'uploaded_file') {
-      const [wrap, el] = container(`${icon(c.kind)} ${c.name}`);
-      const meta = document.createElement('div'); meta.className = 'card-meta';
-      const details = [humanBytes(c.size_bytes), c.kind || c.suffix || 'file'];
-      if (c.pages != null) details.push(`${c.pages} pages`);
-      if (c.entries != null) details.push(`${c.entries} files`);
-      if (c.width) details.push(`${c.width}×${c.height}`);
-      meta.textContent = details.join(' · '); el.appendChild(meta);
-      if (c.inspection_error) { const err=document.createElement('div'); err.className='card-meta'; err.textContent=c.inspection_error; el.appendChild(err); }
-      const actions = document.createElement('div'); actions.className = 'file-actions';
-      addDownloadButton(actions, c.name);
-      addButton(actions, 'Inspect', c.name, 'inspect');
-      addButton(actions, 'Checksum', c.name, 'checksum');
-      if (c.kind === 'zip') addButton(actions, 'Extract', c.name, 'extract');
-      if (['pdf','text','csv','json','yaml'].includes(c.kind)) addButton(actions, 'Extract text', c.name, 'text');
-      if (['csv','json','yaml'].includes(c.kind)) addButton(actions, 'Preview', c.name, 'preview');
-      el.appendChild(actions); return wrap;
-    }
-    if (c.type === 'file_text') {
-      const [wrap, el] = container(`📄 ${c.filename}`);
-      const badge=document.createElement('div'); badge.className='file-badge'; badge.textContent=c.truncated?'Text preview · truncated':'Extracted text'; el.appendChild(badge);
-      const preview=document.createElement('div'); preview.className='file-preview'; preview.textContent=c.text || ''; el.appendChild(preview); return wrap;
-    }
-    if (c.type === 'data_preview') {
-      const [wrap, el] = container(`📊 ${c.filename}`);
-      const preview=document.createElement('div'); preview.className='file-preview';
-      preview.textContent = c.rows ? c.rows.map(row=>row.join(' | ')).join('\n') : (c.text || ''); el.appendChild(preview); return wrap;
-    }
-    if (c.type === 'zip_extract') {
-      const [wrap, el] = container(`🗜 Extracted ${c.filename}`);
-      const meta=document.createElement('div'); meta.className='card-meta'; meta.textContent=`${c.count} files · ${c.destination}`; el.appendChild(meta);
-      const preview=document.createElement('div'); preview.className='file-preview'; preview.textContent=(c.files||[]).slice(0,40).join('\n'); el.appendChild(preview); return wrap;
-    }
-    return previousRender(c);
-  }
-})();
-
-// Final response-assembly layer. cards.js intentionally renders only card-backed
-// entries in a multi result; hybrid provider output is represented as a text-only
-// item, so preserve it here after all other render wrappers have loaded.
-(() => {
-  const previousRender = window.renderCard;
-  if (typeof previousRender !== 'function') return;
-  const style = document.createElement('style');
-  style.textContent = `.multi-text-result{grid-column:1/-1;width:100%;box-sizing:border-box;padding:14px 16px;border:1px solid var(--border);border-radius:14px;background:var(--panel);white-space:pre-wrap;font-size:14px;line-height:1.55}.routing-info-card{min-height:0!important}.routing-info-card .routing-line{font-size:12px;line-height:1.5}`;
-  document.head.appendChild(style);
-
-  const textResult = message => {
-    const el = document.createElement('div');
-    el.className = 'multi-text-result';
-    el.textContent = String(message || '').trim();
-    return el;
-  };
-
-  const routingInfo = (card, message) => {
-    const wrap = document.createElement('div'); wrap.className = 'card-wrap';
-    const el = document.createElement('div'); el.className = 'result-card routing-info-card'; wrap.appendChild(el);
-    if (message) { const top=document.createElement('div'); top.className='card-topline'; top.textContent=message; el.appendChild(top); }
-    const title=document.createElement('div'); title.className='card-title'; title.textContent='⚡ Routing'; el.appendChild(title);
-    const line=document.createElement('div'); line.className='routing-line';
-    const calls=Number(card.provider_calls||0), provider=card.provider||'model', route=card.route||(calls?'hybrid':'local');
-    line.textContent=calls>0?`${route} · ${calls} ${provider} provider call${calls===1?'':'s'}`:`${route} · no ${provider} provider call required`;
-    el.appendChild(line); return wrap;
-  };
-
-  window.renderCard = function(card, message) {
-    if (card && card.type === 'routing_info') return routingInfo(card, message);
-    if (card && card.type === 'multi') {
-      const grid = previousRender(card, message);
-      if (!(grid instanceof HTMLElement)) return grid;
-      for (const item of card.items || []) {
-        if (!item || item.card) continue;
-        const text = String(item.message || '').trim();
-        if (text) grid.appendChild(textResult(text));
-      }
-      return grid;
-    }
-    return previousRender(card, message);
-  };
+  const previousRender=window.renderCard;
+  function box(title){const w=document.createElement('div');w.className='card-wrap';const el=document.createElement('div');el.className='result-card';const h=document.createElement('div');h.className='card-title';h.textContent=title;el.appendChild(h);w.appendChild(el);return[w,el]}
+  function buttonBox(el,c){const a=document.createElement('div');a.className='file-actions';const dl=document.createElement('a');dl.textContent='Download';dl.href=`/files/${encodeURIComponent(c.name)}/download`;dl.download=c.name;a.appendChild(dl);const add=(label,act)=>{const b=document.createElement('button');b.textContent=label;b.onclick=async()=>{const old=b.textContent;b.disabled=true;b.textContent='Working…';try{const d=await action(c.name,act);window.addAssistant?.(d.message||'',d.card||null)}catch(e){window.addAssistant?.(`File action failed: ${e.message}`,null)}finally{b.disabled=false;b.textContent=old}};a.appendChild(b)};add('Inspect','inspect');add('Checksum','checksum');if(c.kind==='zip')add('Extract','extract');if(['pdf','text','csv','json','yaml'].includes(c.kind)&&!c.inspection_error)add('Extract text','text');if(['csv','json','yaml'].includes(c.kind))add('Preview','preview');el.appendChild(a)}
+  function renderFile(c){if(c.type==='uploaded_file'){const[w,e]=box(`${icon(c.kind)} ${c.name}`);const meta=document.createElement('div');meta.className='card-meta';const p=[humanBytes(c.size_bytes),c.kind||c.suffix||'file'];if(c.pages!=null)p.push(`${c.pages} pages`);if(c.entries!=null)p.push(`${c.entries} files`);meta.textContent=p.join(' · ');e.appendChild(meta);if(c.inspection_error){const er=document.createElement('div');er.className='card-meta';er.textContent=`Could not inspect: ${c.inspection_error}`;e.appendChild(er)}buttonBox(e,c);return w}if(c.type==='file_text'){const[w,e]=box(`📄 ${c.filename}`);const b=document.createElement('div');b.className='file-badge';b.textContent=c.truncated?'Text preview · truncated':'Extracted text';e.appendChild(b);const p=document.createElement('div');p.className='file-preview';p.textContent=c.text||'';e.appendChild(p);return w}if(c.type==='data_preview'){const[w,e]=box(`📊 ${c.filename}`);const p=document.createElement('div');p.className='file-preview';p.textContent=c.rows?c.rows.map(r=>r.join(' | ')).join('\n'):(c.text||'');e.appendChild(p);return w}if(c.type==='zip_extract'){const[w,e]=box(`🗜 Extracted ${c.filename}`);const p=document.createElement('div');p.className='file-preview';p.textContent=(c.files||[]).slice(0,50).join('\n');e.appendChild(p);return w}return null}
+  const textNode=t=>{const e=document.createElement('div');e.className='multi-text-result';e.textContent=t;return e};
+  window.renderCard=function(card,message){if(card&&['uploaded_file','file_text','data_preview','zip_extract'].includes(card.type))return renderFile(card);if(card&&card.type==='routing_info'){const[w,e]=box('⚡ Routing');const line=document.createElement('div');line.className='routing-line';const n=Number(card.provider_calls||0),p=card.provider||'model',r=card.route||(n?'hybrid':'local');line.textContent=n?`${r} · ${n} ${p} provider call${n===1?'':'s'}`:`${r} · no ${p} provider call required`;e.appendChild(line);return w}if(card&&card.type==='multi'){const grid=previousRender(card,message);if(grid instanceof HTMLElement){for(const i of card.items||[]){if(!i||i.card)continue;const t=String(i.message||'').trim();if(t)grid.appendChild(textNode(t))}}return grid}return previousRender(card,message)};
 })();
