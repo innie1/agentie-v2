@@ -6,10 +6,11 @@ from pathlib import Path
 from typing import Any
 
 import uvicorn
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, Response
 from pydantic import BaseModel, Field
 
+from agentie.core.conversation_loop import consume_followup, detect_incomplete_intent
 from agentie.core.local_router import route_local_actions
 from agentie.core.runner import run_agent
 from agentie.tools import local_utility_tools as local_utils
@@ -17,7 +18,7 @@ from agentie.tools.approval_tools import resolve_approval
 from agentie.tools.advanced_utility_tools import SCHEDULES
 from agentie.tools.productivity_tools import REMINDERS
 
-app = FastAPI(title="Agentie API", version="0.8.2", description="Local-first Agentie runtime with fuzzy intent routing, inline cards, and persistent utilities")
+app = FastAPI(title="Agentie API", version="0.9.0", description="Local-first Agentie runtime with conversational slot filling, fuzzy routing, inline cards, and persistent utilities")
 FRONTEND_DIR = Path(__file__).parent / "frontend"
 FRONTEND_FILE = FRONTEND_DIR / "index.html"
 CARDS_JS = FRONTEND_DIR / "cards.js"
@@ -27,6 +28,7 @@ EVENTS_JS = FRONTEND_DIR / "events.js"
 class AgentRequest(BaseModel):
     message: str = Field(min_length=1, max_length=20_000)
     agent_type: str = Field(default="general", pattern="^(general|research|coding|manager|github)$")
+    session_id: str | None = Field(default=None, max_length=200)
 
 
 class AgentResponse(BaseModel):
@@ -76,13 +78,7 @@ def _schedule_due(item: dict, now: datetime) -> bool:
 
 
 def _route_request_actions(message: str) -> dict:
-    """Route natural multi-sentence requests without forcing one giant clause.
-
-    Split only on sentence punctuation followed by another obvious command-like
-    phrase. This preserves decimal numbers and ordinary punctuation inside notes.
-    Each sentence is then passed to the existing fuzzy/local router, which can
-    still split on 'then', commas, and 'and'.
-    """
+    """Route natural multi-sentence requests without forcing one giant clause."""
     command_start = (
         r"(?:calculate|calculator|calc|convert|set|start|pause|stop|reset|remind|reminder|show|list|"
         r"what|whats|tell|give|weather|wheather|forecast|temperature|wiki|wikipedia|look|rss|system|"
@@ -103,12 +99,6 @@ def _route_request_actions(message: str) -> dict:
 
 
 def _refresh_timer_cards(results: list[dict]) -> None:
-    """Re-arm relative timers immediately before returning the completed response.
-
-    Multi-action requests may spend time on Wikipedia, weather, or an LLM fallback
-    after the timer clause is parsed. Re-arming here makes a requested 15-second
-    timer actually start when the user receives the result.
-    """
     for result in results:
         card = result.get("card")
         if not isinstance(card, dict) or card.get("type") != "timer":
@@ -135,7 +125,7 @@ def _multi_card(results: list[dict], extra_message: str | None = None) -> dict:
 async def chat_ui():
     if not FRONTEND_FILE.exists(): raise HTTPException(status_code=404, detail="Frontend not found.")
     html = FRONTEND_FILE.read_text(encoding="utf-8")
-    html += '\n<script src="/cards.js?v=082"></script>\n<script src="/events.js?v=082"></script>\n'
+    html += '\n<script src="/cards.js?v=090"></script>\n<script src="/events.js?v=090"></script>\n'
     return HTMLResponse(html, headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"})
 
 
@@ -153,7 +143,7 @@ async def events_js():
 
 @app.get("/health")
 async def health() -> dict[str, str]:
-    return {"status":"ok","service":"agentie-v2","version":"0.8.2"}
+    return {"status":"ok","service":"agentie-v2","version":"0.9.0"}
 
 
 @app.get("/local/events/poll")
@@ -184,19 +174,48 @@ async def poll_local_events() -> dict[str, Any]:
 
 
 @app.post("/agent/run", response_model=AgentResponse)
-async def agent_run(request: AgentRequest) -> AgentResponse:
+async def agent_run(request: AgentRequest, http_request: Request) -> AgentResponse:
     try:
-        routed = _route_request_actions(request.message)
+        session_key = request.session_id or f"{http_request.client.host if http_request.client else 'local'}:{request.agent_type}"
+
+        # If the previous turn was waiting for one missing detail, interpret this
+        # message as that detail before treating it as a brand-new request.
+        followup = consume_followup(session_key, request.message)
+        effective_message = request.message
+        if followup:
+            if followup.get("cancelled") or not followup.get("command"):
+                message = str(followup.get("message", ""))
+                return AgentResponse(message=message, result=message, card=None, agent_type=request.agent_type, routed_by="clarification")
+            effective_message = str(followup["command"])
+
+        routed = _route_request_actions(effective_message)
         local_results: list[dict] = routed.get("results", [])
         unresolved: list[str] = routed.get("unresolved", [])
 
+        # Before paying for an LLM, check whether an unresolved clause is simply
+        # a known local intent with a missing slot (duration, city, alarm time...).
+        clarification_message: str | None = None
+        remaining_unresolved: list[str] = []
+        for clause in unresolved:
+            incomplete = detect_incomplete_intent(session_key, clause)
+            if incomplete and clarification_message is None:
+                clarification_message = str(incomplete.get("message", ""))
+            else:
+                remaining_unresolved.append(clause)
+        unresolved = remaining_unresolved
+
         if local_results and not unresolved:
             _refresh_timer_cards(local_results)
+            if clarification_message:
+                return AgentResponse(message="", result=clarification_message, card=_multi_card(local_results, clarification_message), agent_type=request.agent_type, routed_by="clarification")
             if len(local_results) == 1:
                 item = local_results[0]
                 message = str(item.get("message", ""))
                 return AgentResponse(message=message, result=message, card=item.get("card"), agent_type=request.agent_type, routed_by="local")
             return AgentResponse(message="", result="", card=_multi_card(local_results), agent_type=request.agent_type, routed_by="local")
+
+        if not local_results and clarification_message and not unresolved:
+            return AgentResponse(message=clarification_message, result=clarification_message, card=None, agent_type=request.agent_type, routed_by="clarification")
 
         if local_results and unresolved:
             unresolved_prompt = (
@@ -207,10 +226,16 @@ async def agent_run(request: AgentRequest) -> AgentResponse:
                 llm_result = await run_agent(unresolved_prompt, request.agent_type)
             except Exception as exc:
                 llm_result = "I completed the other actions, but I couldn't process: " + "; ".join(unresolved) + f". ({exc})"
+            if clarification_message:
+                llm_result = (llm_result + "\n\n" + clarification_message).strip()
             _refresh_timer_cards(local_results)
             return AgentResponse(message="", result=llm_result, card=_multi_card(local_results, llm_result), agent_type=request.agent_type, routed_by="hybrid")
 
-        result = await run_agent(request.message, request.agent_type)
+        if clarification_message and unresolved:
+            # Ask the local clarification first instead of spending an API call.
+            return AgentResponse(message=clarification_message, result=clarification_message, card=None, agent_type=request.agent_type, routed_by="clarification")
+
+        result = await run_agent(effective_message, request.agent_type)
         return AgentResponse(message=result, result=result, card=None, agent_type=request.agent_type, routed_by="llm")
     except RuntimeError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
