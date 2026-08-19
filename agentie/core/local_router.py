@@ -1,21 +1,20 @@
 import ast
+import hashlib
 import json
-import operator
 import re
 import time
 import uuid
 from datetime import datetime, timedelta
 from pathlib import Path
-from urllib.parse import urlencode
+from urllib.parse import quote, urlencode
 
+from PIL import Image
+
+from agentie.tools import advanced_utility_tools as advanced
 from agentie.tools import local_utility_tools as utilities
 from agentie.tools import productivity_tools as productivity
 
-
-_DURATION_RE = re.compile(
-    r"(?P<value>\d+(?:\.\d+)?)\s*(?P<unit>seconds?|secs?|minutes?|mins?|hours?|hrs?)",
-    re.IGNORECASE,
-)
+_DURATION_RE = re.compile(r"(?P<value>\d+(?:\.\d+)?)\s*(?P<unit>seconds?|secs?|minutes?|mins?|hours?|hrs?)", re.IGNORECASE)
 
 
 def _duration_seconds(message: str) -> float | None:
@@ -49,29 +48,11 @@ def _weather(location: str) -> dict:
     if not results:
         raise ValueError(f"Could not find location: {location}")
     place = results[0]
-    params = urlencode({
-        "latitude": place["latitude"],
-        "longitude": place["longitude"],
-        "current": "temperature_2m,apparent_temperature,weather_code,wind_speed_10m",
-        "daily": "temperature_2m_max,temperature_2m_min,precipitation_probability_max",
-        "timezone": "auto",
-        "forecast_days": 1,
-    })
+    params = urlencode({"latitude": place["latitude"], "longitude": place["longitude"], "current": "temperature_2m,apparent_temperature,weather_code,wind_speed_10m", "daily": "temperature_2m_max,temperature_2m_min,precipitation_probability_max", "timezone": "auto", "forecast_days": 1})
     data = utilities._fetch_json(f"https://api.open-meteo.com/v1/forecast?{params}")
     current = data.get("current", {})
     daily = data.get("daily", {})
-    return {
-        "type": "weather",
-        "location": f"{place.get('name')}, {place.get('country', '')}".strip(", "),
-        "temperature_c": current.get("temperature_2m"),
-        "feels_like_c": current.get("apparent_temperature"),
-        "weather_code": current.get("weather_code"),
-        "wind_kmh": current.get("wind_speed_10m"),
-        "high_c": (daily.get("temperature_2m_max") or [None])[0],
-        "low_c": (daily.get("temperature_2m_min") or [None])[0],
-        "rain_chance_percent": (daily.get("precipitation_probability_max") or [None])[0],
-        "source": "Open-Meteo",
-    }
+    return {"type": "weather", "location": f"{place.get('name')}, {place.get('country', '')}".strip(", "), "temperature_c": current.get("temperature_2m"), "feels_like_c": current.get("apparent_temperature"), "weather_code": current.get("weather_code"), "wind_kmh": current.get("wind_speed_10m"), "high_c": (daily.get("temperature_2m_max") or [None])[0], "low_c": (daily.get("temperature_2m_min") or [None])[0], "rain_chance_percent": (daily.get("precipitation_probability_max") or [None])[0], "source": "Open-Meteo"}
 
 
 def _stopwatch_card() -> dict:
@@ -80,17 +61,11 @@ def _stopwatch_card() -> dict:
         running = utilities._STOPWATCH["running"]
         if running:
             elapsed += time.monotonic() - utilities._STOPWATCH["started_at"]
-    return {
-        "type": "stopwatch",
-        "status": "running" if running else "paused",
-        "elapsed_seconds": round(elapsed, 3),
-        "client_started_at_ms": int(time.time() * 1000) if running else None,
-    }
+    return {"type": "stopwatch", "status": "running" if running else "paused", "elapsed_seconds": round(elapsed, 3), "client_started_at_ms": int(time.time() * 1000) if running else None}
 
 
 def _safe_calc(expression: str):
-    tree = ast.parse(expression, mode="eval")
-    return productivity._eval_math(tree)
+    return productivity._eval_math(ast.parse(expression, mode="eval"))
 
 
 def _load_json(path: Path, default):
@@ -100,8 +75,13 @@ def _load_json(path: Path, default):
         return default
 
 
+def _save_json(path: Path, value) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(value, indent=2, ensure_ascii=False), encoding="utf-8")
+
+
 def try_local_command(message: str) -> dict | None:
-    """Handle deterministic utility requests without calling an LLM."""
+    """Handle deterministic/free utility requests without calling an LLM."""
     text = " ".join(message.strip().split())
     lower = text.lower()
 
@@ -151,9 +131,8 @@ def try_local_command(message: str) -> dict | None:
 
     weather_match = re.search(r"\bweather\s+(?:in|for|at)\s+(.+?)[?.!]*$", text, re.IGNORECASE)
     if weather_match:
-        location = weather_match.group(1).strip()
         try:
-            card = _weather(location)
+            card = _weather(weather_match.group(1).strip())
         except Exception as exc:
             return {"message": f"Weather lookup failed: {exc}", "card": None}
         return {"message": f"Here’s the weather in {card['location']}.", "card": card}
@@ -179,59 +158,109 @@ def try_local_command(message: str) -> dict | None:
     reminder_match = re.search(r"\bremind me(?: to)?\s+(.+?)\s+in\s+(\d+(?:\.\d+)?)\s*(minutes?|mins?|hours?|hrs?)\b", text, re.IGNORECASE)
     if reminder_match:
         reminder_text = reminder_match.group(1).strip()
-        value = float(reminder_match.group(2))
-        unit = reminder_match.group(3).lower()
+        value = float(reminder_match.group(2)); unit = reminder_match.group(3).lower()
         minutes = value * 60 if unit.startswith(("hour", "hr")) else value
-        items = _load_json(productivity.REMINDERS, [])
-        now = datetime.now()
+        items = _load_json(productivity.REMINDERS, []); now = datetime.now()
         item = {"id": str(uuid.uuid4())[:8], "text": reminder_text, "status": "scheduled", "created_at": now.isoformat(timespec="seconds"), "due_at": (now + timedelta(minutes=minutes)).isoformat(timespec="seconds"), "repeat_minutes": 0}
-        items.append(item)
-        productivity._save(productivity.REMINDERS, items)
+        items.append(item); productivity._save(productivity.REMINDERS, items)
         return {"message": f"Reminder set for {_pretty_duration(minutes * 60)} from now.", "card": {"type": "reminder", **item}}
 
     recurring_match = re.search(r"\bremind me(?: to)?\s+(.+?)\s+every\s+(\d+(?:\.\d+)?)\s*(minutes?|mins?|hours?|hrs?)\b", text, re.IGNORECASE)
     if recurring_match:
-        reminder_text = recurring_match.group(1).strip()
-        value = float(recurring_match.group(2))
-        unit = recurring_match.group(3).lower()
+        reminder_text = recurring_match.group(1).strip(); value = float(recurring_match.group(2)); unit = recurring_match.group(3).lower()
         minutes = value * 60 if unit.startswith(("hour", "hr")) else value
-        items = _load_json(productivity.REMINDERS, [])
-        now = datetime.now()
+        items = _load_json(productivity.REMINDERS, []); now = datetime.now()
         item = {"id": str(uuid.uuid4())[:8], "text": reminder_text, "status": "scheduled", "created_at": now.isoformat(timespec="seconds"), "due_at": (now + timedelta(minutes=minutes)).isoformat(timespec="seconds"), "repeat_minutes": minutes}
-        items.append(item)
-        productivity._save(productivity.REMINDERS, items)
+        items.append(item); productivity._save(productivity.REMINDERS, items)
         return {"message": f"Recurring reminder set for every {_pretty_duration(minutes * 60)}.", "card": {"type": "reminder", **item}}
+
+    weekday_match = re.search(r"\bremind me(?: to)?\s+(.+?)\s+every weekday(?: at\s+(\d{1,2}:\d{2}))?\b", text, re.IGNORECASE)
+    if weekday_match:
+        items = _load_json(advanced.SCHEDULES, [])
+        item = {"id": str(uuid.uuid4())[:8], "text": weekday_match.group(1).strip(), "cadence": "weekdays", "time_hhmm": weekday_match.group(2) or "09:00", "status": "active", "created_at": datetime.now().astimezone().isoformat(timespec="seconds")}
+        items.append(item); _save_json(advanced.SCHEDULES, items)
+        return {"message": f"Recurring weekday reminder set for {item['time_hhmm']}.", "card": {"type": "schedule", **item}}
 
     if lower in {"show reminders", "list reminders", "my reminders"}:
         items = _load_json(productivity.REMINDERS, [])
         return {"message": f"You have {len(items)} reminder(s).", "card": {"type": "reminders", "items": items}}
 
+    if lower in {"show schedules", "list schedules", "recurring reminders"}:
+        items = _load_json(advanced.SCHEDULES, [])
+        return {"message": f"You have {len(items)} recurring schedule(s).", "card": {"type": "schedules", "items": items}}
+
     note_match = re.match(r"^(?:save note|note)\s+([^:]+):\s*(.+)$", text, re.IGNORECASE)
     if note_match:
-        title, content = note_match.group(1).strip(), note_match.group(2).strip()
-        notes = _load_json(productivity.NOTES, {})
-        notes[title[:120]] = {"content": content[:10000], "updated_at": datetime.now().isoformat(timespec="seconds")}
-        productivity._save(productivity.NOTES, notes)
+        title, content = note_match.group(1).strip(), note_match.group(2).strip(); notes = _load_json(productivity.NOTES, {})
+        notes[title[:120]] = {"content": content[:10000], "updated_at": datetime.now().isoformat(timespec="seconds")}; productivity._save(productivity.NOTES, notes)
         return {"message": f"Saved note “{title}”.", "card": {"type": "note", "title": title, "content": content}}
 
+    scratch_match = re.match(r"^(?:scratchpad|remember temporarily)\s+([^:]+):\s*(.+)$", text, re.IGNORECASE)
+    if scratch_match:
+        data = _load_json(advanced.SCRATCHPAD, {}); key, value = scratch_match.group(1).strip(), scratch_match.group(2).strip(); data[key] = value; _save_json(advanced.SCRATCHPAD, data)
+        return {"message": f"Saved “{key}” to the scratchpad.", "card": {"type": "scratchpad", "key": key, "value": value}}
+
+    if lower in {"what time is it", "current local time", "local time", "what is the date", "today's date"}:
+        now = datetime.now().astimezone()
+        return {"message": f"It is {now.strftime('%H:%M:%S')} on {now.strftime('%Y-%m-%d')}.", "card": {"type": "datetime", "datetime": now.isoformat(timespec="seconds"), "timezone": str(now.tzinfo)}}
+
+    countdown_match = re.match(r"^(?:countdown to|how long until)\s+(\d{4}-\d{2}-\d{2}(?:[ t]\d{2}:\d{2}(?::\d{2})?)?)$", lower)
+    if countdown_match:
+        target = datetime.fromisoformat(countdown_match.group(1).replace(" ", "T")); seconds = (target - datetime.now()).total_seconds()
+        return {"message": f"There are {_pretty_duration(abs(seconds))} {'remaining' if seconds >= 0 else 'since that time'}.", "card": {"type": "countdown", "target": target.isoformat(), "remaining_seconds": seconds}}
+
+    checksum_match = re.match(r"^(?:sha256|checksum)(?: of)?\s+(.+)$", text, re.IGNORECASE)
+    if checksum_match:
+        target = advanced._safe_path(checksum_match.group(1).strip())
+        if not target.exists() or not target.is_file(): return {"message": "File not found.", "card": None}
+        digest = hashlib.sha256(target.read_bytes()).hexdigest()
+        return {"message": f"SHA-256 calculated for {target.name}.", "card": {"type": "checksum", "filename": target.name, "algorithm": "sha256", "checksum": digest}}
+
+    image_match = re.match(r"^(?:image metadata|inspect image)\s+(.+)$", text, re.IGNORECASE)
+    if image_match:
+        target = advanced._safe_path(image_match.group(1).strip())
+        try:
+            with Image.open(target) as image:
+                card = {"type": "image_metadata", "filename": target.name, "format": image.format, "width": image.width, "height": image.height, "mode": image.mode, "size_bytes": target.stat().st_size}
+        except Exception as exc: return {"message": f"Could not inspect image: {exc}", "card": None}
+        return {"message": f"Here’s the metadata for {target.name}.", "card": card}
+
+    wiki_match = re.match(r"^(?:wikipedia|wiki)(?: lookup| search)?\s+(.+)$", text, re.IGNORECASE)
+    if wiki_match:
+        topic = wiki_match.group(1).strip()
+        try:
+            raw = advanced._fetch_text(f"https://en.wikipedia.org/api/rest_v1/page/summary/{quote(topic.replace(' ', '_'), safe='')}"); data = json.loads(raw)
+        except Exception as exc: return {"message": f"Wikipedia lookup failed: {exc}", "card": None}
+        card = {"type": "wikipedia", "title": data.get("title"), "description": data.get("description"), "extract": data.get("extract"), "url": ((data.get("content_urls") or {}).get("desktop") or {}).get("page")}
+        return {"message": f"Here’s the Wikipedia summary for {card['title'] or topic}.", "card": card}
+
+    rss_match = re.match(r"^(?:read rss|rss)\s+(https?://\S+)$", text, re.IGNORECASE)
+    if rss_match:
+        try:
+            xml = advanced._fetch_text(rss_match.group(1)); from xml.etree import ElementTree; root = ElementTree.fromstring(xml); items=[]
+            for item in root.findall('.//item')[:10]: items.append({"title": (item.findtext('title') or '').strip(), "link": (item.findtext('link') or '').strip(), "published": (item.findtext('pubDate') or '').strip()})
+        except Exception as exc: return {"message": f"RSS read failed: {exc}", "card": None}
+        return {"message": f"Loaded {len(items)} RSS item(s).", "card": {"type": "rss", "items": items}}
+
     if lower in {"system status", "show system status", "agentie status"}:
-        import platform, shutil, os
-        disk = shutil.disk_usage(Path.cwd())
-        card = {"type": "system", "os": platform.system(), "os_detail": platform.platform(), "python": platform.python_version(), "hostname": platform.node(), "disk_total_gb": round(disk.total / 1024**3, 1), "disk_free_gb": round(disk.free / 1024**3, 1), "process_id": os.getpid()}
+        import psutil, platform, shutil, os
+        disk=shutil.disk_usage(Path.cwd()); mem=psutil.virtual_memory()
+        card={"type":"system","os":platform.system(),"os_detail":platform.platform(),"python":platform.python_version(),"hostname":platform.node(),"cpu_percent":psutil.cpu_percent(interval=0.05),"memory_percent":mem.percent,"memory_available_gb":round(mem.available/1024**3,2),"disk_total_gb":round(disk.total/1024**3,1),"disk_free_gb":round(disk.free/1024**3,1),"process_id":os.getpid()}
         return {"message": "Here’s Agentie’s local system status.", "card": card}
 
-    if lower in {"show tasks", "list tasks", "my tasks"}:
-        items = _load_json(Path.cwd() / "workspace" / "tasks.json", [])
-        return {"message": f"You have {len(items)} tracked task(s).", "card": {"type": "tasks", "items": items}}
+    if lower in {"show tasks", "list tasks", "my tasks", "task progress", "show task progress"}:
+        items = _load_json(Path.cwd()/"workspace"/"tasks.json", [])
+        total=sum(len(t.get('steps',[])) for t in items); done=sum(sum(1 for s in t.get('steps',[]) if s.get('done')) for t in items)
+        ctype="agent_progress" if "progress" in lower else "tasks"
+        return {"message": f"You have {len(items)} tracked task(s).", "card": {"type": ctype, "items": items, "completed_steps": done, "total_steps": total}}
 
     if lower in {"show approvals", "list approvals", "pending approvals"}:
-        items = _load_json(Path.cwd() / "workspace" / "approvals.json", [])
+        items = _load_json(Path.cwd()/"workspace"/"approvals.json", [])
         return {"message": f"There are {len(items)} approval request(s).", "card": {"type": "approvals", "items": items}}
 
     if lower in {"show files", "list files", "workspace files"}:
-        workspace = Path.cwd() / "workspace"
-        workspace.mkdir(parents=True, exist_ok=True)
-        items = [{"name": p.name, "size_bytes": p.stat().st_size, "suffix": p.suffix.lower()} for p in sorted(workspace.iterdir()) if p.is_file()]
+        workspace=Path.cwd()/"workspace"; workspace.mkdir(parents=True, exist_ok=True)
+        items=[{"name":p.name,"size_bytes":p.stat().st_size,"suffix":p.suffix.lower()} for p in sorted(workspace.iterdir()) if p.is_file()]
         return {"message": f"There are {len(items)} file(s) in the workspace.", "card": {"type": "files", "items": items}}
 
     return None
