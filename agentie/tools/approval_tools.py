@@ -38,7 +38,6 @@ def _save(items):
 
 
 def _mcp_parts(action: str) -> tuple[str, str] | None:
-    # Action format: mcp:<server>:<tool>:<json arguments>
     match = re.match(r"^mcp:([^:]+):([^:]+):", str(action or ""))
     return (match.group(1), match.group(2)) if match else None
 
@@ -54,18 +53,15 @@ def mcp_tool_is_read_only(tool_name: str) -> bool:
 
 
 def get_approval(approval_id: str):
+    clean_id = str(approval_id or "").removesuffix(":always")
     for item in _load():
-        if item.get("id") == approval_id:
+        if item.get("id") == clean_id:
             return item
     return None
 
 
 def approval_is_granted(action: str, approval_id: str | None = None) -> bool:
-    """Check approval policy and consume one-time MCP approvals when used.
-
-    Read-only MCP tools auto-run. Persistent grants are scoped to one MCP server/tool.
-    A normal approval is consumed on the next exact action so "Approve once" really is once.
-    """
+    """Apply MCP approval policy and consume one-time grants when used."""
     parts = _mcp_parts(action)
     if parts and mcp_tool_is_read_only(parts[1]):
         return True
@@ -80,14 +76,14 @@ def approval_is_granted(action: str, approval_id: str | None = None) -> bool:
             if meta.get("kind") == "mcp" and meta.get("server") == server and meta.get("tool") == tool:
                 return True
 
+    clean_id = str(approval_id or "").removesuffix(":always") if approval_id else None
     for item in items:
         if (
             item.get("action") == action
             and item.get("status") == "approved"
             and not item.get("consumed_at")
-            and (approval_id is None or item.get("id") == approval_id)
+            and (clean_id is None or item.get("id") == clean_id)
         ):
-            # MCP approvals are one-shot. Preserve legacy behavior for non-MCP approvals.
             if parts:
                 item["consumed_at"] = datetime.now(timezone.utc).isoformat()
                 item["status"] = "consumed"
@@ -131,9 +127,13 @@ def create_approval(action: str, reason: str, metadata: dict | None = None):
 
 
 def resolve_approval(approval_id: str, approved: bool, remember: bool = False):
+    raw_id = str(approval_id or "")
+    if raw_id.endswith(":always"):
+        remember = True
+        raw_id = raw_id[:-7]
     items = _load()
     for item in items:
-        if item.get("id") == approval_id:
+        if item.get("id") == raw_id:
             if item.get("status") != "pending":
                 raise ValueError("Approval has already been resolved.")
             if approved and remember:
