@@ -15,15 +15,26 @@ _STOPWATCH = {"running": False, "started_at": None, "elapsed": 0.0}
 _STOPWATCH_LOCK = threading.Lock()
 
 
-def _run_timer(timer_id: str, seconds: float, label: str) -> None:
+def _run_timer(timer_id: str, seconds: float, label: str, generation: int) -> None:
     """Advance timer state in the background without OS-level notifications."""
     time.sleep(max(0.0, seconds))
     with _TIMER_LOCK:
         item = _TIMERS.get(timer_id)
         if not item or item.get("status") != "running":
             return
+        # Ignore stale background threads after a timer has been re-armed.
+        if int(item.get("generation", 1)) != generation:
+            return
         item["status"] = "finished"
         item["finished_at"] = datetime.now().isoformat(timespec="seconds")
+
+
+def _start_timer_thread(timer_id: str, seconds: float, label: str, generation: int) -> None:
+    threading.Thread(
+        target=_run_timer,
+        args=(timer_id, seconds, label, generation),
+        daemon=True,
+    ).start()
 
 
 def _create_timer(seconds: float, label: str, kind: str = "timer") -> dict:
@@ -35,13 +46,43 @@ def _create_timer(seconds: float, label: str, kind: str = "timer") -> dict:
         "label": label,
         "status": "running",
         "seconds": round(seconds, 3),
-        "created_at": now.isoformat(timespec="seconds"),
-        "due_at": (now + timedelta(seconds=seconds)).isoformat(timespec="seconds"),
+        "created_at": now.isoformat(timespec="milliseconds"),
+        "due_at": (now + timedelta(seconds=seconds)).isoformat(timespec="milliseconds"),
+        "generation": 1,
     }
     with _TIMER_LOCK:
         _TIMERS[timer_id] = item
-    threading.Thread(target=_run_timer, args=(timer_id, seconds, label), daemon=True).start()
-    return item
+    _start_timer_thread(timer_id, seconds, label, 1)
+    return item.copy()
+
+
+def _restart_timer(timer_id: str, seconds: float | None = None) -> dict | None:
+    """Re-arm an existing timer from now.
+
+    Used when a timer was parsed early in a multi-action request but should begin
+    when the completed response is ready for the user to see.
+    """
+    with _TIMER_LOCK:
+        item = _TIMERS.get(timer_id)
+        if not item:
+            return None
+        duration = float(seconds if seconds is not None else item.get("seconds", 0))
+        if duration <= 0:
+            return item.copy()
+        now = datetime.now()
+        generation = int(item.get("generation", 1)) + 1
+        item.update({
+            "status": "running",
+            "seconds": round(duration, 3),
+            "created_at": now.isoformat(timespec="milliseconds"),
+            "due_at": (now + timedelta(seconds=duration)).isoformat(timespec="milliseconds"),
+            "generation": generation,
+        })
+        item.pop("finished_at", None)
+        label = str(item.get("label", "Timer"))
+        snapshot = item.copy()
+    _start_timer_thread(timer_id, duration, label, generation)
+    return snapshot
 
 
 @function_tool
