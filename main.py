@@ -13,13 +13,15 @@ from pydantic import BaseModel, Field
 from agentie.core.conversation_loop import consume_followup, detect_incomplete_intent
 from agentie.core.file_service import MAX_FILE_BYTES, run_action, save_upload
 from agentie.core.local_router import route_local_actions
+from agentie.core.memory_store import add_message
+from agentie.core.pdf_service import try_pdf_request
 from agentie.core.runner import run_agent
 from agentie.tools import local_utility_tools as local_utils
 from agentie.tools.approval_tools import resolve_approval
 from agentie.tools.advanced_utility_tools import SCHEDULES
 from agentie.tools.productivity_tools import REMINDERS
 
-app = FastAPI(title="Agentie API", version="1.1.0", description="Local-first Agentie runtime with persistent conversation memory, uploads, inline cards, and conversational routing")
+app = FastAPI(title="Agentie API", version="1.2.0", description="Local-first Agentie runtime with persistent memory, local PDF creation, uploads, cards, and conversational routing")
 FRONTEND_DIR = Path(__file__).parent / "frontend"
 FRONTEND_FILE = FRONTEND_DIR / "index.html"
 CARDS_JS = FRONTEND_DIR / "cards.js"
@@ -120,7 +122,7 @@ def _multi_card(results: list[dict], extra_message: str | None = None) -> dict:
 async def chat_ui():
     if not FRONTEND_FILE.exists(): raise HTTPException(status_code=404, detail="Frontend not found.")
     html = FRONTEND_FILE.read_text(encoding="utf-8")
-    html += '\n<script src="/cards.js?v=110"></script>\n<script src="/events.js?v=110"></script>\n<script src="/upload.js?v=110"></script>\n'
+    html += '\n<script src="/cards.js?v=120"></script>\n<script src="/events.js?v=120"></script>\n<script src="/upload.js?v=120"></script>\n'
     return HTMLResponse(html, headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"})
 
 
@@ -144,7 +146,7 @@ async def upload_js():
 
 @app.get("/health")
 async def health() -> dict[str, str]:
-    return {"status":"ok","service":"agentie-v2","version":"1.1.0"}
+    return {"status":"ok","service":"agentie-v2","version":"1.2.0"}
 
 
 @app.post("/files/upload")
@@ -202,6 +204,17 @@ async def poll_local_events() -> dict[str, Any]:
 async def agent_run(request: AgentRequest, http_request: Request) -> AgentResponse:
     try:
         session_key = request.session_id or f"{http_request.client.host if http_request.client else 'local'}:{request.agent_type}"
+
+        # PDF generation is deterministic and local. Resolve references such as
+        # "this" or "the previous answer" from persisted conversation memory
+        # before any LLM/provider call is considered.
+        pdf_result = try_pdf_request(session_key, request.message)
+        if pdf_result is not None:
+            message = str(pdf_result.get("message", ""))
+            add_message(session_key, "user", request.message, {"agent_type": request.agent_type, "routed_by": "local_pdf"})
+            add_message(session_key, "assistant", message, {"agent_type": request.agent_type, "routed_by": "local_pdf", "file": (pdf_result.get("card") or {}).get("name")})
+            return AgentResponse(message=message, result=message, card=pdf_result.get("card"), agent_type=request.agent_type, routed_by="local_pdf")
+
         followup = consume_followup(session_key, request.message); effective_message = request.message
         if followup:
             if followup.get("cancelled") or not followup.get("command"):
