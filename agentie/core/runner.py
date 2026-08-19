@@ -11,6 +11,25 @@ from agentie.core.role_store import resolve_role
 from agentie.models.provider import get_provider_info
 
 
+def _friendly_provider_error(exc: Exception) -> str | None:
+    """Return a short user-facing message for known provider failures.
+
+    The full provider exception is still written to Agentie's trace before this
+    helper is used, so chat stays clean without losing debugging detail.
+    """
+    text = str(exc or "")
+    lower = text.lower()
+    if "429" in lower or "resource_exhausted" in lower or "quota exceeded" in lower or "rate limit" in lower:
+        return "The AI model is temporarily at its usage limit. Please try again shortly."
+    if "402" in lower or "requires more credits" in lower or "insufficient" in lower and "credit" in lower:
+        return "The AI provider is out of credits right now. Add credits or switch providers to continue."
+    if "404" in lower and ("model" in lower or "not found" in lower):
+        return "The configured AI model is unavailable. Please update the model setting and try again."
+    if "timeout" in lower or "timed out" in lower:
+        return "The AI provider took too long to respond. Please try again."
+    return None
+
+
 async def run_agent(message: str, agent_type: str = "general", session_id: str | None = None) -> str:
     """Run one Agentie turn with persisted context, runtime role assignment and local observability."""
     own_trace = False
@@ -53,4 +72,7 @@ async def run_agent(message: str, agent_type: str = "general", session_id: str |
         latency_ms = (time.perf_counter()-started)*1000
         record_model_error(model_name, exc, latency_ms, trace_id)
         if own_trace: finish_trace(trace_id, "failed", str(exc))
+        friendly = _friendly_provider_error(exc)
+        if friendly:
+            raise RuntimeError(friendly) from exc
         raise
