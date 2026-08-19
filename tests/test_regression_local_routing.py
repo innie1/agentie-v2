@@ -2,12 +2,12 @@ import unittest
 
 from agentie.core.code_execution import route_code_command
 from agentie.core.local_router import route_local_actions
-from agentie.core.stable_local_intents import parse_timer_create
+from agentie.core.reference_router import _direct_timer_create
 
 
 class StableTimerIntentTests(unittest.TestCase):
     def assert_timer(self, text: str, seconds: float) -> None:
-        result = parse_timer_create(text)
+        result = _direct_timer_create(text)
         self.assertIsNotNone(result, text)
         self.assertIsInstance(result.get("card"), dict)
         self.assertEqual(result["card"].get("type"), "timer")
@@ -26,7 +26,7 @@ class StableTimerIntentTests(unittest.TestCase):
                 self.assert_timer(text, 10.0)
 
     def test_timer_reason(self):
-        result = parse_timer_create("timer 20s to check the build")
+        result = _direct_timer_create("timer 20s to check the build")
         self.assertEqual(result["card"].get("reason"), "check the build")
 
 
