@@ -6,6 +6,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from agentie.core.browser_monitor import capture_website, routine_always_show, website_routine_target
 from agentie.core.job_engine import create_job, job_card, start_job
 from agentie.core.routine_engine import claim_due_routines, record_run
 from agentie.core.runner import run_agent
@@ -30,10 +31,28 @@ def poll_routine_events()->list[dict[str,Any]]:
 async def _runner(instruction:str,specialist:str,session_id:str)->str:
     return await run_agent(instruction,specialist,session_id)
 
+async def _run_website_routine(routine:dict[str,Any],url:str)->None:
+    try:
+        result=await capture_website(url,track_change=True)
+        changed=bool(result.get("changed"));first=bool(result.get("first_check"));always=routine_always_show(str(routine.get("action") or ""))
+        status="changed" if changed else "unchanged"
+        record_run(routine["id"],None,status)
+        if first or changed or always:
+            prefix=f"Website routine: {routine['name']}"
+            _push({"message":f"{prefix}. {result.get('message','')}","card":result.get("card")})
+    except Exception as exc:
+        record_run(routine["id"],None,"failed")
+        _push({"message":f"Website routine “{routine['name']}” failed: {exc}","card":None})
+
 async def _loop()->None:
     while True:
         try:
             for routine in claim_due_routines(datetime.now().astimezone()):
+                action=str(routine.get("action") or "")
+                website=website_routine_target(action)
+                if website:
+                    await _run_website_routine(routine,website)
+                    continue
                 role=str(routine.get("agent_role") or "auto").strip().lower()
                 job=create_job(f"routine:{routine['id']}",routine["action"],preferred_role=None if role=="auto" else role)
                 start_job(job["id"],_runner);record_run(routine["id"],job["id"],"started")
