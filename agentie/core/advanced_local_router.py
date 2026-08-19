@@ -39,8 +39,6 @@ def _duration_seconds(value: float, unit: str) -> float:
     return value*(3600 if unit.startswith('h') else 60 if unit.startswith('m') else 1)
 
 def _timer_with_reason(text: str) -> dict | None:
-    # Supports both "set a timer for 30 seconds" and natural adjective forms
-    # such as "set a 30-second timer to review the result".
     unit=r"seconds?|secs?|sec|s|minutes?|mins?|min|m|hours?|hrs?|hr|h"
     patterns=[
         re.compile(rf"\b(?:set|start|make|give me)\s+(?:a\s+)?timer\s+(?:for\s+)?(\d+(?:\.\d+)?)\s*({unit})\b(?:\s+(?:for|to|because|so i can|so that i can)\s+(.+))?$",re.I),
@@ -101,7 +99,9 @@ def _memory_command(text: str) -> dict | None:
 
 def try_advanced_local_command(message: str) -> dict | None:
     text=" ".join(message.strip().split()); lower=text.lower().strip(" .?!")
-    for router in (route_routine_command, route_role_command, route_collection_command, route_skill_command):
+    # Research/web commands must run before collection search. Otherwise phrases
+    # like "search the web for ..." are misread as collection="the web".
+    for router in (route_routine_command, route_role_command, route_skill_command, route_collection_command):
         result=router(text)
         if result is not None:return result
     memory=_memory_command(text)
