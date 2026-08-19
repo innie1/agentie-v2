@@ -1,7 +1,8 @@
 import json
 import re
+import uuid
 import zipfile
-from datetime import datetime
+from datetime import datetime, timedelta
 from difflib import get_close_matches
 from pathlib import Path
 
@@ -32,24 +33,57 @@ def _looks_like_time_question(lower: str) -> bool:
         else:
             hit=get_close_matches(word,["time","clock"],n=1,cutoff=.78); corrected.append(hit[0] if hit and len(word)>=3 else word)
     bag=set(corrected); return ("time" in bag or "clock" in bag) and bool(bag & {"what","whats","hey","tell","give","show","current","now","please","time","clock"})
+
+def _duration_seconds(value: float, unit: str) -> float:
+    unit=unit.lower()
+    return value*(3600 if unit.startswith('h') else 60 if unit.startswith('m') else 1)
+
 def _timer_with_reason(text: str) -> dict | None:
-    m=re.search(r"\b(?:set|start|make|give me)\s+(?:a\s+)?timer\s+(?:for\s+)?(\d+(?:\.\d+)?)\s*(seconds?|secs?|sec|s|minutes?|mins?|min|m|hours?|hrs?|hr|h)\b(?:\s+(?:for|to|because|so i can|so that i can)\s+(.+))?$",text,re.I)
+    # Supports both "set a timer for 30 seconds" and natural adjective forms
+    # such as "set a 30-second timer to review the result".
+    unit=r"seconds?|secs?|sec|s|minutes?|mins?|min|m|hours?|hrs?|hr|h"
+    patterns=[
+        re.compile(rf"\b(?:set|start|make|give me)\s+(?:a\s+)?timer\s+(?:for\s+)?(\d+(?:\.\d+)?)\s*({unit})\b(?:\s+(?:for|to|because|so i can|so that i can)\s+(.+))?$",re.I),
+        re.compile(rf"\b(?:set|start|make|give me)\s+(?:a\s+)?(\d+(?:\.\d+)?)\s*[- ]?({unit})\s+timer\b(?:\s+(?:for|to|because|so i can|so that i can)\s+(.+))?$",re.I),
+    ]
+    m=patterns[0].search(text) or patterns[1].search(text)
     if not m:return None
-    value=float(m.group(1)); unit=m.group(2).lower(); seconds=value*(3600 if unit.startswith('h') else 60 if unit.startswith('m') else 1)
+    value=float(m.group(1)); unit_value=m.group(2).lower(); seconds=_duration_seconds(value,unit_value)
     if seconds<=0 or seconds>7*24*3600:return {"message":"Timer must be between 1 second and 7 days.","card":None}
     reason=(m.group(3) or '').strip(' .?!'); item=utilities._create_timer(seconds,reason or "Timer","timer")
     pretty=int(seconds) if seconds.is_integer() else seconds;card={"type":"timer","id":item["id"],"status":item["status"],"duration_seconds":seconds,"due_at":item["due_at"]}
     if reason:card["reason"]=reason
     return {"message":f"Timer set for {pretty} seconds"+(f" — {reason}." if reason else "."),"card":card}
 
+def _direct_reminder(text: str) -> dict | None:
+    unit=r"seconds?|secs?|sec|s|minutes?|mins?|min|m|hours?|hrs?|hr|h"
+    first=re.match(rf"^(?:please\s+)?remind\s+me\s+in\s+(\d+(?:\.\d+)?)\s*({unit})\s+(?:to\s+)?(.+)$",text,re.I)
+    if first:
+        value=float(first.group(1)); unit_value=first.group(2); reminder_text=first.group(3)
+    else:
+        second=re.match(rf"^(?:please\s+)?remind\s+me\s+(?:to\s+)?(.+?)\s+in\s+(\d+(?:\.\d+)?)\s*({unit})$",text,re.I)
+        if not second:return None
+        reminder_text=second.group(1); value=float(second.group(2)); unit_value=second.group(3)
+    seconds=_duration_seconds(value,unit_value)
+    if seconds<=0:return {"message":"Reminder duration must be greater than zero.","card":None}
+    reminder_text=reminder_text.strip(' .?!\"“”')
+    if not reminder_text:return {"message":"What should I remind you about?","card":None}
+    items=_load(productivity.REMINDERS,[]);now=datetime.now().astimezone();item={
+        "id":uuid.uuid4().hex[:8],"text":reminder_text,"status":"scheduled",
+        "created_at":now.isoformat(timespec="seconds"),
+        "due_at":(now+timedelta(seconds=seconds)).isoformat(timespec="seconds"),"repeat_minutes":0,
+    }
+    items.append(item);productivity._save(productivity.REMINDERS,items)
+    return {"message":f"Reminder set for {value:g} {unit_value.lower()} from now — {reminder_text}.","card":{"type":"reminder",**item}}
+
 def _memory_command(text: str) -> dict | None:
     lower=text.lower().strip(" .?!")
     m=re.match(r"^(?:please\s+)?remember\s+(?:that\s+)?my\s+(.+?)\s+is\s+(.+)$",text,re.I)
     if m:
-        key=m.group(1).strip(' .?!"“”')[:120];value=m.group(2).strip(' .?!"“”')[:4000];set_memory("user",key,value,{"source":"local_chat","pinned":True});return {"message":f"Remembered {key}.","card":{"type":"memory","key":key,"value":value,"scope":"user"}}
+        key=m.group(1).strip(' .?!\"“”')[:120];value=m.group(2).strip(' .?!\"“”')[:4000];set_memory("user",key,value,{"source":"local_chat","pinned":True});return {"message":f"Remembered {key}.","card":{"type":"memory","key":key,"value":value,"scope":"user"}}
     m=re.match(r"^(?:please\s+)?remember\s+(?:that\s+)?i\s+prefer\s+(.+)$",text,re.I)
     if m:
-        value=m.group(1).strip(' .?!"“”')[:4000];key=("preference: "+value[:80]).strip();set_memory("user",key,value,{"source":"local_chat","pinned":True});return {"message":"Remembered that preference.","card":{"type":"memory","key":key,"value":value,"scope":"user"}}
+        value=m.group(1).strip(' .?!\"“”')[:4000];key=("preference: "+value[:80]).strip();set_memory("user",key,value,{"source":"local_chat","pinned":True});return {"message":"Remembered that preference.","card":{"type":"memory","key":key,"value":value,"scope":"user"}}
     m=re.match(r"^(?:please\s+)?remember\s+(?:that\s+)?(.+?)\s*=\s*(.+)$",text,re.I)
     if m:
         key=m.group(1).strip()[:120];value=m.group(2).strip()[:4000];set_memory("user",key,value,{"source":"local_chat","pinned":True});return {"message":f"Remembered {key}.","card":{"type":"memory","key":key,"value":value,"scope":"user"}}
@@ -72,10 +106,14 @@ def try_advanced_local_command(message: str) -> dict | None:
         if result is not None:return result
     memory=_memory_command(text)
     if memory is not None:return memory
+    if re.search(r"\b(?:which|what)\s+(?:parts?|actions?|things?)\b.*\b(?:required|used|needed)\b.*\b(?:gemini|api|model|provider)\b",lower) or re.search(r"\bdid\s+(?:any|those|that).*(?:use|require|need).*\b(?:gemini|api|model)\b",lower):
+        return {"message":"The utility actions in this request were handled locally; none of them required Gemini.","card":{"type":"routing_info","provider_calls":0,"provider":"gemini","route":"local"}}
     if _looks_like_time_question(lower) and "timer" not in lower:
         now=datetime.now().astimezone(); return {"message":f"It is {now.strftime('%H:%M:%S')} on {now.strftime('%Y-%m-%d')}.","card":{"type":"datetime","datetime":now.isoformat(timespec="seconds"),"timezone":str(now.tzinfo)}}
     timer=_timer_with_reason(text)
     if timer:return timer
+    reminder=_direct_reminder(text)
+    if reminder:return reminder
     note=re.match(r"^(?:please\s+)?(?:save|make|create|write)\s+(?:me\s+)?(?:a\s+)?note\s+(?:called|named|titled)\s+(.+?)\s+(?:saying|that says|with(?: the)? text|about)\s+(.+)$",text,re.I)
     if not note:note=re.match(r"^(?:note)\s+(.+?)\s+(?:saying|that says)\s+(.+)$",text,re.I)
     if note:
