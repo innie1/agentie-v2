@@ -158,6 +158,12 @@ def remember_active_from_card(session_id,card):
 
 def try_active_reference(session_id,message):
     _ensure_jobs_resumed();text_raw=' '.join(message.strip().split());low_raw=text_raw.lower().strip(' .?!')
+    # Internal attachment prompts contain already-resolved file context and must go
+    # straight through normal provider routing. Letting conversational reference
+    # logic inspect document content can accidentally trigger an old role/timer/etc.
+    # simply because the document itself contains words like "research" or "role".
+    if low_raw.startswith('attached workspace file context prepared locally'):
+        return None
     # Explicit new objects always outrank stale conversational context.
     timer=_direct_timer_create(text_raw)
     if timer is not None:return timer
