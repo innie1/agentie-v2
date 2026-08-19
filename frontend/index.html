@@ -1,336 +1,50 @@
-<div id="app" class="app-shell">
+<div class="app-shell">
   <aside class="sidebar">
     <div class="brand">Agentie</div>
     <div class="subtle">Local-first agent workspace</div>
-    <div class="agent-picker">
-      <label for="agentType">Agent</label>
-      <select id="agentType">
-        <option value="general">General</option>
-        <option value="research">Research</option>
-        <option value="coding">Coding</option>
-        <option value="manager">Manager</option>
-        <option value="github">GitHub</option>
-      </select>
-    </div>
+    <label class="agent-label" for="agentType">Agent</label>
+    <select id="agentType"><option value="general">General</option><option value="research">Research</option><option value="coding">Coding</option><option value="manager">Manager</option><option value="github">GitHub</option></select>
   </aside>
-
   <main class="chat-shell">
-    <div id="messages" class="messages">
-      <div class="assistant-row">
-        <div class="bubble assistant">What would you like Agentie to do?</div>
-      </div>
-    </div>
-
-    <div class="composer-wrap">
-      <div class="composer">
-        <textarea id="messageInput" rows="1" placeholder="Message Agentie..."></textarea>
-        <button id="sendButton" type="button">Send</button>
-      </div>
-      <div class="hint">Try: “Set a timer for 20 seconds” or “Weather in Lagos”.</div>
-    </div>
+    <div id="messages" class="messages"><div class="assistant-row"><div class="bubble assistant">What would you like Agentie to do?</div></div></div>
+    <div class="composer-wrap"><div class="composer"><textarea id="messageInput" rows="1" placeholder="Message Agentie..."></textarea><button id="sendButton" type="button">Send</button></div><div class="hint">Local utilities run without an AI call whenever Agentie can recognize them safely.</div></div>
   </main>
 </div>
-
 <style>
-  :root {
-    color-scheme: light dark;
-    --bg: #f6f7f9;
-    --panel: #ffffff;
-    --text: #17191c;
-    --muted: #6b7280;
-    --border: #e5e7eb;
-    --soft: #f0f2f5;
-    --accent: #111827;
-    --accent-text: #ffffff;
-  }
-
-  @media (prefers-color-scheme: dark) {
-    :root {
-      --bg: #0f1115;
-      --panel: #171a20;
-      --text: #f3f4f6;
-      --muted: #9ca3af;
-      --border: #2a2f38;
-      --soft: #20242c;
-      --accent: #f3f4f6;
-      --accent-text: #111827;
-    }
-  }
-
-  * { box-sizing: border-box; }
-  body { margin: 0; font-family: Inter, ui-sans-serif, system-ui, sans-serif; background: var(--bg); color: var(--text); }
-  button, select, textarea { font: inherit; }
-
-  .app-shell { min-height: 100vh; display: grid; grid-template-columns: 230px 1fr; }
-  .sidebar { padding: 24px 18px; border-right: 1px solid var(--border); background: var(--panel); }
-  .brand { font-size: 22px; font-weight: 700; letter-spacing: -0.02em; }
-  .subtle { margin-top: 4px; color: var(--muted); font-size: 13px; }
-  .agent-picker { margin-top: 28px; display: grid; gap: 8px; }
-  .agent-picker label { font-size: 12px; color: var(--muted); }
-  .agent-picker select { width: 100%; border: 1px solid var(--border); background: var(--panel); color: var(--text); border-radius: 10px; padding: 10px; }
-
-  .chat-shell { min-width: 0; display: grid; grid-template-rows: 1fr auto; }
-  .messages { width: min(840px, 100%); margin: 0 auto; padding: 38px 24px 160px; }
-  .user-row, .assistant-row { display: flex; margin: 18px 0; }
-  .user-row { justify-content: flex-end; }
-  .assistant-row { justify-content: flex-start; }
-  .bubble { max-width: min(680px, 88%); padding: 12px 15px; border-radius: 16px; line-height: 1.5; white-space: pre-wrap; }
-  .bubble.user { background: var(--accent); color: var(--accent-text); }
-  .bubble.assistant { background: transparent; padding-left: 0; }
-
-  .card-wrap { width: min(420px, 92vw); margin-top: 10px; }
-  .result-card { border: 1px solid var(--border); border-radius: 18px; padding: 16px; background: var(--panel); }
-  .card-topline { font-size: 13px; color: var(--muted); margin-bottom: 14px; }
-  .card-title { display: flex; align-items: center; gap: 8px; font-weight: 650; }
-  .card-value { margin: 18px 0 8px; font-size: 40px; font-weight: 650; letter-spacing: -0.04em; }
-  .card-meta { color: var(--muted); font-size: 14px; }
-  .card-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-top: 16px; }
-  .metric { background: var(--soft); border-radius: 12px; padding: 10px; }
-  .metric-label { font-size: 11px; color: var(--muted); }
-  .metric-value { margin-top: 4px; font-size: 15px; font-weight: 600; }
-  .card-actions { display: flex; gap: 8px; margin-top: 16px; }
-  .card-actions button { border: 1px solid var(--border); border-radius: 10px; padding: 8px 12px; background: var(--panel); color: var(--text); cursor: pointer; }
-  .status-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #22c55e; margin-right: 6px; }
-
-  .composer-wrap { position: fixed; left: 230px; right: 0; bottom: 0; background: linear-gradient(transparent, var(--bg) 25%); padding: 36px 24px 18px; }
-  .composer { width: min(840px, 100%); margin: 0 auto; border: 1px solid var(--border); border-radius: 18px; background: var(--panel); display: flex; align-items: flex-end; gap: 10px; padding: 10px; }
-  .composer textarea { flex: 1; resize: none; border: 0; outline: 0; background: transparent; color: var(--text); max-height: 160px; padding: 8px; }
-  .composer button { border: 0; border-radius: 12px; padding: 10px 14px; background: var(--accent); color: var(--accent-text); cursor: pointer; }
-  .hint { width: min(840px, 100%); margin: 8px auto 0; color: var(--muted); font-size: 12px; text-align: center; }
-
-  @media (max-width: 760px) {
-    .app-shell { grid-template-columns: 1fr; }
-    .sidebar { display: none; }
-    .composer-wrap { left: 0; }
-    .messages { padding-left: 16px; padding-right: 16px; }
-  }
+:root{color-scheme:light dark;--bg:#f6f7f9;--panel:#fff;--text:#17191c;--muted:#6b7280;--border:#e5e7eb;--soft:#f0f2f5;--accent:#111827;--accent-text:#fff}
+@media(prefers-color-scheme:dark){:root{--bg:#0f1115;--panel:#171a20;--text:#f3f4f6;--muted:#9ca3af;--border:#2a2f38;--soft:#20242c;--accent:#f3f4f6;--accent-text:#111827}}
+*{box-sizing:border-box}body{margin:0;font-family:Inter,ui-sans-serif,system-ui,sans-serif;background:var(--bg);color:var(--text)}button,select,textarea{font:inherit}.app-shell{min-height:100vh;display:grid;grid-template-columns:230px 1fr}.sidebar{padding:24px 18px;border-right:1px solid var(--border);background:var(--panel)}.brand{font-size:22px;font-weight:700}.subtle,.agent-label{color:var(--muted);font-size:13px}.agent-label{display:block;margin-top:28px;margin-bottom:8px}.sidebar select{width:100%;padding:10px;border-radius:10px;border:1px solid var(--border);background:var(--panel);color:var(--text)}.messages{width:min(840px,100%);margin:auto;padding:38px 24px 160px}.user-row,.assistant-row{display:flex;margin:18px 0}.user-row{justify-content:flex-end}.bubble{max-width:min(680px,88%);padding:12px 15px;border-radius:16px;line-height:1.5;white-space:pre-wrap}.bubble.user{background:var(--accent);color:var(--accent-text)}.bubble.assistant{padding-left:0;background:transparent}.card-wrap{width:min(460px,92vw);margin-top:8px}.result-card{border:1px solid var(--border);border-radius:18px;padding:16px;background:var(--panel)}.card-title{font-weight:650;display:flex;gap:8px;align-items:center}.card-value{font-size:38px;font-weight:650;margin:16px 0 8px;letter-spacing:-.03em}.card-meta{font-size:13px;color:var(--muted);margin-top:6px}.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:14px}.metric,.list-item{background:var(--soft);padding:10px;border-radius:12px}.metric small,.list-item small{display:block;color:var(--muted);margin-bottom:3px}.list{display:grid;gap:8px;margin-top:14px}.actions{display:flex;gap:8px;margin-top:12px;flex-wrap:wrap}.actions button{padding:8px 11px;border-radius:10px;border:1px solid var(--border);background:var(--panel);color:var(--text);cursor:pointer}.progress{height:10px;background:var(--soft);border-radius:999px;overflow:hidden;margin-top:12px}.progress>div{height:100%;background:var(--accent)}.codeish{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;word-break:break-all}.composer-wrap{position:fixed;left:230px;right:0;bottom:0;padding:36px 24px 18px;background:linear-gradient(transparent,var(--bg) 25%)}.composer{width:min(840px,100%);margin:auto;display:flex;gap:10px;align-items:flex-end;padding:10px;border:1px solid var(--border);border-radius:18px;background:var(--panel)}.composer textarea{flex:1;resize:none;border:0;outline:0;background:transparent;color:var(--text);padding:8px}.composer button{border:0;border-radius:12px;padding:10px 14px;background:var(--accent);color:var(--accent-text)}.hint{width:min(840px,100%);margin:8px auto 0;text-align:center;color:var(--muted);font-size:12px}@media(max-width:760px){.app-shell{grid-template-columns:1fr}.sidebar{display:none}.composer-wrap{left:0}.messages{padding-left:16px;padding-right:16px}}
 </style>
-
 <script>
-  const messages = document.getElementById('messages');
-  const input = document.getElementById('messageInput');
-  const sendButton = document.getElementById('sendButton');
-  const agentType = document.getElementById('agentType');
-
-  function scrollBottom() {
-    window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
-  }
-
-  function formatClock(seconds) {
-    seconds = Math.max(0, Math.floor(seconds));
-    const h = Math.floor(seconds / 3600);
-    const m = Math.floor((seconds % 3600) / 60);
-    const s = seconds % 60;
-    return h > 0
-      ? [h, m, s].map(v => String(v).padStart(2, '0')).join(':')
-      : [m, s].map(v => String(v).padStart(2, '0')).join(':');
-  }
-
-  function addUser(text) {
-    const row = document.createElement('div');
-    row.className = 'user-row';
-    const bubble = document.createElement('div');
-    bubble.className = 'bubble user';
-    bubble.textContent = text;
-    row.appendChild(bubble);
-    messages.appendChild(row);
-  }
-
-  function addAssistant(message, card) {
-    const row = document.createElement('div');
-    row.className = 'assistant-row';
-    const block = document.createElement('div');
-    const bubble = document.createElement('div');
-    bubble.className = 'bubble assistant';
-    bubble.textContent = message || '';
-    block.appendChild(bubble);
-    if (card) block.appendChild(renderCard(card, message));
-    row.appendChild(block);
-    messages.appendChild(row);
-    scrollBottom();
-  }
-
-  function renderCard(card, message) {
-    const wrap = document.createElement('div');
-    wrap.className = 'card-wrap';
-    const el = document.createElement('div');
-    el.className = 'result-card';
-    wrap.appendChild(el);
-
-    const topline = document.createElement('div');
-    topline.className = 'card-topline';
-    topline.textContent = message || '';
-    el.appendChild(topline);
-
-    if (card.type === 'timer') renderTimer(el, card);
-    else if (card.type === 'alarm') renderAlarm(el, card);
-    else if (card.type === 'stopwatch') renderStopwatch(el, card);
-    else if (card.type === 'weather') renderWeather(el, card);
-    return wrap;
-  }
-
-  function renderTimer(el, card) {
-    el.insertAdjacentHTML('beforeend', '<div class="card-title">⏱ Timer</div>');
-    const value = document.createElement('div');
-    value.className = 'card-value';
-    el.appendChild(value);
-    const meta = document.createElement('div');
-    meta.className = 'card-meta';
-    meta.innerHTML = '<span class="status-dot"></span><span>Running</span>';
-    el.appendChild(meta);
-
-    const update = () => {
-      const remaining = (new Date(card.due_at).getTime() - Date.now()) / 1000;
-      value.textContent = formatClock(remaining);
-      if (remaining <= 0) {
-        meta.textContent = 'Finished';
-        clearInterval(timer);
-      }
-    };
-    update();
-    const timer = setInterval(update, 250);
-
-    const actions = document.createElement('div');
-    actions.className = 'card-actions';
-    const cancel = document.createElement('button');
-    cancel.textContent = 'Cancel';
-    cancel.addEventListener('click', async () => {
-      await sendLocalSilently(`Cancel timer ${card.id}`);
-      clearInterval(timer);
-      meta.textContent = 'Cancelled';
-    });
-    actions.appendChild(cancel);
-    el.appendChild(actions);
-  }
-
-  function renderAlarm(el, card) {
-    el.insertAdjacentHTML('beforeend', '<div class="card-title">⏰ Alarm</div>');
-    const value = document.createElement('div');
-    value.className = 'card-value';
-    value.textContent = card.display_time;
-    el.appendChild(value);
-    const meta = document.createElement('div');
-    meta.className = 'card-meta';
-    meta.textContent = `${card.display_date} · Running`;
-    el.appendChild(meta);
-
-    const actions = document.createElement('div');
-    actions.className = 'card-actions';
-    const cancel = document.createElement('button');
-    cancel.textContent = 'Cancel';
-    cancel.addEventListener('click', async () => {
-      await sendLocalSilently(`Cancel alarm ${card.id}`);
-      meta.textContent = `${card.display_date} · Cancelled`;
-    });
-    actions.appendChild(cancel);
-    el.appendChild(actions);
-  }
-
-  function renderStopwatch(el, card) {
-    el.insertAdjacentHTML('beforeend', '<div class="card-title">⏱ Stopwatch</div>');
-    const value = document.createElement('div');
-    value.className = 'card-value';
-    el.appendChild(value);
-    const meta = document.createElement('div');
-    meta.className = 'card-meta';
-    el.appendChild(meta);
-    const baseElapsed = Number(card.elapsed_seconds || 0);
-    const started = card.client_started_at_ms || Date.now();
-    let running = card.status === 'running';
-
-    const update = () => {
-      const seconds = baseElapsed + (running ? (Date.now() - started) / 1000 : 0);
-      value.textContent = formatClock(seconds);
-      meta.innerHTML = running ? '<span class="status-dot"></span>Running' : 'Paused';
-    };
-    update();
-    const timer = setInterval(update, 100);
-
-    const actions = document.createElement('div');
-    actions.className = 'card-actions';
-    const primary = document.createElement('button');
-    primary.textContent = running ? 'Pause' : 'Start';
-    primary.addEventListener('click', async () => {
-      await sendMessage(running ? 'Pause stopwatch' : 'Start stopwatch');
-      clearInterval(timer);
-    });
-    const reset = document.createElement('button');
-    reset.textContent = 'Reset';
-    reset.addEventListener('click', async () => {
-      await sendMessage('Reset stopwatch');
-      clearInterval(timer);
-    });
-    actions.append(primary, reset);
-    el.appendChild(actions);
-  }
-
-  function renderWeather(el, card) {
-    el.insertAdjacentHTML('beforeend', `<div class="card-title">☁ Weather · ${escapeHtml(card.location || '')}</div>`);
-    const value = document.createElement('div');
-    value.className = 'card-value';
-    value.textContent = `${card.temperature_c ?? '—'}°C`;
-    el.appendChild(value);
-    const meta = document.createElement('div');
-    meta.className = 'card-meta';
-    meta.textContent = `Feels like ${card.feels_like_c ?? '—'}°C · Wind ${card.wind_kmh ?? '—'} km/h`;
-    el.appendChild(meta);
-    const grid = document.createElement('div');
-    grid.className = 'card-grid';
-    grid.innerHTML = `
-      <div class="metric"><div class="metric-label">High</div><div class="metric-value">${card.high_c ?? '—'}°</div></div>
-      <div class="metric"><div class="metric-label">Low</div><div class="metric-value">${card.low_c ?? '—'}°</div></div>
-      <div class="metric"><div class="metric-label">Rain</div><div class="metric-value">${card.rain_chance_percent ?? '—'}%</div></div>
-    `;
-    el.appendChild(grid);
-    const source = document.createElement('div');
-    source.className = 'card-meta';
-    source.style.marginTop = '12px';
-    source.textContent = 'Source: Open-Meteo';
-    el.appendChild(source);
-  }
-
-  function escapeHtml(text) {
-    const div = document.createElement('div');
-    div.textContent = text;
-    return div.innerHTML;
-  }
-
-  async function sendLocalSilently(text) {
-    await fetch('/agent/run', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ message: text, agent_type: agentType.value })
-    });
-  }
-
-  async function sendMessage(textOverride) {
-    const text = (textOverride || input.value).trim();
-    if (!text) return;
-    if (!textOverride) input.value = '';
-    addUser(text);
-    sendButton.disabled = true;
-    try {
-      const response = await fetch('/agent/run', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: text, agent_type: agentType.value })
-      });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.detail || 'Request failed');
-      addAssistant(data.message || data.result || '', data.card || null);
-    } catch (error) {
-      addAssistant(`Error: ${error.message}`, null);
-    } finally {
-      sendButton.disabled = false;
-      input.focus();
-    }
-  }
-
-  sendButton.addEventListener('click', () => sendMessage());
-  input.addEventListener('keydown', (event) => {
-    if (event.key === 'Enter' && !event.shiftKey) {
-      event.preventDefault();
-      sendMessage();
-    }
-  });
+const messages=document.getElementById('messages'),input=document.getElementById('messageInput'),sendButton=document.getElementById('sendButton'),agentType=document.getElementById('agentType');
+const esc=s=>{const d=document.createElement('div');d.textContent=String(s??'');return d.innerHTML};
+function fmt(sec){sec=Math.max(0,Math.floor(Number(sec)||0));const h=Math.floor(sec/3600),m=Math.floor(sec%3600/60),s=sec%60;return(h?[h,m,s]:[m,s]).map(v=>String(v).padStart(2,'0')).join(':')}
+function addUser(text){const r=document.createElement('div');r.className='user-row';r.innerHTML=`<div class="bubble user">${esc(text)}</div>`;messages.appendChild(r)}
+function addAssistant(message,card){const r=document.createElement('div');r.className='assistant-row';const b=document.createElement('div');b.innerHTML=`<div class="bubble assistant">${esc(message||'')}</div>`;if(card)b.appendChild(renderCard(card));r.appendChild(b);messages.appendChild(r);window.scrollTo({top:document.body.scrollHeight,behavior:'smooth'})}
+function shell(title){const w=document.createElement('div');w.className='card-wrap';const e=document.createElement('div');e.className='result-card';e.innerHTML=`<div class="card-title">${title}</div>`;w.appendChild(e);return[w,e]}
+function listItems(el,items,mapper){const box=document.createElement('div');box.className='list';(items||[]).forEach(x=>{const i=document.createElement('div');i.className='list-item';i.innerHTML=mapper(x);box.appendChild(i)});el.appendChild(box)}
+function renderCard(c){let w,e;if(c.type==='timer'){[w,e]=shell('⏱ Timer');const v=document.createElement('div');v.className='card-value';e.appendChild(v);const m=document.createElement('div');m.className='card-meta';e.appendChild(m);const tick=()=>{const left=(new Date(c.due_at)-Date.now())/1000;v.textContent=fmt(left);m.textContent=left<=0?'Finished':'Running';if(left<=0)clearInterval(t)};tick();const t=setInterval(tick,250);actions(e,[['Cancel',async()=>{await silent(`Cancel timer ${c.id}`);clearInterval(t);m.textContent='Cancelled'}]])}
+else if(c.type==='alarm'){[w,e]=shell('⏰ Alarm');e.innerHTML+=`<div class="card-value">${esc(c.display_time)}</div><div class="card-meta">${esc(c.display_date)} · ${esc(c.status||'Running')}</div>`;actions(e,[['Cancel',()=>silent(`Cancel alarm ${c.id}`)]])}
+else if(c.type==='stopwatch'){[w,e]=shell('⏱ Stopwatch');const v=document.createElement('div');v.className='card-value';e.appendChild(v);const base=Number(c.elapsed_seconds||0),start=Date.now(),running=c.status==='running';const tick=()=>v.textContent=fmt(base+(running?(Date.now()-start)/1000:0));tick();const t=setInterval(tick,100);actions(e,[[running?'Pause':'Start',()=>{clearInterval(t);sendMessage(running?'Pause stopwatch':'Start stopwatch')}],['Reset',()=>{clearInterval(t);sendMessage('Reset stopwatch')} ]])}
+else if(c.type==='weather'){[w,e]=shell(`☁ Weather · ${esc(c.location)}`);e.innerHTML+=`<div class="card-value">${esc(c.temperature_c)}°C</div><div class="card-meta">Feels like ${esc(c.feels_like_c)}°C · Wind ${esc(c.wind_kmh)} km/h</div><div class="grid"><div class="metric"><small>High</small>${esc(c.high_c)}°</div><div class="metric"><small>Low</small>${esc(c.low_c)}°</div><div class="metric"><small>Rain</small>${esc(c.rain_chance_percent)}%</div></div>`}
+else if(c.type==='calculation'){[w,e]=shell('🧮 Calculation');e.innerHTML+=`<div class="card-meta codeish">${esc(c.expression)}</div><div class="card-value">${esc(c.result)}</div>`}
+else if(c.type==='datetime'){[w,e]=shell('🕒 Local time');e.innerHTML+=`<div class="card-value">${esc(new Date(c.datetime).toLocaleTimeString())}</div><div class="card-meta">${esc(new Date(c.datetime).toLocaleDateString())} · ${esc(c.timezone)}</div>`}
+else if(c.type==='countdown'){[w,e]=shell('⌛ Countdown');const v=document.createElement('div');v.className='card-value';e.appendChild(v);const target=new Date(c.target);const tick=()=>v.textContent=fmt((target-Date.now())/1000);tick();setInterval(tick,500)}
+else if(c.type==='system'){[w,e]=shell('💻 System status');e.innerHTML+=`<div class="grid"><div class="metric"><small>CPU</small>${esc(c.cpu_percent??'—')}%</div><div class="metric"><small>Memory</small>${esc(c.memory_percent??'—')}%</div><div class="metric"><small>Disk free</small>${esc(c.disk_free_gb)} GB</div></div><div class="card-meta">${esc(c.os_detail||c.os)} · Python ${esc(c.python)}</div>`}
+else if(c.type==='reminder'||c.type==='schedule'){[w,e]=shell(c.type==='schedule'?'🔁 Schedule':'🔔 Reminder');e.innerHTML+=`<div class="card-value" style="font-size:22px">${esc(c.text)}</div><div class="card-meta">${esc(c.due_at||c.cadence||'')} ${c.time_hhmm?'· '+esc(c.time_hhmm):''}</div>`}
+else if(c.type==='tasks'||c.type==='agent_progress'){[w,e]=shell(c.type==='agent_progress'?'🧠 Agent progress':'✅ Tasks');if(c.type==='agent_progress'){const pct=c.total_steps?Math.round(c.completed_steps/c.total_steps*100):0;e.innerHTML+=`<div class="card-meta">${c.completed_steps||0}/${c.total_steps||0} steps complete</div><div class="progress"><div style="width:${pct}%"></div></div>`}listItems(e,c.items,x=>`<strong>${esc(x.title)}</strong><small>${esc(x.status)} · ${esc(x.id)}</small>`)}
+else if(c.type==='files'){[w,e]=shell('📄 Workspace files');listItems(e,c.items,x=>`<strong>${esc(x.name)}</strong><small>${Math.round((x.size_bytes||0)/1024)} KB · ${esc(x.suffix||'file')}</small>`)}
+else if(c.type==='approvals'){[w,e]=shell('🛡 Approvals');listItems(e,c.items,x=>`<strong>${esc(x.action)}</strong><small>${esc(x.status)} · ${esc(x.id)}</small>${x.status==='pending'?`<div class="actions"><button data-approve="${esc(x.id)}">Approve</button><button data-deny="${esc(x.id)}">Deny</button></div>`:''}`);e.querySelectorAll('[data-approve]').forEach(b=>b.onclick=()=>resolveApproval(b.dataset.approve,true,b));e.querySelectorAll('[data-deny]').forEach(b=>b.onclick=()=>resolveApproval(b.dataset.deny,false,b))}
+else if(c.type==='checksum'){[w,e]=shell('🔐 Checksum');e.innerHTML+=`<div class="card-meta">${esc(c.filename)} · ${esc(c.algorithm)}</div><div class="codeish" style="margin-top:10px">${esc(c.checksum)}</div>`}
+else if(c.type==='image_metadata'){[w,e]=shell('🖼 Image metadata');e.innerHTML+=`<div class="grid"><div class="metric"><small>Size</small>${esc(c.width)}×${esc(c.height)}</div><div class="metric"><small>Format</small>${esc(c.format)}</div><div class="metric"><small>Mode</small>${esc(c.mode)}</div></div><div class="card-meta">${esc(c.filename)}</div>`}
+else if(c.type==='wikipedia'){[w,e]=shell(`ⓦ ${esc(c.title||'Wikipedia')}`);e.innerHTML+=`<div class="card-meta">${esc(c.description||'')}</div><div style="margin-top:12px;line-height:1.5">${esc(c.extract||'')}</div>`}
+else if(c.type==='rss'){[w,e]=shell('📰 RSS');listItems(e,c.items,x=>`<strong>${esc(x.title)}</strong><small>${esc(x.published||'')}</small>`)}
+else if(c.type==='scratchpad'||c.type==='note'){[w,e]=shell(c.type==='scratchpad'?'🗒 Scratchpad':'📝 Note');e.innerHTML+=`<strong>${esc(c.key||c.title)}</strong><div class="card-meta">${esc(c.value||c.content)}</div>`}
+else if(c.type==='reminders'||c.type==='schedules'){[w,e]=shell(c.type==='schedules'?'🔁 Schedules':'🔔 Reminders');listItems(e,c.items,x=>`<strong>${esc(x.text)}</strong><small>${esc(x.status)} · ${esc(x.due_at||x.cadence||'')}</small>`)}
+else{[w,e]=shell('Agentie result');e.innerHTML+=`<pre class="codeish">${esc(JSON.stringify(c,null,2))}</pre>`}return w}
+function actions(el,defs){const a=document.createElement('div');a.className='actions';defs.forEach(([name,fn])=>{const b=document.createElement('button');b.textContent=name;b.onclick=fn;a.appendChild(b)});el.appendChild(a)}
+async function resolveApproval(id,approved,button){const r=await fetch(`/approvals/${id}/resolve`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({approved})});button.closest('.list-item').querySelector('small').textContent=approved?'approved':'denied'}
+async function silent(text){await fetch('/agent/run',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({message:text,agent_type:agentType.value})})}
+async function sendMessage(override){const text=(override||input.value).trim();if(!text)return;if(!override)input.value='';addUser(text);sendButton.disabled=true;try{const r=await fetch('/agent/run',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({message:text,agent_type:agentType.value})});const d=await r.json();if(!r.ok)throw Error(d.detail||'Request failed');addAssistant(d.message||d.result||'',d.card||null)}catch(err){addAssistant(`Error: ${err.message}`,null)}finally{sendButton.disabled=false;input.focus()}}
+sendButton.onclick=()=>sendMessage();input.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();sendMessage()}})
 </script>
