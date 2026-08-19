@@ -68,9 +68,16 @@ class MCPTransportSafetyTests(unittest.TestCase):
         self.assertIn(command.lower(), {"python", "python.exe"})
         self.assertEqual(args, ["server.py", "--stdio"])
 
-    def test_shell_executables_are_not_accepted_as_mcp_servers(self):
+    def test_windows_cmd_npx_wrapper_is_allowed(self):
+        command, args = _split_local_command("cmd /c npx -y example-mcp")
+        self.assertIn(command.lower(), {"cmd", "cmd.exe"})
+        self.assertEqual(args[:2], ["/c", "npx"])
+
+    def test_arbitrary_shell_is_not_accepted(self):
         with self.assertRaises(ValueError):
             _split_local_command("powershell -Command whoami")
+        with self.assertRaises(ValueError):
+            _split_local_command("cmd /c whoami")
 
 
 if __name__ == "__main__":
