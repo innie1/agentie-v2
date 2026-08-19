@@ -29,15 +29,45 @@ def _filesystem_server() -> dict[str, Any] | None:
 
 
 def _filename(text: str) -> str | None:
-    # Accept normal sentence punctuation after a filename (for example
-    # "Read tasks.json.") without accidentally matching the prefix of a longer
-    # dotted filename such as "tasks.json.backup".
-    match = re.search(
-        rf"(?<![\w.-])([\w][\w .()\-]*\.(?:{_EXT_PATTERN}))(?=$|[\s,;:!?]|\.(?:\s|$))",
+    # First prefer a quoted filename because spaces are unambiguous there.
+    quoted = re.search(
+        rf"[\"'`]([^\"'`\r\n]+\.(?:{_EXT_PATTERN}))[\"'`]",
         text,
         re.I,
     )
-    return match.group(1).strip(" .?!\"'`") if match else None
+    if quoted:
+        return quoted.group(1).strip()
+
+    # For ordinary prose, capture the filename-like tail and remove only known
+    # request prefixes. This keeps names such as "Morning Build.json" intact while
+    # preventing "Read tasks.json" from being treated as the filename itself.
+    match = re.search(
+        rf"([\w][\w .()\-]*\.(?:{_EXT_PATTERN}))(?=$|[\s,;:!?]|\.(?:\s|$))",
+        text,
+        re.I,
+    )
+    if not match:
+        return None
+    candidate = match.group(1).strip(" .?!\"'`")
+    candidate = re.sub(
+        r"^(?:please\s+)?(?:read|open|display|view|inspect)\s+(?:the\s+)?",
+        "",
+        candidate,
+        flags=re.I,
+    )
+    candidate = re.sub(
+        r"^(?:please\s+)?show\s+me\s+(?:(?:information|info|details|metadata)\s+about\s+)?(?:the\s+)?",
+        "",
+        candidate,
+        flags=re.I,
+    )
+    candidate = re.sub(
+        r"^(?:(?:information|info|details|metadata)\s+about\s+)(?:the\s+)?",
+        "",
+        candidate,
+        flags=re.I,
+    )
+    return candidate.strip(" .?!\"'`") or None
 
 
 def _extension_search(text: str) -> str | None:
