@@ -1,0 +1,48 @@
+from __future__ import annotations
+
+import asyncio
+import json
+from datetime import datetime
+from pathlib import Path
+from typing import Any
+
+from agentie.core.job_engine import create_job, job_card, start_job
+from agentie.core.routine_engine import claim_due_routines, record_run
+from agentie.core.runner import run_agent
+
+WORKSPACE=Path.cwd()/"workspace"
+EVENTS=WORKSPACE/"routine_events.json"
+_TASK:asyncio.Task|None=None
+
+
+def _load_events()->list[dict[str,Any]]:
+    try:return json.loads(EVENTS.read_text(encoding="utf-8")) if EVENTS.exists() else []
+    except Exception:return []
+def _save_events(items:list[dict[str,Any]])->None:
+    EVENTS.parent.mkdir(parents=True,exist_ok=True);EVENTS.write_text(json.dumps(items[-200:],indent=2,ensure_ascii=False),encoding="utf-8")
+def _push(event:dict[str,Any])->None:
+    items=_load_events();items.append(event);_save_events(items)
+def poll_routine_events()->list[dict[str,Any]]:
+    items=_load_events()
+    if items:_save_events([])
+    return items
+
+async def _runner(instruction:str,specialist:str,session_id:str)->str:
+    return await run_agent(instruction,specialist,session_id)
+
+async def _loop()->None:
+    while True:
+        try:
+            for routine in claim_due_routines(datetime.now().astimezone()):
+                role=str(routine.get("agent_role") or "auto").strip().lower()
+                job=create_job(f"routine:{routine['id']}",routine["action"],preferred_role=None if role=="auto" else role)
+                start_job(job["id"],_runner);record_run(routine["id"],job["id"],"started")
+                _push({"message":f"Routine started: {routine['name']}","card":{"type":"routine_run","routine_id":routine["id"],"routine_name":routine["name"],"job":job_card(job)}})
+        except Exception as exc:
+            _push({"message":f"Routine scheduler error: {exc}","card":None})
+        await asyncio.sleep(15)
+
+def start_routine_worker()->None:
+    global _TASK
+    if _TASK and not _TASK.done():return
+    _TASK=asyncio.create_task(_loop())
