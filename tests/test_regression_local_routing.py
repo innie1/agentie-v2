@@ -3,6 +3,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from agentie.core.browser_monitor import _looks_browser_request, _meaningfully_changed, _scheduled_request, routine_always_show, website_routine_target
 from agentie.core.capability_preflight import _allowed_directories_request, _choice, _extension_search, _filename, _folder_name
 from agentie.core.capability_router import _looks_filesystem, _native_guarded
 from agentie.core.code_execution import route_code_command
@@ -10,6 +11,7 @@ from agentie.core.local_router import route_local_actions
 from agentie.core.mcp_catalog import presets
 from agentie.core.mcp_client import _infer_natural_tool, _mentioned_server, _split_local_command
 from agentie.core.reference_router import _direct_timer_create
+from agentie.core.routine_engine import _parse_trigger
 from agentie.tools import approval_tools
 
 
@@ -150,7 +152,7 @@ class CapabilityRoutingRegressionTests(unittest.TestCase):
 
     def test_curated_mcp_presets_are_available(self):
         ids = {item["id"] for item in presets()}
-        self.assertTrue({"memory", "sequential-thinking", "everything", "fetch", "time-mcp", "git"}.issubset(ids))
+        self.assertTrue({"playwright", "memory", "sequential-thinking", "everything", "fetch", "time-mcp", "git"}.issubset(ids))
 
 
 class CapabilityPreflightRegressionTests(unittest.TestCase):
@@ -242,6 +244,35 @@ class MCPApprovalPolicyTests(unittest.TestCase):
         self.assertTrue(approval_tools.approval_is_granted('mcp:filesystem:write_file:{"path":"b.txt"}'))
         self.assertFalse(approval_tools.approval_is_granted('mcp:filesystem:edit_file:{"path":"b.txt"}'))
         self.assertFalse(approval_tools.approval_is_granted('mcp:other:write_file:{"path":"b.txt"}'))
+
+
+class WebsiteMonitoringRegressionTests(unittest.TestCase):
+    def test_one_off_screenshot_request_is_detected(self):
+        self.assertTrue(_looks_browser_request("Take a screenshot of https://example.com"))
+        self.assertTrue(_looks_browser_request("Check https://example.com and show me what it looks like"))
+
+    def test_scheduled_monitor_is_not_treated_as_one_off(self):
+        text = "Monitor https://example.com every 3 hours and tell me if it changes"
+        self.assertTrue(_scheduled_request(text))
+        self.assertEqual(_parse_trigger(text)[0], "every 3 hours")
+
+    def test_routine_target_handles_inflected_verbs(self):
+        self.assertEqual(website_routine_target("monitor https://example.com"), "https://example.com")
+        self.assertEqual(website_routine_target("monitors https://example.com for changes"), "https://example.com")
+        self.assertEqual(website_routine_target("watches https://example.com"), "https://example.com")
+
+    def test_change_detection_ignores_tiny_differences_but_flags_large_changes(self):
+        previous = {"title": "Example", "text": "hello world " * 100}
+        small = "hello world " * 99 + "hello world! "
+        changed, similarity = _meaningfully_changed(previous, small, "Example")
+        self.assertFalse(changed)
+        self.assertIsNotNone(similarity)
+        changed, _ = _meaningfully_changed(previous, "completely different content " * 80, "Example")
+        self.assertTrue(changed)
+
+    def test_always_show_phrase_is_explicit(self):
+        self.assertTrue(routine_always_show("check the website and always show every screenshot"))
+        self.assertFalse(routine_always_show("check the website and notify me if it changes"))
 
 
 if __name__ == "__main__":
