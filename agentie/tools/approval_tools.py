@@ -2,26 +2,71 @@ import json
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
+
 from agents import function_tool
 
 STORE = Path.cwd() / "workspace" / "approvals.json"
 
+
 def _load():
-    if not STORE.exists(): return []
-    try: return json.loads(STORE.read_text(encoding="utf-8"))
-    except Exception: return []
+    if not STORE.exists():
+        return []
+    try:
+        return json.loads(STORE.read_text(encoding="utf-8"))
+    except Exception:
+        return []
+
 
 def _save(items):
     STORE.parent.mkdir(parents=True, exist_ok=True)
     STORE.write_text(json.dumps(items, indent=2, ensure_ascii=False), encoding="utf-8")
 
+
+def get_approval(approval_id: str):
+    for item in _load():
+        if item.get("id") == approval_id:
+            return item
+    return None
+
+
+def approval_is_granted(action: str) -> bool:
+    return any(
+        item.get("action") == action and item.get("status") == "approved"
+        for item in _load()
+    )
+
+
+def resolve_approval(approval_id: str, approved: bool):
+    items = _load()
+    for item in items:
+        if item.get("id") == approval_id:
+            if item.get("status") != "pending":
+                raise ValueError("Approval has already been resolved.")
+            item["status"] = "approved" if approved else "denied"
+            item["resolved_at"] = datetime.now(timezone.utc).isoformat()
+            _save(items)
+            return item
+    raise ValueError("Approval not found.")
+
+
 @function_tool
 def request_approval(action: str, reason: str) -> str:
     """Create a pending approval request before an externally consequential action."""
     items = _load()
-    item = {"id": str(uuid.uuid4())[:8], "action": action[:500], "reason": reason[:1000], "status": "pending", "created_at": datetime.now(timezone.utc).isoformat()}
-    items.append(item); _save(items)
+    for item in items:
+        if item.get("action") == action and item.get("status") == "pending":
+            return json.dumps(item)
+    item = {
+        "id": str(uuid.uuid4())[:8],
+        "action": action[:500],
+        "reason": reason[:1000],
+        "status": "pending",
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    items.append(item)
+    _save(items)
     return json.dumps(item)
+
 
 @function_tool
 def list_approvals() -> str:
