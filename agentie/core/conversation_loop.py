@@ -7,15 +7,16 @@ _PENDING: dict[str, dict[str, Any]] = {}
 _LOCK = threading.Lock()
 _TTL_SECONDS = 15 * 60
 
-# Accept natural and compact forms: 20 seconds, 20 sec, 20s, 5m, 1.5h.
 _DURATION_RE = re.compile(r"\b\d+(?:\.\d+)?\s*(?:seconds?|secs?|sec|s|minutes?|mins?|min|m|hours?|hrs?|hr|h)\b", re.I)
 _CLOCK_RE = re.compile(r"\b(?:[01]?\d|2[0-3]):[0-5]\d\b")
+_NEW_INTENT_RE = re.compile(r"\b(?:time|clock|weather|forecast|calculate|calculator|convert|remind|reminder|note|save|task|system|status|wiki|wikipedia|stopwatch|timer|alarm)\b", re.I)
 
 
 def _clean(text: str) -> str:
     value = text.lower().strip()
     value = value.replace("tim,er", "timer").replace("tim er", "timer").replace("ti mer", "timer")
     value = value.replace("wheather", "weather").replace("weathr", "weather")
+    value = value.replace("tiem", "time").replace("teim", "time").replace("wats", "what is")
     value = re.sub(r"\s+", " ", value)
     return value
 
@@ -33,19 +34,15 @@ def clear_pending(session_id: str) -> None:
 def _get(session_id: str) -> dict[str, Any] | None:
     with _LOCK:
         item = _PENDING.get(session_id)
-        if not item:
-            return None
+        if not item: return None
         if time.time() - float(item.get("created_at", 0)) > _TTL_SECONDS:
-            _PENDING.pop(session_id, None)
-            return None
+            _PENDING.pop(session_id, None); return None
         return dict(item)
 
 
 def _expand_duration(raw: str) -> str:
-    """Normalize compact follow-ups to wording the existing local router understands."""
     match = re.fullmatch(r"\s*(\d+(?:\.\d+)?)\s*(seconds?|secs?|sec|s|minutes?|mins?|min|m|hours?|hrs?|hr|h)\s*", raw, re.I)
-    if not match:
-        return raw.strip()
+    if not match: return raw.strip()
     number, unit = match.group(1), match.group(2).lower()
     if unit in {"s", "sec", "secs", "second", "seconds"}: canonical = "seconds"
     elif unit in {"m", "min", "mins", "minute", "minutes"}: canonical = "minutes"
@@ -80,8 +77,17 @@ def consume_followup(session_id: str, message: str) -> dict[str, Any] | None:
     pending = _get(session_id)
     if not pending: return None
     text = _clean(message); intent = pending["intent"]; slots = pending.get("slots", {})
-    if text in {"cancel", "never mind", "nevermind", "forget it", "stop"}:
+    if text in {"cancel", "cancel it", "cancel that", "never mind", "nevermind", "forget it", "stop", "stop it"}:
         clear_pending(session_id); return {"cancelled": True, "message": "Okay, cancelled."}
+
+    # A fresh, recognizable command must not be swallowed by an old clarification.
+    # Example: after "start a timer" -> "hey, what's the time?" should answer the time.
+    if _NEW_INTENT_RE.search(text):
+        same_intent = intent in text or (intent == "calculation" and re.search(r"\b(?:calc|calculate|calculator)\b", text))
+        if not same_intent:
+            clear_pending(session_id)
+            return None
+
     if intent == "timer":
         duration = _DURATION_RE.search(text)
         if duration:
