@@ -10,7 +10,6 @@ from agentie.tools.local_utility_tools import (
     list_timers,
     set_alarm_at,
     set_timer,
-    show_notification,
     stopwatch_pause,
     stopwatch_reset,
     stopwatch_start,
@@ -18,6 +17,17 @@ from agentie.tools.local_utility_tools import (
     weather_lookup,
 )
 from agentie.tools.memory_tools import list_memories, recall_memory, remember
+from agentie.tools.productivity_tools import (
+    calculate,
+    cancel_reminder,
+    convert_unit,
+    create_reminder,
+    list_notes,
+    list_reminders,
+    read_note,
+    save_note,
+    system_status,
+)
 from agentie.tools.python_tools import run_python
 from agentie.tools.supabase_tools import supabase_insert, supabase_select
 from agentie.tools.task_tools import (
@@ -49,16 +59,26 @@ LOCAL_UTILITY_TOOLS = [
     stopwatch_pause,
     stopwatch_reset,
     stopwatch_status,
-    show_notification,
     weather_lookup,
+]
+PRODUCTIVITY_TOOLS = [
+    calculate,
+    convert_unit,
+    create_reminder,
+    list_reminders,
+    cancel_reminder,
+    save_note,
+    list_notes,
+    read_note,
+    system_status,
 ]
 
 TOOLSETS = {
-    "general": [get_current_utc_time, *LOCAL_UTILITY_TOOLS, search_web, browser_read_page, http_get, read_text_file, write_text_file, list_workspace_files, edit_text_file, *DOCUMENT_TOOLS, run_python, remember, recall_memory, list_memories, *TASK_TOOLS, supabase_select, supabase_insert, request_approval, list_approvals],
-    "research": [get_current_utc_time, weather_lookup, search_web, browser_read_page, http_get, read_text_file, write_text_file, list_workspace_files, *DOCUMENT_TOOLS, remember, recall_memory, list_memories, *TASK_TOOLS],
-    "coding": [get_current_utc_time, set_timer, list_timers, stopwatch_start, stopwatch_pause, stopwatch_reset, stopwatch_status, read_text_file, write_text_file, list_workspace_files, edit_text_file, *DOCUMENT_TOOLS, run_python, github_repo_info, github_read_file, *TASK_TOOLS, request_approval, list_approvals],
-    "manager": [get_current_utc_time, *LOCAL_UTILITY_TOOLS, remember, recall_memory, list_memories, *TASK_TOOLS, supabase_select, supabase_insert, request_approval, list_approvals],
-    "github": [github_repo_info, github_read_file, read_text_file, write_text_file, list_workspace_files, *TASK_TOOLS, request_approval, list_approvals],
+    "general": [get_current_utc_time, *LOCAL_UTILITY_TOOLS, *PRODUCTIVITY_TOOLS, search_web, browser_read_page, http_get, read_text_file, write_text_file, list_workspace_files, edit_text_file, *DOCUMENT_TOOLS, run_python, remember, recall_memory, list_memories, *TASK_TOOLS, supabase_select, supabase_insert, request_approval, list_approvals],
+    "research": [get_current_utc_time, weather_lookup, calculate, convert_unit, save_note, list_notes, read_note, search_web, browser_read_page, http_get, read_text_file, write_text_file, list_workspace_files, *DOCUMENT_TOOLS, remember, recall_memory, list_memories, *TASK_TOOLS],
+    "coding": [get_current_utc_time, set_timer, list_timers, stopwatch_start, stopwatch_pause, stopwatch_reset, stopwatch_status, calculate, convert_unit, system_status, read_text_file, write_text_file, list_workspace_files, edit_text_file, *DOCUMENT_TOOLS, run_python, github_repo_info, github_read_file, *TASK_TOOLS, request_approval, list_approvals],
+    "manager": [get_current_utc_time, *LOCAL_UTILITY_TOOLS, *PRODUCTIVITY_TOOLS, remember, recall_memory, list_memories, *TASK_TOOLS, supabase_select, supabase_insert, request_approval, list_approvals],
+    "github": [github_repo_info, github_read_file, read_text_file, write_text_file, list_workspace_files, system_status, *TASK_TOOLS, request_approval, list_approvals],
 }
 
 
