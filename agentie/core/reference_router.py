@@ -63,6 +63,7 @@ def _best_saved_memory(query):
 
 def _direct_memory_query(message):
     text=' '.join(message.strip().split());low=text.lower().strip(' .?!')
+    if re.match(r"^(?:please\s+)?remember\b",low):return None
     query=None
     patterns=[
         r"^(?:what(?:'s| is| was)|tell me)\s+my\s+(.+)$",
@@ -80,8 +81,7 @@ def _direct_memory_query(message):
         else:query=m.group(1).strip()
         break
     if query is None:
-        # Broad but clearly memory-oriented paraphrases only; ordinary questions remain untouched.
-        if re.search(r"\b(?:remember|memory|told you earlier|told you before|said earlier|said before)\b",low):query=low
+        if re.search(r"\b(?:memory|told you earlier|told you before|said earlier|said before)\b",low):query=low
         else:return None
     aliases=[]
     if query in {'project','project name'}:aliases=['project codename','project name','project']
@@ -179,10 +179,7 @@ def try_active_reference(session_id,message):
         if not tid:return None
         if duration and ref and (change or add):
             requested=_seconds(duration)
-            if add:
-                # Add to the configured timer duration, not to whatever milliseconds happen to remain.
-                # This makes 15s + 10s deterministically become a 25s timer and keeps the same timer id.
-                requested+=float(card.get('duration_seconds') or 0)
+            if add:requested+=float(card.get('duration_seconds') or 0)
             r=local_utils._restart_timer(tid,requested)
             if not r:return None
             nc=dict(card);nc.update({'type':typ,'id':tid,'status':r.get('status','running'),'duration_seconds':requested,'due_at':r.get('due_at')});set_context(session_id,'active_object',{'type':typ,'card':nc});p=int(requested) if float(requested).is_integer() else round(requested,1);return {'message':f"{'Timer' if typ=='timer' else 'Alarm'} updated to {p} seconds.",'card':nc,'routed_by':'active_reference'}
