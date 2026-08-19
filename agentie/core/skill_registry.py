@@ -54,7 +54,7 @@ def route_skill_command(message:str)->dict[str,Any]|None:
     # Explicit web search is deterministic and does not need an LLM decision.
     # Deep search/research is intentionally excluded here so it can flow into
     # Agentie's durable background deep-research job engine.
-    web=re.match(r"^(?:please\s+)?(?:search the web|web search|search online|look up online|find online)\s+(?:for|about|on)?\s*(.+)$",text,re.I)
+    web=re.match(r"^(?:please\s+)?(?:search(?:\s+the)?\s+web|web search|search online|look up online|find online|look on the web)\s+(?:for|about|on)?\s*(.+)$",text,re.I)
     if web and skill_enabled("research"):
         query=web.group(1).strip(" .?!")
         try:sources=search_sources(query,8)
