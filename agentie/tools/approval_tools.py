@@ -33,12 +33,25 @@ def approval_is_granted(action: str, approval_id: str | None = None) -> bool:
     return any(
         item.get("action") == action
         and item.get("status") == "approved"
+        and not item.get("consumed_at")
         and (approval_id is None or item.get("id") == approval_id)
         for item in _load()
     )
 
 
-def create_approval(action: str, reason: str):
+def consume_approval(action: str) -> bool:
+    """Consume one previously approved action exactly once."""
+    items = _load()
+    for item in items:
+        if item.get("action") == action and item.get("status") == "approved" and not item.get("consumed_at"):
+            item["consumed_at"] = datetime.now(timezone.utc).isoformat()
+            item["status"] = "consumed"
+            _save(items)
+            return True
+    return False
+
+
+def create_approval(action: str, reason: str, metadata: dict | None = None):
     items = _load()
     for item in items:
         if item.get("action") == action and item.get("status") == "pending":
@@ -50,6 +63,8 @@ def create_approval(action: str, reason: str):
         "status": "pending",
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
+    if metadata:
+        item["metadata"] = metadata
     items.append(item)
     _save(items)
     return item
