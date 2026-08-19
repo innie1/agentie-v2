@@ -4,14 +4,15 @@ import uvicorn
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
+from agentie.core.local_router import try_local_command
 from agentie.core.runner import run_agent
 from agentie.tools.approval_tools import resolve_approval
 
 
 app = FastAPI(
     title="Agentie API",
-    version="0.3.0",
-    description="Python-first Agentie agent runtime",
+    version="0.4.0",
+    description="Python-first Agentie agent runtime with local-first utility routing",
 )
 
 
@@ -23,6 +24,7 @@ class AgentRequest(BaseModel):
 class AgentResponse(BaseModel):
     result: str
     agent_type: str
+    routed_by: str
 
 
 class ApprovalDecision(BaseModel):
@@ -31,14 +33,26 @@ class ApprovalDecision(BaseModel):
 
 @app.get("/health")
 async def health() -> dict[str, str]:
-    return {"status": "ok", "service": "agentie-v2", "version": "0.3.0"}
+    return {"status": "ok", "service": "agentie-v2", "version": "0.4.0"}
 
 
 @app.post("/agent/run", response_model=AgentResponse)
 async def agent_run(request: AgentRequest) -> AgentResponse:
     try:
+        local_result = try_local_command(request.message)
+        if local_result is not None:
+            return AgentResponse(
+                result=local_result,
+                agent_type=request.agent_type,
+                routed_by="local",
+            )
+
         result = await run_agent(request.message, request.agent_type)
-        return AgentResponse(result=result, agent_type=request.agent_type)
+        return AgentResponse(
+            result=result,
+            agent_type=request.agent_type,
+            routed_by="llm",
+        )
     except RuntimeError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
     except Exception as exc:
