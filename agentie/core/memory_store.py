@@ -1,6 +1,7 @@
 import json
 import sqlite3
 import threading
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -9,6 +10,7 @@ WORKSPACE = Path.cwd() / "workspace"
 DB_PATH = WORKSPACE / "agentie_memory.sqlite3"
 _LOCK = threading.Lock()
 _SEMANTIC_BOOTSTRAPPED = False
+_SEMANTIC_POOL = ThreadPoolExecutor(max_workers=1, thread_name_prefix="agentie-semantic")
 
 
 def _connect() -> sqlite3.Connection:
@@ -39,26 +41,37 @@ def init_db() -> None:
         """)
 
 
-def _bootstrap_semantic() -> None:
-    global _SEMANTIC_BOOTSTRAPPED
-    if _SEMANTIC_BOOTSTRAPPED: return
-    _SEMANTIC_BOOTSTRAPPED = True
+def _run_semantic_safely(func_name: str, kwargs: dict[str, Any]) -> None:
     try:
-        from agentie.core.semantic_memory import backfill_from_memory_db
-        backfill_from_memory_db(DB_PATH)
+        from agentie.core import semantic_memory
+        getattr(semantic_memory, func_name)(**kwargs)
+    except Exception:
+        # Semantic memory is an enhancement. It must never block/break core local utilities.
+        pass
+
+
+def _semantic_async(func_name: str, **kwargs: Any) -> None:
+    try:
+        _SEMANTIC_POOL.submit(_run_semantic_safely, func_name, kwargs)
     except Exception:
         pass
+
+
+def _bootstrap_semantic() -> None:
+    global _SEMANTIC_BOOTSTRAPPED
+    if _SEMANTIC_BOOTSTRAPPED:
+        return
+    _SEMANTIC_BOOTSTRAPPED = True
+    # Backfill can initialize/download a local embedding model, so never do it on the request path.
+    _semantic_async("backfill_from_memory_db", memory_db=DB_PATH)
 
 
 def add_message(session_id: str, role: str, content: str, metadata: dict[str, Any] | None = None) -> None:
     init_db(); now=datetime.now(timezone.utc).isoformat(timespec="seconds")
     with _LOCK, _connect() as conn:
         cur=conn.execute("INSERT INTO messages(session_id,role,content,metadata_json,created_at) VALUES(?,?,?,?,?)",(session_id,role,content,json.dumps(metadata or {},ensure_ascii=False),now)); source_id=str(cur.lastrowid)
-    try:
-        from agentie.core.semantic_memory import upsert_item
-        upsert_item(kind="message",source_id=source_id,text=content,session_id=session_id,role=role,metadata=metadata)
-    except Exception:
-        pass
+    # Critical: local actions (time, timer, calculator, etc.) return immediately. Embedding happens later.
+    _semantic_async("upsert_item", kind="message", source_id=source_id, text=content, session_id=session_id, role=role, metadata=metadata)
 
 
 def recent_messages(session_id: str, limit: int = 12, max_chars: int = 14000) -> list[dict[str, Any]]:
@@ -86,11 +99,7 @@ def set_memory(scope: str, key: str, value: str, metadata: dict[str, Any] | None
         conn.execute("""INSERT INTO memories(scope,key,value,metadata_json,updated_at) VALUES(?,?,?,?,?)
                         ON CONFLICT(scope,key) DO UPDATE SET value=excluded.value,metadata_json=excluded.metadata_json,updated_at=excluded.updated_at""",(scope,key,value,json.dumps(metadata or {},ensure_ascii=False),now))
         row=conn.execute("SELECT id FROM memories WHERE scope=? AND key=?",(scope,key)).fetchone(); source_id=str(row["id"])
-    try:
-        from agentie.core.semantic_memory import upsert_item
-        upsert_item(kind="memory",source_id=source_id,text=f"{key}: {value}",scope=scope,role="memory",metadata=metadata)
-    except Exception:
-        pass
+    _semantic_async("upsert_item", kind="memory", source_id=source_id, text=f"{key}: {value}", scope=scope, role="memory", metadata=metadata)
 
 
 def get_memory(scope: str, key: str) -> str | None:
