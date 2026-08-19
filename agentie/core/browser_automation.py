@@ -105,6 +105,8 @@ def _strip_open_prefix(text: str, url: str | None) -> str:
     if url:
         value = value.replace(url, " ", 1)
     value = re.sub(r"^\s*(?:please\s+)?(?:open|visit|go to|navigate to|browse)\s+", "", value, flags=re.I)
+    # Removing the URL can leave a leading connector, e.g. "Open URL then scroll" -> "then scroll".
+    value = re.sub(r"^\s*(?:(?:and\s+)?then)\s+", "", value, flags=re.I)
     return value.strip(" ,.;:-")
 
 
