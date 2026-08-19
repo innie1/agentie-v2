@@ -16,7 +16,7 @@
     .mcp-main{min-width:0;flex:1}.mcp-name{font-size:13px;font-weight:650}.mcp-meta{font-size:11px;color:var(--muted);margin-top:2px;line-height:1.35;overflow:hidden;text-overflow:ellipsis}.mcp-cap{font-size:10px;color:var(--muted);margin-top:4px}
     .mcp-inspect,.mcp-add{border:1px solid var(--border);background:var(--panel);color:var(--text);padding:5px 8px;border-radius:8px;font-size:11px;cursor:pointer;flex:none}.mcp-add{background:var(--accent);color:var(--accent-text);border-color:var(--accent)}.mcp-add[disabled]{opacity:.5;cursor:default}
     .plugins-foot{display:flex;justify-content:space-between;align-items:center;margin-top:8px;font-size:11px;color:var(--muted)}.plugins-refresh{border:0;background:transparent;color:var(--muted);cursor:pointer;padding:3px}
-    .mcp-approval-detail{margin-top:9px;padding:9px;border-radius:10px;background:var(--soft);font-size:12px;line-height:1.45}.mcp-approval-actions{display:flex;gap:7px;margin-top:10px}.mcp-approval-actions button{border:1px solid var(--border);background:var(--panel);color:var(--text);padding:6px 10px;border-radius:9px;cursor:pointer}.mcp-approval-actions button:first-child{background:var(--accent);color:var(--accent-text);border-color:var(--accent)}
+    .mcp-approval-detail{margin-top:9px;padding:9px;border-radius:10px;background:var(--soft);font-size:12px;line-height:1.45}.mcp-approval-actions{display:flex;gap:7px;flex-wrap:wrap;margin-top:10px}.mcp-approval-actions button{border:1px solid var(--border);background:var(--panel);color:var(--text);padding:6px 10px;border-radius:9px;cursor:pointer}.mcp-approval-actions .approve-once{background:var(--accent);color:var(--accent-text);border-color:var(--accent)}.mcp-approval-actions .always-allow{font-weight:600}.mcp-approval-note{font-size:10px;color:var(--muted);margin-top:7px;line-height:1.35}
     @media(max-width:760px){.plugins-panel{left:12px;right:12px;bottom:12px;width:auto}.plugins-launch{display:none}}
   `;
   document.head.appendChild(style);
@@ -55,12 +55,21 @@
       const title=document.createElement('div');title.className='card-title';title.textContent='🛡 MCP approval';el.appendChild(title);
       if(message){const top=document.createElement('div');top.className='card-meta';top.textContent=message;el.appendChild(top)}
       const detail=document.createElement('div');detail.className='mcp-approval-detail';detail.textContent=`${card.server} / ${card.tool}\n${JSON.stringify(card.arguments||{},null,2)}`;detail.style.whiteSpace='pre-wrap';el.appendChild(detail);
-      const actions=document.createElement('div');actions.className='mcp-approval-actions';const approve=document.createElement('button'),deny=document.createElement('button');approve.textContent='Approve';deny.textContent='Deny';actions.append(approve,deny);el.appendChild(actions);
-      async function resolve(approved){
-        approve.disabled=true;deny.disabled=true;
-        try{const r=await fetch(`/approvals/${card.approval.id}/resolve`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({approved})});if(!r.ok)throw new Error('Could not resolve approval');title.textContent=approved?'✓ MCP approved':'MCP denied';actions.remove();if(approved&&card.command)setTimeout(()=>sendChat(card.command),80)}catch(error){approve.disabled=false;deny.disabled=false;const meta=document.createElement('div');meta.className='card-meta';meta.textContent=error.message||'Approval failed.';el.appendChild(meta)}
+      const actions=document.createElement('div');actions.className='mcp-approval-actions';
+      const approveOnce=document.createElement('button'),always=document.createElement('button'),deny=document.createElement('button');
+      approveOnce.className='approve-once';approveOnce.textContent='Approve once';always.className='always-allow';always.textContent='Always allow this tool';deny.textContent='Deny';actions.append(approveOnce,always,deny);el.appendChild(actions);
+      const note=document.createElement('div');note.className='mcp-approval-note';note.textContent='Always allow applies only to this MCP server and this tool. Read-only MCP tools run automatically.';el.appendChild(note);
+      async function resolve(mode){
+        approveOnce.disabled=true;always.disabled=true;deny.disabled=true;
+        const approved=mode!=='deny',suffix=mode==='always'?':always':'';
+        try{
+          const r=await fetch(`/approvals/${card.approval.id}${suffix}/resolve`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({approved})});
+          if(!r.ok)throw new Error('Could not resolve approval');
+          title.textContent=mode==='always'?'✓ MCP tool always allowed':approved?'✓ MCP approved once':'MCP denied';actions.remove();note.remove();
+          if(approved&&card.command)setTimeout(()=>sendChat(card.command),80);
+        }catch(error){approveOnce.disabled=false;always.disabled=false;deny.disabled=false;const meta=document.createElement('div');meta.className='card-meta';meta.textContent=error.message||'Approval failed.';el.appendChild(meta)}
       }
-      approve.onclick=()=>resolve(true);deny.onclick=()=>resolve(false);return wrap;
+      approveOnce.onclick=()=>resolve('once');always.onclick=()=>resolve('always');deny.onclick=()=>resolve('deny');return wrap;
     };
   }
 
