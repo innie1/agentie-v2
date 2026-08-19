@@ -8,6 +8,7 @@ from pathlib import Path
 import yaml
 
 from agentie.core.collection_store import route_collection_command
+from agentie.core.memory_store import get_memory, list_memories, search_memories, set_memory
 from agentie.core.role_store import route_role_command
 from agentie.core.routine_engine import route_routine_command
 from agentie.core.skill_registry import route_skill_command
@@ -31,23 +32,46 @@ def _looks_like_time_question(lower: str) -> bool:
         else:
             hit=get_close_matches(word,["time","clock"],n=1,cutoff=.78); corrected.append(hit[0] if hit and len(word)>=3 else word)
     bag=set(corrected); return ("time" in bag or "clock" in bag) and bool(bag & {"what","whats","hey","tell","give","show","current","now","please","time","clock"})
-
 def _timer_with_reason(text: str) -> dict | None:
     m=re.search(r"\b(?:set|start|make|give me)\s+(?:a\s+)?timer\s+(?:for\s+)?(\d+(?:\.\d+)?)\s*(seconds?|secs?|sec|s|minutes?|mins?|min|m|hours?|hrs?|hr|h)\b(?:\s+(?:for|to|because|so i can|so that i can)\s+(.+))?$",text,re.I)
     if not m:return None
     value=float(m.group(1)); unit=m.group(2).lower(); seconds=value*(3600 if unit.startswith('h') else 60 if unit.startswith('m') else 1)
     if seconds<=0 or seconds>7*24*3600:return {"message":"Timer must be between 1 second and 7 days.","card":None}
     reason=(m.group(3) or '').strip(' .?!'); item=utilities._create_timer(seconds,reason or "Timer","timer")
-    pretty=int(seconds) if seconds.is_integer() else seconds
-    card={"type":"timer","id":item["id"],"status":item["status"],"duration_seconds":seconds,"due_at":item["due_at"]}
+    pretty=int(seconds) if seconds.is_integer() else seconds;card={"type":"timer","id":item["id"],"status":item["status"],"duration_seconds":seconds,"due_at":item["due_at"]}
     if reason:card["reason"]=reason
     return {"message":f"Timer set for {pretty} seconds"+(f" — {reason}." if reason else "."),"card":card}
+
+def _memory_command(text: str) -> dict | None:
+    lower=text.lower().strip(" .?!")
+    m=re.match(r"^(?:please\s+)?remember\s+(?:that\s+)?my\s+(.+?)\s+is\s+(.+)$",text,re.I)
+    if m:
+        key=m.group(1).strip(' .?!"“”')[:120];value=m.group(2).strip(' .?!"“”')[:4000];set_memory("user",key,value,{"source":"local_chat","pinned":True});return {"message":f"Remembered {key}.","card":{"type":"memory","key":key,"value":value,"scope":"user"}}
+    m=re.match(r"^(?:please\s+)?remember\s+(?:that\s+)?i\s+prefer\s+(.+)$",text,re.I)
+    if m:
+        value=m.group(1).strip(' .?!"“”')[:4000];key=("preference: "+value[:80]).strip();set_memory("user",key,value,{"source":"local_chat","pinned":True});return {"message":"Remembered that preference.","card":{"type":"memory","key":key,"value":value,"scope":"user"}}
+    m=re.match(r"^(?:please\s+)?remember\s+(?:that\s+)?(.+?)\s*=\s*(.+)$",text,re.I)
+    if m:
+        key=m.group(1).strip()[:120];value=m.group(2).strip()[:4000];set_memory("user",key,value,{"source":"local_chat","pinned":True});return {"message":f"Remembered {key}.","card":{"type":"memory","key":key,"value":value,"scope":"user"}}
+    if lower in {"memories","show memories","list memories","what do you remember","what do you remember about me"}:
+        items=list_memories("user",100);return {"message":f"I have {len(items)} saved persistent memory item(s).","card":{"type":"memories","items":[{"key":x['key'],"value":x['value'],"updated_at":x['updated_at']} for x in items]}}
+    q=re.match(r"^(?:search|check|look in)\s+(?:your\s+)?memory(?:\s+for|\s+about)?\s+(.+)$",text,re.I)
+    if not q:q=re.match(r"^(?:what do you remember about|do you remember|recall)\s+(.+)$",text,re.I)
+    if q:
+        query=q.group(1).strip(' .?!');exact=get_memory("user",query)
+        if exact is not None:return {"message":f"I remember {query}: {exact}","card":{"type":"memory","key":query,"value":exact,"scope":"user"}}
+        result=search_memories(query,scope="user",limit=6);hits=result.get("hits",[])
+        if not hits:return {"message":"I couldn't find a relevant memory.","card":{"type":"semantic_memory","query":query,"backend":result.get("backend"),"hits":[]}}
+        return {"message":f"I found {len(hits)} relevant memory item(s).","card":{"type":"semantic_memory","query":query,"backend":result.get("backend"),"hits":hits}}
+    return None
 
 def try_advanced_local_command(message: str) -> dict | None:
     text=" ".join(message.strip().split()); lower=text.lower().strip(" .?!")
     for router in (route_routine_command, route_role_command, route_collection_command, route_skill_command):
         result=router(text)
         if result is not None:return result
+    memory=_memory_command(text)
+    if memory is not None:return memory
     if _looks_like_time_question(lower) and "timer" not in lower:
         now=datetime.now().astimezone(); return {"message":f"It is {now.strftime('%H:%M:%S')} on {now.strftime('%Y-%m-%d')}.","card":{"type":"datetime","datetime":now.isoformat(timespec="seconds"),"timezone":str(now.tzinfo)}}
     timer=_timer_with_reason(text)
