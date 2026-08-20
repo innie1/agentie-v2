@@ -5,7 +5,7 @@ from pathlib import Path
 from reportlab.graphics.charts.barcharts import VerticalBarChart
 from reportlab.graphics.shapes import Drawing, String
 from reportlab.lib import colors
-from reportlab.lib.enums import TA_CENTER, TA_LEFT
+from reportlab.lib.enums import TA_LEFT
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import mm
@@ -62,7 +62,7 @@ def create_pdf(content:str,filename:str|None=None,creator:str="Agentie",style_hi
                 tbl.setStyle(TableStyle(commands));story.extend([tbl,Spacer(1,8)])
     series=first_numeric_series(content)
     if series:
-        labels,values,label=series;story.extend([Spacer(1,6),Paragraph('Visual summary',h1),KeepTogether(_chart(labels,values,label,style.accent))])
+        labels,values,label=series;story.extend([Spacer(1,6),Paragraph('Visual summary',h1),KeepTogether([_chart(labels,values,label,style.accent)])])
     def page(canvas,_doc):
         canvas.saveState();canvas.setFillColor(_c(style.muted));canvas.setFont('Helvetica',7.5);canvas.drawString(18*mm,8*mm,f'{creator} · Agentie');canvas.drawRightString(A4[0]-18*mm,8*mm,f'Page {_doc.page}');canvas.restoreState()
     doc.build(story,onFirstPage=page,onLaterPages=page);card=inspect_file(path);card.update({'document_style':style.id,'creator':creator});return card
