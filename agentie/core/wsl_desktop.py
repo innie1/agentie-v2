@@ -4,6 +4,7 @@ import os
 import shutil
 import socket
 import subprocess
+import time
 import urllib.request
 from typing import Any
 
@@ -13,7 +14,9 @@ CDP_URL = "http://127.0.0.1:9222"
 
 
 def _windows_wsl() -> str | None:
-    return shutil.which("wsl.exe") or shutil.which("wsl") if os.name == "nt" else None
+    if os.name != "nt":
+        return None
+    return shutil.which("wsl.exe") or shutil.which("wsl")
 
 
 def _port_open(port: int, timeout: float = 0.25) -> bool:
@@ -47,25 +50,30 @@ def status() -> dict[str, Any]:
     }
 
 
-def _run_wsl(script: str, timeout: int = 25) -> subprocess.CompletedProcess[str]:
+def _run_wsl(script: str, timeout: int = 25, *, root: bool = False) -> subprocess.CompletedProcess[str]:
     executable = _windows_wsl()
     if not executable:
         raise RuntimeError("The real Agentie Computer requires Windows with WSL2.")
-    return subprocess.run(
-        [executable, "-d", DISTRO, "--", "bash", "-lc", script],
-        capture_output=True,
-        text=True,
-        timeout=timeout,
-        shell=False,
-    )
+    args = [executable, "-d", DISTRO]
+    if root:
+        args += ["-u", "root"]
+    args += ["--", "bash", "-lc", script]
+    return subprocess.run(args, capture_output=True, text=True, timeout=timeout, shell=False)
 
 
-def ensure_started() -> dict[str, Any]:
-    current = status()
-    if current["novnc_ready"] and current["chrome_ready"]:
-        return {**current, "message": "Agentie Computer is ready."}
+def _bootstrap_packages() -> None:
+    script = "DEBIAN_FRONTEND=noninteractive apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y tigervnc-standalone-server tigervnc-tools novnc websockify xfce4 dbus-x11"
+    try:
+        proc = _run_wsl(script, timeout=300, root=True)
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError("The one-time Agentie desktop package installation timed out.") from exc
+    if proc.returncode != 0:
+        output = ((proc.stdout or "") + "\n" + (proc.stderr or "")).strip()
+        raise RuntimeError("Could not install the Agentie desktop bridge packages: " + (output[-1400:] or f"exit {proc.returncode}"))
 
-    script = r'''
+
+def _start_script() -> str:
+    return r'''
 set -e
 missing=""
 command -v tigervncserver >/dev/null 2>&1 || missing="$missing tigervncserver"
@@ -99,38 +107,50 @@ if ! pgrep -f 'google-chrome.*\.agentie-chrome' >/dev/null 2>&1; then
     --no-first-run --no-default-browser-check \
     about:blank >/tmp/agentie-chrome.log 2>&1 </dev/null &
 fi
-for i in $(seq 1 40); do
+for i in $(seq 1 50); do
   if (echo >/dev/tcp/127.0.0.1/6080) >/dev/null 2>&1 && (echo >/dev/tcp/127.0.0.1/9222) >/dev/null 2>&1; then
     echo '__READY__'
     exit 0
   fi
-  sleep 0.25
+  sleep 0.2
 done
 echo '__STARTED__'
 '''
+
+
+def ensure_started() -> dict[str, Any]:
+    current = status()
+    if current["novnc_ready"] and current["chrome_ready"]:
+        return {**current, "message": "Agentie Computer is ready."}
+
     try:
-        proc = _run_wsl(script, timeout=30)
+        proc = _run_wsl(_start_script(), timeout=30)
     except subprocess.TimeoutExpired as exc:
         raise RuntimeError("The Agentie Computer took too long to start.") from exc
 
     output = ((proc.stdout or "") + "\n" + (proc.stderr or "")).strip()
     if proc.returncode == 42 or "__MISSING__" in output:
+        # WSL can launch the distro as root without asking for the Linux user's
+        # sudo password. This is a one-time bootstrap; later starts are fast.
+        _bootstrap_packages()
+        proc = _run_wsl(_start_script(), timeout=35)
+        output = ((proc.stdout or "") + "\n" + (proc.stderr or "")).strip()
+
+    if proc.returncode == 42 or "__MISSING__" in output:
         return {
             **status(),
             "setup_required": True,
-            "message": "One-time WSL desktop packages are still required.",
-            "setup_command": "sudo apt update && sudo apt install -y tigervnc-standalone-server tigervnc-tools novnc websockify",
+            "message": "Google Chrome or a required desktop component is still missing inside Ubuntu.",
+            "setup_command": "google-chrome --version",
             "details": output[-1000:],
         }
     if proc.returncode != 0:
         raise RuntimeError("Could not start the Agentie WSL desktop: " + (output[-1200:] or f"exit {proc.returncode}"))
 
-    # WSL localhost forwarding can take a moment to become visible to Windows.
-    for _ in range(30):
+    for _ in range(40):
         current = status()
-        if current["novnc_ready"]:
+        if current["novnc_ready"] and current["chrome_ready"]:
             return {**current, "message": "Agentie Computer started."}
-        import time
         time.sleep(0.2)
     return {**status(), "message": "The WSL desktop started, but its local display bridge is not reachable yet."}
 
