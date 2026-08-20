@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from agentie.core.agent_registry import create_agent, delete_agent, get_agent, hierarchy, list_agents, update_agent_manager
+from agentie.core.team_orchestrator import route_team_command
 from agentie.tools.approval_tools import approval_is_granted, create_approval
 
 WORKSPACE=Path.cwd()/"workspace"
@@ -23,7 +24,6 @@ ROLE_PRESETS={
     "coder":{"base":"coding","instruction":"Act as a software engineer. Inspect, implement, test, and explain code changes carefully."},
     "github reviewer":{"base":"github","instruction":"Act as a GitHub reviewer. Inspect repository state, changes, issues, and implementation risks."},
 }
-
 
 def _load()->dict[str,Any]:
     try:return json.loads(ROLES.read_text(encoding="utf-8")) if ROLES.exists() else {"assignments":{},"custom_roles":{}}
@@ -73,6 +73,8 @@ def _agent_creation_command(text:str)->dict[str,Any]|None:
 
 def route_role_command(message:str)->dict[str,Any]|None:
     text=" ".join(message.strip().split());lower=text.lower().strip(" .?!")
+    team=route_team_command(text)
+    if team is not None:return team
     created=_agent_creation_command(text)
     if created is not None:return created
     delete_match=re.match(r"^(?:please\s+)?(?:delete|remove)\s+agent\s+(.+?)[.!?]?$",text,re.I)
@@ -82,7 +84,7 @@ def route_role_command(message:str)->dict[str,Any]|None:
         action=f"delete_agent:{target['id']}"
         if not approval_is_granted(action):
             approval=create_approval(action,f"Permanently delete {target['name']} and all of this agent's private memories, chats, semantic shards and agent-owned data.",{"kind":"agent_delete","agent_id":target["id"],"agent_name":target["name"]})
-            return {"message":f"Deleting {target['name']} is permanent. Approve the deletion, then send “Delete agent {target['name']}” again.","card":{"type":"approvals","items":[approval]}}
+            return {"message":f"Deleting {target['name']} is permanent. Approve the deletion to continue.","card":{"type":"approvals","items":[approval]}}
         result=delete_agent(target["id"]);p=result["purged"]
         return {"message":f"Deleted {target['name']} permanently, including {p.get('memories',0)} memories, {p.get('messages',0)} chat messages and {p.get('semantic_items',0)} semantic memory items.","card":{"type":"agent_deleted","id":target["id"],"name":target["name"],"purged":p}}
     if lower in {"agents","show agents","list agents","show my agents","list my agents","agent directory","show agent directory"}:
