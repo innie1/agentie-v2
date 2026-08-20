@@ -3,7 +3,7 @@ import re
 from difflib import get_close_matches
 from typing import Any
 from agentie.core.agent_prompt import get_instruction_profile,learn_from_user_message
-from agentie.core.memory_store import latest_assistant_text,recent_messages,set_context
+from agentie.core.memory_store import get_context,latest_assistant_text,recent_messages,set_context
 
 _ACKS={
     "got it":"Got it.","understood":"Understood.","okay":"Okay.","ok":"Okay.","sure":"Sure.",
@@ -67,14 +67,42 @@ def _shorten(text,max_chars=180):
     if out:return " ".join(out)[:max_chars].rstrip()
     return clean[:max_chars-3].rstrip()+"..."
 
+def _failed_turn_is_latest(session_id):
+    failed=get_context(session_id,"last_provider_failure",None)
+    if not isinstance(failed,dict) or not failed.get("user_message"):return False
+    history=recent_messages(session_id,limit=4,max_chars=4000)
+    if not history:return False
+    last=history[-1]
+    return last.get("role")=="user" and str(last.get("content") or "").strip()==str(failed.get("user_message") or "").strip()
+
+def _active_team_followup(agent,norm,session_id):
+    if not re.fullmatch(r"(?:do that|do it|go ahead|go ahead with that|proceed with that|continue|continue with that|go on|what happened|what is happening|how is that going|check that|status of that)",norm):return None
+    job_id=str(get_context(session_id,"active_team_job_id","") or "")
+    if not job_id:return None
+    try:
+        from agentie.core.team_orchestrator import get_team_job,team_job_card
+        job=get_team_job(job_id)
+    except Exception:return None
+    if not job:return None
+    status=str(job.get("status") or "unknown");names=", ".join(job.get("agent_names") or []) or "the delegated agent";task=str(job.get("task") or get_context(session_id,"active_team_job_task","") or "the task")
+    if status in {"queued","working"}:msg=f"That is already in progress with {names}: {task}. Status: {status}."
+    elif status in {"completed","partial"}:msg=f"That handoff is {status}. {names} worked on: {task}."
+    else:msg=f"That handoff is {status}. The task is still saved as {job_id}, so you can inspect or retry it."
+    return _result(agent,msg,role_profile(agent),.99,context_action="active_team_job",card=team_job_card(job))
+
 def _contextual_followup(agent,message,session_id):
     if not session_id:return None
-    norm=_normalized(message);kind=role_profile(agent);latest=latest_assistant_text(session_id,4000)
+    norm=_normalized(message);kind=role_profile(agent)
+    active_team=_active_team_followup(agent,norm,session_id)
+    if active_team is not None:return active_team
+    latest=latest_assistant_text(session_id,4000)
+    shorten_match=re.fullmatch(r"(?:make (?:it|that) (?:shorter|short|concise)|shorter|make it brief|brief version|summarize that briefly)",norm)
+    repeat_match=re.fullmatch(r"(?:repeat that|say that again|repeat it|show that again)",norm)
+    if (shorten_match or repeat_match) and _failed_turn_is_latest(session_id):
+        return _result(agent,"There isn’t a successful answer from that last request to reuse yet. The model call failed, so retry the request when the provider is available.",kind,.99,context_action="failed_previous_turn")
     if not latest:return None
-    if re.fullmatch(r"(?:make (?:it|that) (?:shorter|short|concise)|shorter|make it brief|brief version|summarize that briefly)",norm):
-        return _result(agent,_shorten(latest),kind,.98,context_action="shorten_previous")
-    if re.fullmatch(r"(?:repeat that|say that again|repeat it|show that again)",norm):
-        return _result(agent,latest,kind,.99,context_action="repeat_previous")
+    if shorten_match:return _result(agent,_shorten(latest),kind,.98,context_action="shorten_previous")
+    if repeat_match:return _result(agent,latest,kind,.99,context_action="repeat_previous")
     if re.fullmatch(r"(?:what do you mean|what did you mean|explain that simply)",norm):
         return _result(agent,"In simpler terms: "+_shorten(latest,220),kind,.9,context_action="clarify_previous")
     if re.fullmatch(r"(?:do that|do it|go ahead|go ahead with that|proceed with that|continue with that|the second one|second one|use the second one|the first one|first one|use the first one)",norm):
@@ -119,9 +147,9 @@ def try_npc_response(agent,message,session_id=None):
         hit=get_close_matches(norm,list(_ACKS),n=1,cutoff=.86)
         if hit:return _result(agent,_ACKS[hit[0]],role_profile(agent),.92)
         if re.fullmatch(r"(?:are you|you) (?:there|ready|working)",norm):return _result(agent,"Yes. I’m ready.",role_profile(agent),.99)
-        # "continue" alone is ambiguous: preserve context but let the larger brain
-        # execute the actual continuation instead of pretending locally.
         if re.fullmatch(r"(?:continue|go on|proceed|carry on)",norm) and session_id:
+            active_team=_active_team_followup(agent,norm,session_id)
+            if active_team is not None:return active_team
             history=recent_messages(session_id,limit=5,max_chars=4000)
             if history:
                 context="\n".join(("User" if x["role"]=="user" else "Assistant")+": "+x["content"] for x in history[-4:])
