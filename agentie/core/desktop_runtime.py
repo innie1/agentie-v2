@@ -1,13 +1,13 @@
 from __future__ import annotations
 
 import json
-import os
 import re
-import shlex
-import subprocess
 from pathlib import Path
 from typing import Any
 
+from agentie.core.wsl_bridge import list_files as list_linux_files
+from agentie.core.wsl_bridge import read_text_file as read_linux_text_file
+from agentie.core.wsl_bridge import run_terminal as run_linux_terminal
 from agentie.core.wsl_desktop import ensure_started as ensure_wsl_desktop, status as wsl_status, stop as stop_wsl_desktop
 
 WORKSPACE = Path.cwd() / "workspace"
@@ -59,48 +59,6 @@ def _read_text(name: str) -> dict[str, Any]:
     return {"name": path.name, "binary": False, "size_bytes": path.stat().st_size, "content": text[:200000]}
 
 
-def _terminal(command: str) -> dict[str, Any]:
-    raw = str(command or "").strip()
-    if not raw:
-        return {"command": "", "output": "", "exit_code": 0}
-    if len(raw) > 1000:
-        raise ValueError("Terminal command is too long.")
-    try:
-        parts = shlex.split(raw, posix=os.name != "nt")
-    except ValueError as exc:
-        raise ValueError(f"Could not parse terminal command: {exc}") from exc
-    if not parts:
-        return {"command": raw, "output": "", "exit_code": 0}
-    cmd = parts[0].lower()
-    if cmd in {"pwd", "cd"}:
-        return {"command": raw, "output": str(WORKSPACE.resolve()), "exit_code": 0}
-    if cmd in {"ls", "dir"}:
-        output = "\n".join(("[DIR] " if item["kind"] == "folder" else "      ") + item["name"] for item in _file_items())
-        return {"command": raw, "output": output, "exit_code": 0}
-    if cmd in {"cat", "type"}:
-        if len(parts) < 2:
-            raise ValueError("Provide a workspace filename to read.")
-        item = _read_text(parts[1])
-        return {"command": raw, "output": "Binary file" if item.get("binary") else item.get("content", ""), "exit_code": 0}
-    allowed: list[str] | None = None
-    if cmd == "git" and len(parts) >= 2 and parts[1].lower() in {"status", "log", "diff", "branch", "show", "rev-parse"}:
-        allowed = ["git", *parts[1:]]
-    elif cmd in {"python", "python3", "py"} and parts[1:] in (["--version"], ["-V"]):
-        allowed = [parts[0], *parts[1:]]
-    elif cmd in {"pip", "pip3"} and len(parts) >= 2 and parts[1].lower() in {"list", "show", "freeze"}:
-        allowed = [parts[0], *parts[1:]]
-    if allowed is None:
-        raise ValueError("That command is not enabled in the Agentie desktop terminal yet. Use the real WSL Terminal app for full Linux commands.")
-    try:
-        proc = subprocess.run(allowed, cwd=str(Path.cwd()), capture_output=True, text=True, timeout=12, shell=False)
-    except FileNotFoundError:
-        raise ValueError(f"Command not found: {allowed[0]}")
-    except subprocess.TimeoutExpired:
-        raise ValueError("Terminal command timed out after 12 seconds.")
-    output = ((proc.stdout or "") + ("\n" + proc.stderr if proc.stderr else "")).strip()
-    return {"command": raw, "output": output[:50000], "exit_code": proc.returncode}
-
-
 def desktop_card(app: str = "home", **data: Any) -> dict[str, Any]:
     return {"type": "desktop_view", "app": app, **data}
 
@@ -117,6 +75,8 @@ def _natural_command(text: str) -> str | None:
         return "status"
     if re.fullmatch(r"(?:open|show|view|look at) (?:the )?(?:workspace )?files", low) or low in {"files", "file manager", "open file manager", "open computer files"}:
         return "files"
+    if low in {"linux files", "show linux files", "open linux files", "show computer linux files"}:
+        return "linux files"
     if re.fullmatch(r"(?:open|show|view) computer notes", low):
         return "notes"
     if re.fullmatch(r"(?:open|show|view) computer tasks", low):
@@ -125,9 +85,12 @@ def _natural_command(text: str) -> str | None:
         return "plugins"
     if low in {"open terminal", "show terminal", "terminal", "open the terminal", "open computer terminal"}:
         return "terminal"
-    m = re.match(r"^(?:run|execute)\s+(.+?)\s+(?:in|using)\s+(?:the\s+)?terminal$", text, re.I)
+    m = re.match(r"^(?:run|execute)\s+(.+?)\s+(?:in|using)\s+(?:the\s+)?(?:linux\s+)?terminal$", text, re.I)
     if m:
         return "terminal " + m.group(1).strip()
+    m = re.match(r"^(?:read|open|show)\s+(?:the\s+)?linux file\s+(.+)$", text, re.I)
+    if m:
+        return "linux file " + m.group(1).strip()
     return None
 
 
@@ -137,6 +100,7 @@ def _real_desktop_card(info: dict[str, Any], app: str = "desktop") -> dict[str, 
         mode="wsl",
         running=bool(info.get("running")),
         novnc_url=info.get("novnc_url"),
+        kasmvnc_url=info.get("kasmvnc_url") or info.get("novnc_url"),
         chrome_ready=bool(info.get("chrome_ready")),
         setup_required=bool(info.get("setup_required")),
         setup_command=info.get("setup_command"),
@@ -169,10 +133,19 @@ def route_desktop_request(message: str) -> dict[str, Any] | None:
             info = stop_wsl_desktop()
             return {"message": str(info.get("message") or "Agentie Computer stopped."), "card": _real_desktop_card(info, "stopped")}
         if low in {"files", "open files", "show files"}:
-            return {"message": "Workspace files.", "card": desktop_card("files", items=_file_items())}
+            return {"message": "Agentie host workspace files.", "card": desktop_card("files", items=_file_items(), workspace="host")}
         if low.startswith("open file "):
             name = command[10:].strip(); item = _read_text(name)
-            return {"message": f"Opened {item['name']}.", "card": desktop_card("file", file=item)}
+            return {"message": f"Opened {item['name']}.", "card": desktop_card("file", file=item, workspace="host")}
+        if low in {"linux files", "open linux files", "show linux files"}:
+            result = list_linux_files()
+            return {"message": "Linux workspace files.", "card": desktop_card("files", items=result["items"], workspace=result["workspace"], path=result["path"], mode="wsl")}
+        if low.startswith("linux files "):
+            result = list_linux_files(command[len("linux files "):].strip())
+            return {"message": "Linux workspace files.", "card": desktop_card("files", items=result["items"], workspace=result["workspace"], path=result["path"], mode="wsl")}
+        if low.startswith("linux file "):
+            item = read_linux_text_file(command[len("linux file "):].strip())
+            return {"message": f"Opened {item['path']} from Linux.", "card": desktop_card("file", file=item, workspace=item["workspace"], mode="wsl")}
         if low in {"notes", "open notes"}:
             return {"message": "Notes.", "card": desktop_card("notes", items=_read_json("notes.json", []))}
         if low in {"tasks", "open tasks"}:
@@ -180,13 +153,14 @@ def route_desktop_request(message: str) -> dict[str, Any] | None:
         if low in {"plugins", "open plugins"}:
             return {"message": "Plugins.", "card": desktop_card("plugins", items=_read_json("mcp_servers.json", []))}
         if low == "terminal":
-            # Starting the computer here means the user can immediately click the
-            # real XFCE terminal rather than being trapped in a fake terminal.
             info = ensure_wsl_desktop()
             return {"message": "Agentie Computer terminal is available on the desktop.", "card": _real_desktop_card(info)}
         if low.startswith("terminal "):
-            result = _terminal(command[9:])
-            return {"message": "Terminal command completed.", "card": desktop_card("terminal", terminal=result)}
+            result = run_linux_terminal(command[9:])
+            return {"message": f"Linux terminal command exited with code {result['exit_code']}.", "card": desktop_card("terminal", terminal=result, mode="wsl")}
+    except FileNotFoundError as exc:
+        message = f"Linux file or folder not found: {exc}"
+        return {"message": message, "card": desktop_card("error", error=message)}
     except (ValueError, RuntimeError) as exc:
         return {"message": str(exc), "card": desktop_card("error", error=str(exc))}
     return {"message": "Unknown desktop command.", "card": desktop_card("error", error="Unknown desktop command")}
