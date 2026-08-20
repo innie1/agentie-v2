@@ -42,15 +42,7 @@ def status() -> dict[str, Any]:
     supported = bool(_windows_wsl())
     novnc = _port_open(6080)
     cdp = _http_ready(CDP_URL + "/json/version")
-    return {
-        "supported": supported,
-        "running": novnc,
-        "novnc_ready": novnc,
-        "chrome_ready": cdp,
-        "novnc_url": NOVNC_URL if novnc else None,
-        "cdp_url": CDP_URL if cdp else None,
-        "distro": DISTRO,
-    }
+    return {"supported": supported, "running": novnc, "novnc_ready": novnc, "chrome_ready": cdp, "novnc_url": NOVNC_URL if novnc else None, "cdp_url": CDP_URL if cdp else None, "distro": DISTRO}
 
 
 def _run_wsl(script: str, timeout: int = 25, *, root: bool = False) -> subprocess.CompletedProcess[str]:
@@ -78,95 +70,78 @@ def _bootstrap_packages() -> None:
 
 
 def _prepare_x11_runtime() -> None:
-    """Repair the shared X11 socket directory and stale display :1 state.
-
-    /tmp/.X11-unix is a system-owned shared directory and must be mode 1777.
-    VNC itself still runs as the normal Ubuntu user; root is used only for this
-    filesystem preparation so a previous X server cannot poison future starts.
-    """
+    """Clear only Agentie's stale display state without touching WSLg's read-only X socket mount."""
     script = r'''
-mkdir -p /tmp/.X11-unix
-chown root:root /tmp/.X11-unix
-chmod 1777 /tmp/.X11-unix
-rm -f /tmp/.X1-lock /tmp/.X11-unix/X1
+rm -f /tmp/.X1-lock 2>/dev/null || true
+rm -f "$HOME/.config/tigervnc"/*:1.pid "$HOME/.config/tigervnc"/*:1.log 2>/dev/null || true
 '''
-    proc = _run_wsl(script, timeout=12, root=True)
+    proc = _run_wsl(script, timeout=12)
     if proc.returncode != 0:
         output = ((proc.stdout or "") + "\n" + (proc.stderr or "")).strip()
-        raise RuntimeError("Could not prepare the WSL X11 runtime: " + (output[-1000:] or f"exit {proc.returncode}"))
+        raise RuntimeError("Could not clear stale Agentie display state: " + (output[-1000:] or f"exit {proc.returncode}"))
 
 
 def _start_script() -> str:
     return r'''
 set -u
 missing=""
-command -v tigervncserver >/dev/null 2>&1 || missing="$missing tigervncserver"
+command -v Xtigervnc >/dev/null 2>&1 || missing="$missing Xtigervnc"
 command -v websockify >/dev/null 2>&1 || missing="$missing websockify"
 [ -d /usr/share/novnc ] || missing="$missing novnc"
 command -v startxfce4 >/dev/null 2>&1 || missing="$missing xfce4"
 command -v dbus-launch >/dev/null 2>&1 || missing="$missing dbus-x11"
 command -v google-chrome >/dev/null 2>&1 || missing="$missing google-chrome"
-if [ -n "$missing" ]; then
-  echo "__MISSING__:$missing"
-  exit 42
+if [ -n "$missing" ]; then echo "__MISSING__:$missing"; exit 42; fi
+
+# WSLg owns /tmp/.X11-unix as a read-only mount on current WSL releases.
+# Agentie's X server therefore uses localhost TCP only and never attempts to
+# create /tmp/.X11-unix/X1. -nolisten unix disables the conflicting transport;
+# -listen tcp allows XFCE/Chrome to connect through DISPLAY=127.0.0.1:1.
+pkill -f 'Xtigervnc.*:1' >/dev/null 2>&1 || true
+pkill -f 'websockify.*6080' >/dev/null 2>&1 || true
+pkill -f 'google-chrome.*\\.agentie-chrome' >/dev/null 2>&1 || true
+sleep 0.3
+
+nohup Xtigervnc :1 \
+  -geometry 1440x900 -depth 24 \
+  -localhost yes -SecurityTypes None \
+  -nolisten unix -listen tcp \
+  >/tmp/agentie-vnc.log 2>&1 </dev/null &
+
+for i in $(seq 1 50); do
+  (echo >/dev/tcp/127.0.0.1/5901) >/dev/null 2>&1 && break
+  sleep 0.1
+done
+if ! (echo >/dev/tcp/127.0.0.1/5901) >/dev/null 2>&1; then
+  echo '__VNC_ERROR__'; cat /tmp/agentie-vnc.log 2>/dev/null || true; exit 55
 fi
 
-mkdir -p "$HOME/.config/tigervnc"
-cat > "$HOME/.config/tigervnc/xstartup" <<'EOF'
-#!/bin/sh
-unset SESSION_MANAGER
-unset DBUS_SESSION_BUS_ADDRESS
-exec dbus-launch --exit-with-session startxfce4
-EOF
-chmod +x "$HOME/.config/tigervnc/xstartup"
-
-# Stop only Agentie's own display before starting a fresh one. The root-only
-# stale socket cleanup happens outside this script in _prepare_x11_runtime().
-tigervncserver -kill :1 >/dev/null 2>&1 || true
-tigervncserver -list -cleanstale >/dev/null 2>&1 || true
-
-if ! pgrep -f 'Xtigervnc.*:1' >/dev/null 2>&1; then
-  if ! tigervncserver :1 -geometry 1440x900 -depth 24 -localhost yes -SecurityTypes None -xstartup "$HOME/.config/tigervnc/xstartup" >/tmp/agentie-vnc-start.log 2>&1; then
-    echo '__VNC_ERROR__'
-    cat /tmp/agentie-vnc-start.log 2>/dev/null || true
-    tail -n 80 "$HOME"/.config/tigervnc/*.log 2>/dev/null || true
-    exit 55
-  fi
+if ! pgrep -f 'xfce4-session.*agentie' >/dev/null 2>&1; then
+  nohup env DISPLAY=127.0.0.1:1 AGENTIE_DESKTOP=1 dbus-launch --exit-with-session startxfce4 >/tmp/agentie-xfce.log 2>&1 </dev/null &
 fi
 
-if ! pgrep -f 'websockify.*6080' >/dev/null 2>&1; then
-  nohup websockify --web=/usr/share/novnc 127.0.0.1:6080 127.0.0.1:5901 >/tmp/agentie-novnc.log 2>&1 </dev/null &
-fi
+nohup websockify --web=/usr/share/novnc 127.0.0.1:6080 127.0.0.1:5901 >/tmp/agentie-novnc.log 2>&1 </dev/null &
 
-if ! pgrep -f 'google-chrome.*\.agentie-chrome' >/dev/null 2>&1; then
-  nohup env DISPLAY=:1 google-chrome \
-    --user-data-dir="$HOME/.agentie-chrome" \
-    --remote-debugging-port=9222 \
-    --remote-debugging-address=127.0.0.1 \
-    --no-first-run --no-default-browser-check \
-    --disable-gpu \
-    about:blank >/tmp/agentie-chrome.log 2>&1 </dev/null &
-fi
+nohup env DISPLAY=127.0.0.1:1 google-chrome \
+  --user-data-dir="$HOME/.agentie-chrome" \
+  --remote-debugging-port=9222 \
+  --remote-debugging-address=127.0.0.1 \
+  --no-first-run --no-default-browser-check --disable-gpu \
+  about:blank >/tmp/agentie-chrome.log 2>&1 </dev/null &
 
-for i in $(seq 1 100); do
-  novnc_ok=0
-  chrome_ok=0
+for i in $(seq 1 120); do
+  novnc_ok=0; chrome_ok=0
   (echo >/dev/tcp/127.0.0.1/6080) >/dev/null 2>&1 && novnc_ok=1
   (echo >/dev/tcp/127.0.0.1/9222) >/dev/null 2>&1 && chrome_ok=1
-  if [ "$novnc_ok" = 1 ] && [ "$chrome_ok" = 1 ]; then
-    echo '__READY__'
-    exit 0
-  fi
+  if [ "$novnc_ok" = 1 ] && [ "$chrome_ok" = 1 ]; then echo '__READY__'; exit 0; fi
   sleep 0.2
 done
 
 echo '__START_TIMEOUT__'
-echo '--- VNC ---'
-cat /tmp/agentie-vnc-start.log 2>/dev/null || true
-echo '--- noVNC ---'
-cat /tmp/agentie-novnc.log 2>/dev/null || true
-echo '--- Chrome ---'
-cat /tmp/agentie-chrome.log 2>/dev/null || true
+echo '--- VNC ---'; cat /tmp/agentie-vnc.log 2>/dev/null || true
+echo '--- XFCE ---'; cat /tmp/agentie-xfce.log 2>/dev/null || true
+echo '--- noVNC ---'; cat /tmp/agentie-novnc.log 2>/dev/null || true
+echo '--- Chrome ---'; cat /tmp/agentie-chrome.log 2>/dev/null || true
 exit 56
 '''
 
@@ -176,32 +151,19 @@ def ensure_started() -> dict[str, Any]:
         current = status()
         if current["novnc_ready"] and current["chrome_ready"]:
             return {**current, "message": "Agentie Computer is ready."}
-
         _prepare_x11_runtime()
         try:
             proc = _run_wsl(_start_script(), timeout=45)
         except subprocess.TimeoutExpired as exc:
             raise RuntimeError("The Agentie Computer took too long to start.") from exc
-
         output = ((proc.stdout or "") + "\n" + (proc.stderr or "")).strip()
         if proc.returncode == 42 or "__MISSING__" in output:
-            _bootstrap_packages()
-            _prepare_x11_runtime()
-            proc = _run_wsl(_start_script(), timeout=45)
+            _bootstrap_packages(); _prepare_x11_runtime(); proc = _run_wsl(_start_script(), timeout=45)
             output = ((proc.stdout or "") + "\n" + (proc.stderr or "")).strip()
-
         if proc.returncode == 42 or "__MISSING__" in output:
-            return {
-                **status(),
-                "setup_required": True,
-                "message": "Google Chrome or a required desktop component is still missing inside Ubuntu.",
-                "setup_command": "google-chrome --version",
-                "details": output[-1000:],
-            }
+            return {**status(), "setup_required": True, "message": "Google Chrome or a required desktop component is still missing inside Ubuntu.", "setup_command": "google-chrome --version", "details": output[-1000:]}
         if proc.returncode != 0:
-            detail = output[-2400:] or f"exit {proc.returncode}"
-            raise RuntimeError("Could not start the Agentie WSL desktop: " + detail)
-
+            raise RuntimeError("Could not start the Agentie WSL desktop: " + (output[-3000:] or f"exit {proc.returncode}"))
         for _ in range(50):
             current = status()
             if current["novnc_ready"] and current["chrome_ready"]:
@@ -215,12 +177,12 @@ def stop() -> dict[str, Any]:
         return {**status(), "message": "Agentie Computer is already stopped."}
     script = r'''
 pkill -f 'websockify.*6080' >/dev/null 2>&1 || true
-pkill -f 'google-chrome.*\.agentie-chrome' >/dev/null 2>&1 || true
-tigervncserver -kill :1 >/dev/null 2>&1 || true
+pkill -f 'google-chrome.*\\.agentie-chrome' >/dev/null 2>&1 || true
+pkill -f 'Xtigervnc.*:1' >/dev/null 2>&1 || true
+pkill -f 'xfce4-session.*agentie' >/dev/null 2>&1 || true
 '''
     try:
-        _run_wsl(script, timeout=12)
-        _prepare_x11_runtime()
+        _run_wsl(script, timeout=12); _prepare_x11_runtime()
     except Exception:
         pass
     return {**status(), "running": False, "novnc_ready": False, "chrome_ready": False, "novnc_url": None, "cdp_url": None, "message": "Agentie Computer stopped."}
