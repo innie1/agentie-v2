@@ -6,7 +6,7 @@ from typing import Any
 from agentie.core.agent_registry import get_agent, list_agents
 from agentie.core.team_orchestrator import create_team_job, start_team_job, team_job_card
 
-# Local deterministic specialty routing: no provider/API call is needed to decide a handoff.
+# Local deterministic specialty routing: no external model call is needed to decide a handoff.
 SPECIALTIES={
     "research":{"research","researcher","analyst","market research","competitor","compare sources","investigate","verify","fact check","evidence"},
     "coding":{"cto","developer","coder","engineer","programmer","software","technical","code","bug","debug","github"},
