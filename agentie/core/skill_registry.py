@@ -63,26 +63,38 @@ def create_skill_manifest(skill_id:str,name:str,description:str,agents:list[str]
     item={"id":sid,"name":name[:120],"description":description[:1000],"agents":sorted(set(agents)),"capabilities":sorted(set(capabilities)),"permissions":[],"enabled":True,"version":"1.0","kind":"declarative"};path.write_text(json.dumps(item,indent=2,ensure_ascii=False),encoding="utf-8");return item
 def skills_for_agent(agent_type:str)->list[dict[str,Any]]:return [s for s in list_skills() if s.get("enabled") and (agent_type in (s.get("agents") or []) or "*" in (s.get("agents") or []))]
 
-
 def _run_web_synthesis(query:str)->dict[str,Any]:
     trace_id=current_trace_id()
     def worker():
         if trace_id:set_current_trace(trace_id)
         return asyncio.run(answer_web_search(query,8))
     with ThreadPoolExecutor(max_workers=1,thread_name_prefix="agentie-web") as pool:return pool.submit(worker).result()
-
 def _friendly_synthesis_failure(exc:Exception)->str:
     text=str(exc).lower()
     if "429" in text or "quota" in text or "resource_exhausted" in text or "rate limit" in text:return "I found the web sources, but the AI summary is temporarily unavailable because the model quota was reached. You can still open the sources below."
     return "I found the web sources, but I couldn't generate the AI summary right now. You can still open the sources below."
-
+def _global_access_command(text:str)->dict[str,Any]|None:
+    m=re.match(r"^(?:always allow|allow|grant)\s+(skill|mcp|plugin)\s+(.+?)\s+(?:for|to)\s+(?:all|every)\s+agents?$",text,re.I)
+    revoke=re.match(r"^(?:revoke|remove|stop allowing|disallow)\s+(skill|mcp|plugin)\s+(.+?)\s+(?:for|from)\s+(?:all|every)\s+agents?$",text,re.I)
+    hit=m or revoke
+    if not hit:return None
+    from agentie.core.agent_access import set_global_mcp_access,set_global_skill_access
+    kind=hit.group(1).lower();cap=hit.group(2).strip(' .?!\"“”');allowed=bool(m)
+    try:
+        if kind=="skill":set_global_skill_access(cap,allowed)
+        else:set_global_mcp_access(cap,allowed)
+    except ValueError as exc:return {"message":str(exc),"card":None}
+    verb="available to" if allowed else "no longer globally allowed for"
+    return {"message":f"{cap} is now {verb} all agents. Individual agent blocks still override the global setting.","card":{"type":"global_capability_access","kind":"skill" if kind=="skill" else "mcp","capability_id":cap,"allowed":allowed}}
 def route_skill_command(message:str)->dict[str,Any]|None:
+    text=" ".join(message.strip().split());lower=text.lower().strip(" .?!")
+    access=_global_access_command(text)
+    if access is not None:return access
     external=route_last30days(message)
     if external is not None:return external
     if skill_enabled("code-execution"):
         code_result=route_code_command(message)
         if code_result is not None:return code_result
-    text=" ".join(message.strip().split());lower=text.lower().strip(" .?!")
     web=re.match(r"^(?:please\s+)?(?:search(?:\s+the)?\s+web|web search|search online|look up online|find online|look on the web)\s+(?:for|about|on)?\s*(.+)$",text,re.I)
     if web and skill_enabled("research"):
         query=web.group(1).strip(" .?!")
