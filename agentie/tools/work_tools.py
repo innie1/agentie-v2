@@ -5,13 +5,13 @@ import re
 import uuid
 from datetime import datetime
 from pathlib import Path
-from typing import Any
 
 from agents import function_tool
 
 WORKSPACE = Path.cwd() / "workspace"
 CONTACTS_FILE = WORKSPACE / "contacts.json"
 MONITORS_FILE = WORKSPACE / "website_monitors.json"
+CALENDAR_FILE = WORKSPACE / "calendar_events.json"
 
 
 def _load(path: Path, default):
@@ -50,7 +50,7 @@ def plan_task(goal: str) -> str:
     if re.search(r"\b(email|mail|reply|inbox)\b", low):
         add("Prepare the email action", "email plugin", "write")
     if re.search(r"\b(calendar|meeting|appointment|schedule)\b", low):
-        add("Check or prepare calendar action", "calendar plugin", "write")
+        add("Check or prepare calendar action", "calendar", "write")
     if re.search(r"\b(github|repo|repository|issue|pull request|\bpr\b|commit|ci)\b", low):
         add("Inspect or update GitHub", "GitHub", "write" if re.search(r"\b(create|update|fix|commit|merge|close|delete)\b", low) else "read")
     if re.search(r"\b(contact|phone|recipient|person|people)\b", low):
@@ -101,12 +101,42 @@ def find_contacts(query: str) -> str:
     """Search locally saved contacts by name, email, phone, company, or notes."""
     q = _clean(query, 200).casefold()
     items = _load(CONTACTS_FILE, [])
-    if not q:
-        matches = items[:50]
-    else:
-        matches = [x for x in items if q in " ".join(str(x.get(k, "")) for k in ("name", "email", "phone", "company", "notes")).casefold()][:50]
+    matches = items[:50] if not q else [x for x in items if q in " ".join(str(x.get(k, "")) for k in ("name", "email", "phone", "company", "notes")).casefold()][:50]
     safe = [{k: item.get(k, "") for k in ("id", "name", "email", "phone", "company", "notes")} for item in matches]
     return json.dumps(safe, ensure_ascii=False)
+
+
+@function_tool
+def create_calendar_event(title: str, start: str, end: str = "", location: str = "", notes: str = "") -> str:
+    """Create a local Agentie calendar event. Use ISO date/time when possible."""
+    title = _clean(title, 200)
+    start = _clean(start, 80)
+    if not title or not start:
+        return "Calendar events require a title and start time."
+    items = _load(CALENDAR_FILE, [])
+    item = {
+        "id": uuid.uuid4().hex[:10],
+        "title": title,
+        "start": start,
+        "end": _clean(end, 80),
+        "location": _clean(location, 240),
+        "notes": _clean(notes, 600),
+        "status": "scheduled",
+        "created_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+    }
+    items.append(item)
+    _save(CALENDAR_FILE, items)
+    return json.dumps(item, ensure_ascii=False)
+
+
+@function_tool
+def list_calendar_events(query: str = "") -> str:
+    """List or search Agentie's local calendar events."""
+    q = _clean(query, 200).casefold()
+    items = _load(CALENDAR_FILE, [])
+    if q:
+        items = [x for x in items if q in " ".join(str(x.get(k, "")) for k in ("title", "start", "end", "location", "notes")).casefold()]
+    return json.dumps(items[:100], ensure_ascii=False)
 
 
 @function_tool
