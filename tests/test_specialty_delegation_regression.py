@@ -26,7 +26,8 @@ class SpecialtyDelegationRegressionTests(unittest.TestCase):
         self.assertIsNotNone(result);self.assertEqual(result['card']['type'],'agent_handoff_proposal')
         self.assertEqual(result['card']['from_agent']['name'],'Alex');self.assertEqual(result['card']['to_agent']['name'],'Writer')
         self.assertEqual(result['card']['specialty'],'writing')
-        self.assertIn('Accept',result['card']['actions']);self.assertIn('Always accept',result['card']['actions'])
+        labels=[action.get('label') for action in result['card']['actions']]
+        self.assertIn('Accept',labels);self.assertIn('Always accept',labels)
         start.assert_not_called()
 
     def test_agent_keeps_work_that_matches_own_specialty(self):
