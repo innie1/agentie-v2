@@ -5,7 +5,7 @@ from agents import Runner
 from agents.mcp import MCPServerStreamableHttp
 
 from agentie.agents.assistant import build_assistant
-from agentie.core.agent_prompt import agent_from_session, build_agent_instructions, learn_from_user_message
+from agentie.core.agent_prompt import agent_from_session, build_agent_instructions
 from agentie.core.memory_store import add_message, build_context_prompt
 from agentie.core.npc_brain import try_npc_response
 from agentie.core.observability import current_trace_id, record_event, record_model_error, record_model_result, start_trace, finish_trace
@@ -43,9 +43,9 @@ async def run_agent(message: str, agent_type: str = "general", session_id: str |
     persistent_agent = agent_from_session(session_id)
     persistent_instructions = None
     if persistent_agent:
-        # Learn only explicit durable preferences/context; never copy the full chat into the prompt.
-        learn_from_user_message(persistent_agent, message)
-        persistent_instructions = build_agent_instructions(persistent_agent)
+        # NPC is the single local learning entry point. This matters because a
+        # preference like "I prefer concise replies" must be learned AND
+        # acknowledged locally before we ever consider a paid provider.
         npc = try_npc_response(persistent_agent, message)
         if npc is not None:
             output = str(npc.get("message") or "")
@@ -55,6 +55,7 @@ async def run_agent(message: str, agent_type: str = "general", session_id: str |
             record_event("npc_brain", str(persistent_agent.get("name") or "agent"), metadata={"session_id":session_id,"provider_calls":0})
             if own_trace:finish_trace(trace_id,"completed")
             return output
+        persistent_instructions = build_agent_instructions(persistent_agent)
 
     effective_message = build_context_prompt(session_id, message) if session_id else message
     role_info = resolve_role(agent_type)
