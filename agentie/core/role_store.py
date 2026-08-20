@@ -4,11 +4,12 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 from agentie.core.agent_registry import create_agent,delete_agent,get_agent,hierarchy,list_agents,update_agent_manager,update_agent_profile
+from agentie.core.agent_prompt import instruction_card,set_manual_instructions
 from agentie.core.team_orchestrator import route_team_command
 from agentie.tools.approval_tools import approval_is_granted,create_approval
 WORKSPACE=Path.cwd()/"workspace";ROLES=WORKSPACE/"agent_roles.json";BASE_AGENTS={"general","research","coding","manager","github"}
 ROLE_PRESETS={"researcher":{"base":"research","instruction":"Act as a rigorous researcher. Gather evidence, compare sources, and distinguish fact from inference."},"critic":{"base":"research","instruction":"Act as a skeptical critic. Look for weaknesses, contradictions, missing evidence, and failure modes."},"verifier":{"base":"research","instruction":"Act as a verifier. Check claims against evidence and flag unsupported assertions."},"data analyst":{"base":"coding","instruction":"Act as a data analyst. Prefer reproducible calculations, code, tables, and explicit assumptions."},"document writer":{"base":"general","instruction":"Act as a professional document writer. Turn source material into clear, structured deliverables."},"planner":{"base":"manager","instruction":"Act as a planner. Decompose goals, assign work, track dependencies, and minimize unnecessary provider calls."},"coder":{"base":"coding","instruction":"Act as a software engineer. Inspect, implement, test, and explain code changes carefully."},"github reviewer":{"base":"github","instruction":"Act as a GitHub reviewer. Inspect repository state, changes, issues, and implementation risks."}}
-def _load()->dict[str,Any]:
+def _load():
     try:return json.loads(ROLES.read_text(encoding="utf-8")) if ROLES.exists() else {"assignments":{},"custom_roles":{}}
     except Exception:return {"assignments":{},"custom_roles":{}}
 def _save(data):ROLES.parent.mkdir(parents=True,exist_ok=True);ROLES.write_text(json.dumps(data,indent=2,ensure_ascii=False),encoding="utf-8")
@@ -53,6 +54,16 @@ def route_role_command(message):
     if team is not None:return team
     created=_agent_creation_command(text)
     if created is not None:return created
+    view=re.match(r"^(?:show|view|open|inspect)\s+(?:agent\s+)?(.+?)(?:['’]s)?\s+(?:system\s+prompt|instructions|prompt)[.!?]?$",text,re.I)
+    if view:
+        agent=get_agent(view.group(1).strip())
+        if not agent:return {"message":"Agent was not found.","card":None}
+        return {"message":f"Here are {agent['name']}'s instructions.","card":instruction_card(agent)}
+    edit=re.match(r"^(?:set|update|change|edit)\s+(?:agent\s+)?(.+?)(?:['’]s)?\s+(?:system\s+prompt|instructions|prompt)\s+(?:to|as)\s+(.+)$",text,re.I)
+    if edit:
+        agent=get_agent(edit.group(1).strip())
+        if not agent:return {"message":"Agent was not found.","card":None}
+        set_manual_instructions(agent,edit.group(2).strip());return {"message":f"Updated {agent['name']}'s user instructions.","card":instruction_card(agent)}
     rename=re.match(r"^(?:rename|change (?:the )?name of)\s+(?:agent\s+)?(.+?)\s+(?:to|as)\s+(.+?)[.!?]?$",text,re.I)
     if rename:
         try:agent=update_agent_profile(rename.group(1).strip(),name=rename.group(2).strip())
