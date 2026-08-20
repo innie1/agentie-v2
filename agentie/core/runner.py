@@ -6,7 +6,7 @@ from agents.mcp import MCPServerStreamableHttp
 
 from agentie.agents.assistant import build_assistant
 from agentie.core.agent_prompt import agent_from_session, build_agent_instructions
-from agentie.core.memory_store import add_message, build_context_prompt
+from agentie.core.memory_store import add_message, build_context_prompt, set_context
 from agentie.core.npc_brain import try_npc_response
 from agentie.core.observability import current_trace_id, record_event, record_model_error, record_model_result, start_trace, finish_trace
 from agentie.core.role_store import resolve_role
@@ -89,13 +89,21 @@ async def run_agent(message: str, agent_type: str = "general", session_id: str |
         output = str(result.final_output)
         if session_id:
             add_message(session_id, "assistant", output, {"agent_type":agent_type,"runtime_role":role_info.get("name")})
+            set_context(session_id,"last_provider_failure",None)
         if own_trace: finish_trace(trace_id, "completed")
         return output
     except Exception as exc:
         latency_ms = (time.perf_counter()-started)*1000
         record_model_error(model_name, exc, latency_ms, trace_id)
-        if own_trace: finish_trace(trace_id, "failed", str(exc))
         friendly = _friendly_provider_error(exc)
+        if session_id:
+            set_context(session_id,"last_provider_failure",{
+                "user_message":original_message,
+                "error":friendly or str(exc),
+                "model":model_name,
+                "trace_id":trace_id,
+            })
+        if own_trace: finish_trace(trace_id, "failed", str(exc))
         if friendly:
             raise RuntimeError(friendly) from exc
         raise
