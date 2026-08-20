@@ -1,7 +1,7 @@
 (() => {
   const originalRenderCard = window.renderCard;
   const style = document.createElement('style');
-  style.textContent = `.card-topline{font-size:11px;color:var(--muted);margin-bottom:8px;line-height:1.35}.multi-card-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;width:min(720px,calc(100vw - 300px));margin-top:6px}.multi-card-grid .card-wrap{width:100%;margin-top:0}.multi-card-grid .result-card{height:100%;min-height:135px}.multi-card-grid .card-value{font-size:25px;margin:9px 0 5px}.multi-card-grid .card-title{font-size:13px}.rag-hit,.trace-event,.memory-hit{padding:8px;border-radius:9px;background:var(--soft);font-size:12px;line-height:1.4}.rag-hit strong,.trace-event strong,.memory-hit strong{display:block;margin-bottom:4px}.rag-hit small,.trace-event small,.memory-hit small{display:block;color:var(--muted);margin-bottom:5px}.trace-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px;margin-top:9px}.trace-grid .metric{min-width:0}@media(max-width:900px){.multi-card-grid{width:min(650px,92vw)}}@media(max-width:620px){.multi-card-grid{grid-template-columns:1fr;width:min(330px,92vw)}.trace-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}`;
+  style.textContent = `.card-topline{font-size:11px;color:var(--muted);margin-bottom:8px;line-height:1.35}.multi-card-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;width:min(720px,calc(100vw - 300px));margin-top:6px}.multi-card-grid .card-wrap{width:100%;margin-top:0}.multi-card-grid .result-card{height:100%;min-height:135px}.multi-card-grid .card-value{font-size:25px;margin:9px 0 5px}.multi-card-grid .card-title{font-size:13px}.rag-hit,.trace-event,.memory-hit{padding:8px;border-radius:9px;background:var(--soft);font-size:12px;line-height:1.4}.rag-hit strong,.trace-event strong,.memory-hit strong{display:block;margin-bottom:4px}.rag-hit small,.trace-event small,.memory-hit small{display:block;color:var(--muted);margin-bottom:5px}.trace-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px;margin-top:9px}.trace-grid .metric{min-width:0}.browser-approval-step{margin-top:10px;padding:10px;border-radius:10px;background:var(--soft);font-size:12px}.browser-approval-actions{display:flex;gap:7px;margin-top:10px}.browser-approval-actions button{border:1px solid var(--border);border-radius:8px;padding:6px 10px;background:var(--panel);color:var(--text);cursor:pointer}.browser-approval-actions .approve{background:var(--accent);color:var(--accent-text);border-color:var(--accent)}@media(max-width:900px){.multi-card-grid{width:min(650px,92vw)}}@media(max-width:620px){.multi-card-grid{grid-template-columns:1fr;width:min(330px,92vw)}.trace-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}`;
   document.head.appendChild(style);
   const addTitle=(el,text)=>{const x=document.createElement('div');x.className='card-title';x.textContent=text;el.appendChild(x)};
   const addMeta=(el,text)=>{const x=document.createElement('div');x.className='card-meta';x.textContent=text;el.appendChild(x);return x};
@@ -16,17 +16,17 @@
   function renderTasks(el,c){addTitle(el,'✅ Tasks');const list=listContainer(el);(c.items||[]).forEach(i=>{const done=(i.steps||[]).filter(s=>s.done).length;list.appendChild(row(i.title||i.id,`${i.status||'pending'} · ${done}/${(i.steps||[]).length} steps`))});if(!(c.items||[]).length)addMeta(el,'No tasks yet.')}
   function renderFiles(el,c){addTitle(el,'📄 Workspace files');const list=listContainer(el);(c.items||[]).forEach(i=>list.appendChild(row(i.name,`${Math.max(1,Math.round((i.size_bytes||0)/1024))} KB · ${i.suffix||'file'}`)));if(!(c.items||[]).length)addMeta(el,'Workspace is empty.')}
   function renderApprovals(el,c){
-    addTitle(el,'🛡 Approvals');const list=listContainer(el);
-    (c.items||[]).forEach(i=>{
-      const item=row(i.action||i.id,i.reason||i.status);
+    addTitle(el,'🛡 Approval');
+    (c.items||[]).forEach((i,index)=>{
+      if(index>0){const divider=document.createElement('div');divider.style.height='1px';divider.style.background='var(--border)';divider.style.margin='12px 0';el.appendChild(divider)}
+      const step=document.createElement('div');step.className='browser-approval-step';step.textContent=i.reason||i.action||'Consequential action';el.appendChild(step);
       if(i.status==='pending'){
-        const actions=document.createElement('div');actions.className='actions';
-        const approve=document.createElement('button');approve.type='button';approve.textContent='Approve';approve.dataset.approvalId=i.id;
+        const actions=document.createElement('div');actions.className='browser-approval-actions';
+        const approve=document.createElement('button');approve.type='button';approve.className='approve';approve.textContent='Approve once';approve.dataset.approvalId=i.id;
         const deny=document.createElement('button');deny.type='button';deny.textContent='Deny';deny.dataset.denialId=i.id;
-        const resolve=async approved=>{approve.disabled=deny.disabled=true;try{const r=await fetch(`/approvals/${encodeURIComponent(i.id)}/resolve`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({approved})});if(!r.ok)throw new Error('Could not resolve approval');const label=item.querySelector('.metric-label');if(label)label.textContent=approved?'approved':'denied';actions.remove()}catch(_){approve.disabled=deny.disabled=false}};
-        approve.onclick=()=>resolve(true);deny.onclick=()=>resolve(false);actions.append(approve,deny);item.appendChild(actions);
-      }
-      list.appendChild(item)
+        const resolve=async approved=>{approve.disabled=deny.disabled=true;try{const r=await fetch(`/approvals/${encodeURIComponent(i.id)}/resolve`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({approved})});if(!r.ok)throw new Error('Could not resolve approval');step.textContent=approved?'✓ Approved':'Denied';actions.remove();if(approved&&i.metadata?.kind==='agent_delete'&&typeof window.loadPersistentAgents==='function')setTimeout(()=>window.loadPersistentAgents(),80)}catch(_){approve.disabled=deny.disabled=false}};
+        approve.onclick=()=>resolve(true);deny.onclick=()=>resolve(false);actions.append(approve,deny);el.appendChild(actions)
+      }else addMeta(el,i.status||'resolved')
     });
     if(!(c.items||[]).length)addMeta(el,'No approval requests.')
   }
