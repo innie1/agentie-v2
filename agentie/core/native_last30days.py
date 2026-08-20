@@ -7,9 +7,10 @@ from datetime import date, timedelta
 from typing import Any
 from urllib.parse import urlparse
 
+from agents import Agent, ModelSettings, Runner
 from ddgs import DDGS
 
-from agentie.core.web_research_service import answer_web_search
+from agentie.models.provider import get_model
 
 SOURCE_LANES = [
     ("reddit", "site:reddit.com"),
@@ -22,17 +23,7 @@ SOURCE_LANES = [
 
 
 def status() -> dict[str, Any]:
-    return {
-        "id": "last30days-native",
-        "ready": True,
-        "installed": True,
-        "python": "3.11+",
-        "engine": "Agentie native",
-        "window_days": 30,
-        "sources": [x[0] for x in SOURCE_LANES],
-        "requires": ["ddgs"],
-        "optional": ["AI provider for richer synthesis"],
-    }
+    return {"id":"last30days-native","ready":True,"installed":True,"python":"3.11+","engine":"Agentie native","window_days":30,"sources":[x[0] for x in SOURCE_LANES],"requires":["ddgs"],"optional":["AI provider for richer synthesis"]}
 
 
 def _domain(url: str) -> str:
@@ -78,12 +69,22 @@ def _fallback_summary(topic: str, sources: list[dict[str, Any]]) -> str:
     return "\n".join(lines)
 
 
+async def _synthesize(topic: str, sources: list[dict[str, Any]]) -> str:
+    pack="\n\n".join(f"[{s['id']}] SOURCE={s['source']}\nTITLE={s['title']}\nURL={s['url']}\nSNIPPET={s['snippet']}" for s in sources[:24])
+    instructions=("You are Agentie's Last30Days Native synthesizer. Use only the supplied evidence from the last-30-days search lanes. "
+                  "Start with 'What I learned:' and give a compact, useful synthesis of recurring themes, disagreements, recent changes, and practical signals. "
+                  "Cite claims using only the supplied IDs such as [L1] or [L2][L5]. Do not invent facts, source IDs, dates, or URLs. "
+                  "Mention evidence gaps when a lane has little or no coverage. Do not append a separate Sources section because the UI renders sources.")
+    prompt=f"TOPIC\n{topic}\n\nLAST-30-DAYS EVIDENCE\n{pack}"
+    agent=Agent(name="Agentie Last30Days Native",instructions=instructions,model=get_model(),model_settings=ModelSettings(max_tokens=1800),tools=[])
+    result=await Runner.run(agent,prompt)
+    return str(result.final_output or "").strip()
+
+
 async def research(topic: str) -> dict[str, Any]:
     sources=gather(topic)
     if not sources:return {"message":_fallback_summary(topic,[]),"card":{"type":"last30days","engine":"native","topic":topic,"window_days":30,"sources":[],"source_counts":{},"provider_calls":0}}
-    query=f"What are people saying about {topic} in the last 30 days? Focus on recent community reaction, recurring themes, disagreements, practical signals, and what changed recently."
-    try:
-        synthesized=await answer_web_search(query,8);answer=((synthesized.get("card") or {}).get("answer") or "").strip();provider_calls=int((synthesized.get("card") or {}).get("provider_calls") or 0)
+    try:answer=await _synthesize(topic,sources);provider_calls=1 if answer else 0
     except Exception:answer="";provider_calls=0
     if not answer:answer=_fallback_summary(topic,sources)
     counts={}
@@ -105,8 +106,7 @@ def _topic(message: str) -> str | None:
 
 def route(message: str) -> dict[str, Any] | None:
     low=str(message or "").lower().strip(" .?!")
-    if low in {"last30days status","show last30days status","check last30days","native last30days status"}:
-        return {"message":"Agentie Last30Days Native is ready on Python 3.11+.","card":{"type":"skill_runtime","skill":"last30days","status":status()}}
+    if low in {"last30days status","show last30days status","check last30days","native last30days status"}:return {"message":"Agentie Last30Days Native is ready on Python 3.11+.","card":{"type":"skill_runtime","skill":"last30days","status":status()}}
     if low.startswith(("install last30days","update last30days","upstream last30days")):return None
     topic=_topic(message)
     if not topic:return None
