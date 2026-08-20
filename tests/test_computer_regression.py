@@ -22,11 +22,15 @@ class ComputerRoutingRegressionTests(unittest.IsolatedAsyncioTestCase):
         self.temp.cleanup()
 
     async def test_desktop_requests_are_wired_into_main_computer_route(self):
-        result = await route_browser_request("Show my files")
+        result = await route_browser_request("Open file manager")
         self.assertIsNotNone(result)
         self.assertEqual(result["card"]["type"], "desktop_view")
         self.assertEqual(result["card"]["app"], "files")
         self.assertIn("hello.txt", {item["name"] for item in result["card"]["items"]})
+
+    async def test_native_task_phrase_is_not_stolen_by_desktop(self):
+        result = await route_browser_request("Show my tasks")
+        self.assertIsNone(result)
 
     async def test_terminal_routes_through_same_computer_route(self):
         result = await route_browser_request("Open the terminal")
