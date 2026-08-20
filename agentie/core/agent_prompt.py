@@ -59,8 +59,14 @@ def _set(profile:dict[str,Any],section:str,key:str,value:Any)->bool:
 def learn_from_user_message(agent:dict[str,Any],message:str)->list[str]:
     """Extract only explicit, durable preferences/context. Never copy the whole chat."""
     text=" ".join(str(message or "").strip().split());low=text.casefold();data=_load();profiles=data.setdefault("agents",{});profile=profiles.get(agent["id"]) or _base_profile(agent);changes=[]
-    concise=bool(re.search(r"\b(?:keep|make|prefer|want|give)\b.{0,35}\b(?:repl(?:y|ies)|answer|responses?)\b.{0,25}\b(?:short|brief|concise|compact)\b|\bi (?:like|prefer|want) (?:short|brief|concise) (?:repl(?:y|ies)|answers?|responses?)\b",low))
+
+    # Accept natural word order: "short concise replies", "replies concise", etc.
+    has_reply_word=bool(re.search(r"\b(?:repl(?:y|ies)|answers?|responses?)\b",low))
+    has_short_word=bool(re.search(r"\b(?:short|brief|concise|compact)\b",low))
+    has_preference=bool(re.search(r"\b(?:i\s+(?:like|prefer|want)|keep|make|prefer|want|give|from now on|always)\b",low))
+    concise=has_reply_word and has_short_word and has_preference
     if concise and _set(profile,"communication","default_length","concise"):changes.append("Default replies should be concise.")
+
     detailed=bool(re.search(r"\b(?:reports?|analysis|research|breakdowns?)\b.{0,35}\b(?:detailed|thorough|comprehensive|long)\b|\b(?:detailed|thorough|comprehensive)\b.{0,25}\b(?:reports?|analysis|research|breakdowns?)\b",low))
     if detailed and _set(profile,"task_preferences","reports","detailed"):changes.append("Reports and analysis should be detailed.")
     bullets=bool(re.search(r"\b(?:use|prefer|want)\b.{0,20}\b(?:bullet|bullets|bullet points)\b",low));no_bullets=bool(re.search(r"\b(?:do not|don't|dont|avoid)\b.{0,20}\b(?:bullet|bullets|lists?)\b",low))
@@ -71,12 +77,16 @@ def learn_from_user_message(agent:dict[str,Any],message:str)->list[str]:
     elif casual and _set(profile,"communication","tone","conversational"):changes.append("Use a conversational tone.")
     copyable=bool(re.search(r"\b(?:prompt|commands?|code)\b.{0,30}\b(?:copyable|easy to copy|copy and paste)\b|\b(?:copyable|copy and paste)\b.{0,30}\b(?:prompt|commands?|code)\b",low))
     if copyable and _set(profile,"task_preferences","implementation_output","copyable"):changes.append("Implementation prompts/commands should be easy to copy.")
+
+    # Save a compact rule only for explicit durable instructions. Do not save the entire sentence
+    # when a structured preference above already captures its meaning.
     explicit_rule=re.match(r"^(?:remember that |from now on |always |when you |whenever you )(.{8,220})$",text,re.I)
-    if explicit_rule:
+    if explicit_rule and not (concise or detailed or bullets or no_bullets or formal or casual or copyable):
         rule=explicit_rule.group(1).strip(" .");rules=profile.setdefault("learned_rules",[])
         if rule and rule.casefold() not in {str(x).casefold() for x in rules}:rules.append(rule);profile["learned_rules"]=rules[-20:];changes.append("Saved a durable instruction.")
-    profile["updated_at"]=datetime.now().astimezone().isoformat(timespec="seconds");profiles[agent["id"]]=profile
-    if changes:_save(data)
+
+    if changes:
+        profile["updated_at"]=datetime.now().astimezone().isoformat(timespec="seconds");profiles[agent["id"]]=profile;_save(data)
     return changes
 
 
