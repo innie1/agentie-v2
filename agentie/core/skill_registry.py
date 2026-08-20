@@ -9,7 +9,8 @@ from pathlib import Path
 from typing import Any
 
 from agentie.core.code_execution import route_code_command
-from agentie.core.external_skill_runtime import last30days_status, route_last30days
+from agentie.core.external_skill_runtime import route_last30days
+from agentie.core.native_last30days import route as route_native_last30days, status as native_last30days_status
 from agentie.core.observability import current_trace_id, set_current_trace
 from agentie.core.web_research_service import answer_web_search, search_sources, source_card, sources_only_requested
 
@@ -20,7 +21,7 @@ DEFAULT_SKILLS={
   "local-utils":{"name":"Local Utilities","description":"Timers, reminders, calculations, conversions, notes and system utilities.","agents":["general","manager","coding"],"enabled":True,"capabilities":["timer","alarm","reminder","calculator","conversion","notes","system"],"permissions":["read","write"]},
   "code-execution":{"name":"Code Execution","description":"Constrained local Python execution with captured output and downloadable artifacts.","agents":["general","coding","manager","research"],"enabled":True,"capabilities":["python","code_execution","local_analysis","artifacts"],"permissions":["execute","files_write"]},
   "research":{"name":"Research","description":"Web search, page reading and deep research with citations.","agents":["general","research","manager"],"enabled":True,"capabilities":["web_search","browser_read","deep_research","citation_verify"],"permissions":["web_read"]},
-  "last30days":{"name":"Last30Days","description":"Real upstream multi-source recent-research skill from mvanhorn/last30days-skill. Searches recent community and web signals using its installed engine.","agents":["general","research","manager"],"enabled":True,"capabilities":["recent_research","reddit","x","youtube","hackernews","github","web_search","trends"],"permissions":["web_read","execute","files_write"],"kind":"external","repository":"https://github.com/mvanhorn/last30days-skill.git","runtime_status":last30days_status},
+  "last30days":{"name":"Last30Days","description":"Agentie-native 30-day multi-source research for Reddit, X, YouTube, Hacker News, GitHub and the web. Runs on Python 3.11+; the upstream 3.12 engine remains optional.","agents":["general","research","manager"],"enabled":True,"capabilities":["recent_research","reddit","x","youtube","hackernews","github","web_search","trends"],"permissions":["web_read"],"kind":"native_external_compatible","repository":"https://github.com/mvanhorn/last30days-skill.git","runtime_status":native_last30days_status},
   "files":{"name":"Files & Documents","description":"Upload, inspect, search, generate and download local artifacts including PDF, DOCX, XLSX and PPTX.","agents":["general","research","coding","manager"],"enabled":True,"capabilities":["files","pdf","docx","xlsx","pptx","zip","collections","rag"],"permissions":["files_read","files_write"]},
   "jobs":{"name":"Jobs & Delegation","description":"Durable background jobs, parallel agents, routines and dynamic roles.","agents":["general","manager","research","coding","github"],"enabled":True,"capabilities":["jobs","delegation","routines","roles"],"permissions":["delegate","schedule"]},
   "github":{"name":"GitHub","description":"Repository inspection, issues, pull requests, Actions and GitHub-specialist workflows.","agents":["github","coding","manager"],"enabled":True,"capabilities":["github_read","repositories","issues","pull_requests","actions"],"permissions":["github_read","github_write"]},
@@ -90,6 +91,8 @@ def route_skill_command(message:str)->dict[str,Any]|None:
     text=" ".join(message.strip().split());lower=text.lower().strip(" .?!")
     access=_global_access_command(text)
     if access is not None:return access
+    native=route_native_last30days(message)
+    if native is not None:return native
     external=route_last30days(message)
     if external is not None:return external
     if skill_enabled("code-execution"):
