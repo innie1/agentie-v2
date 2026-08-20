@@ -5,7 +5,9 @@ from agents import Runner
 from agents.mcp import MCPServerStreamableHttp
 
 from agentie.agents.assistant import build_assistant
+from agentie.core.agent_prompt import agent_from_session, build_agent_instructions, learn_from_user_message
 from agentie.core.memory_store import add_message, build_context_prompt
+from agentie.core.npc_brain import try_npc_response
 from agentie.core.observability import current_trace_id, record_event, record_model_error, record_model_result, start_trace, finish_trace
 from agentie.core.role_store import resolve_role
 from agentie.models.provider import get_provider_info
@@ -31,12 +33,28 @@ def _friendly_provider_error(exc: Exception) -> str | None:
 
 
 async def run_agent(message: str, agent_type: str = "general", session_id: str | None = None) -> str:
-    """Run one Agentie turn with persisted context, runtime role assignment and local observability."""
+    """Run one Agentie turn with persisted context, evolving agent identity and local-first NPC fallback."""
     own_trace = False
     trace_id = current_trace_id()
     if not trace_id:
         trace_id = start_trace(session_id, agent_type, message)
         own_trace = True
+
+    persistent_agent = agent_from_session(session_id)
+    persistent_instructions = None
+    if persistent_agent:
+        # Learn only explicit durable preferences/context; never copy the full chat into the prompt.
+        learn_from_user_message(persistent_agent, message)
+        persistent_instructions = build_agent_instructions(persistent_agent)
+        npc = try_npc_response(persistent_agent, message)
+        if npc is not None:
+            output = str(npc.get("message") or "")
+            if session_id:
+                add_message(session_id,"user",message,{"agent_type":agent_type,"routed_by":"npc_brain"})
+                add_message(session_id,"assistant",output,{"agent_type":agent_type,"routed_by":"npc_brain"})
+            record_event("npc_brain", str(persistent_agent.get("name") or "agent"), metadata={"session_id":session_id,"provider_calls":0})
+            if own_trace:finish_trace(trace_id,"completed")
+            return output
 
     effective_message = build_context_prompt(session_id, message) if session_id else message
     role_info = resolve_role(agent_type)
@@ -55,10 +73,10 @@ async def run_agent(message: str, agent_type: str = "general", session_id: str |
             if token: headers["Authorization"] = f"Bearer {token}"
             record_event("mcp", "connect", metadata={"url":mcp_url})
             async with MCPServerStreamableHttp(name="Agentie MCP", params={"url":mcp_url,"headers":headers}, cache_tools_list=True) as server:
-                assistant = build_assistant(agent_type, mcp_servers=[server], role_info=role_info)
+                assistant = build_assistant(agent_type, mcp_servers=[server], role_info=role_info, persistent_instructions=persistent_instructions)
                 result = await Runner.run(assistant, effective_message)
         else:
-            assistant = build_assistant(agent_type, role_info=role_info)
+            assistant = build_assistant(agent_type, role_info=role_info, persistent_instructions=persistent_instructions)
             result = await Runner.run(assistant, effective_message)
 
         latency_ms = (time.perf_counter()-started)*1000
