@@ -6,6 +6,16 @@ from unittest.mock import patch
 from agentie.core import desktop_runtime
 
 
+READY = {
+    "running": True,
+    "novnc_ready": True,
+    "chrome_ready": True,
+    "novnc_url": "http://127.0.0.1:6080/vnc_lite.html?autoconnect=1",
+    "distro": "Ubuntu",
+    "message": "Agentie Computer started.",
+}
+
+
 class AgentieDesktopRegressionTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
@@ -20,20 +30,19 @@ class AgentieDesktopRegressionTests(unittest.TestCase):
         self.patch.stop()
         self.temp.cleanup()
 
-    def test_natural_app_commands_route_to_desktop(self):
-        cases = {
-            "Open the terminal": "terminal",
-            "Open file manager": "files",
-            "Open computer notes": "notes",
-            "Open computer tasks": "tasks",
-            "Show desktop": "home",
-        }
-        for text, app in cases.items():
-            with self.subTest(text=text):
-                result = desktop_runtime.route_desktop_request(text)
-                self.assertIsNotNone(result)
-                self.assertEqual(result["card"]["type"], "desktop_view")
-                self.assertEqual(result["card"]["app"], app)
+    def test_show_desktop_starts_real_wsl_computer(self):
+        with patch.object(desktop_runtime, "ensure_wsl_desktop", return_value=READY) as start:
+            result = desktop_runtime.route_desktop_request("Show desktop")
+        start.assert_called_once()
+        self.assertEqual(result["card"]["type"], "desktop_view")
+        self.assertEqual(result["card"]["mode"], "wsl")
+        self.assertTrue(result["card"]["running"])
+        self.assertIn("6080", result["card"]["novnc_url"])
+
+    def test_open_terminal_starts_real_desktop(self):
+        with patch.object(desktop_runtime, "ensure_wsl_desktop", return_value=READY):
+            result = desktop_runtime.route_desktop_request("Open the terminal")
+        self.assertEqual(result["card"]["mode"], "wsl")
 
     def test_existing_native_phrases_are_not_stolen(self):
         for text in ("Show my tasks", "Show my files", "Open my notes"):
@@ -56,6 +65,13 @@ class AgentieDesktopRegressionTests(unittest.TestCase):
         result = desktop_runtime.route_desktop_request("Desktop control: terminal powershell whoami")
         self.assertEqual(result["card"]["app"], "error")
         self.assertIn("not enabled", result["message"].lower())
+
+    def test_setup_required_is_exposed_in_card(self):
+        info = {**READY, "running": False, "novnc_url": None, "setup_required": True, "setup_command": "sudo apt install novnc", "message": "One-time setup required."}
+        with patch.object(desktop_runtime, "ensure_wsl_desktop", return_value=info):
+            result = desktop_runtime.route_desktop_request("Show desktop")
+        self.assertTrue(result["card"]["setup_required"])
+        self.assertIn("sudo apt", result["card"]["setup_command"])
 
 
 if __name__ == "__main__":
