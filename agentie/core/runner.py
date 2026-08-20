@@ -40,21 +40,25 @@ async def run_agent(message: str, agent_type: str = "general", session_id: str |
         trace_id = start_trace(session_id, agent_type, message)
         own_trace = True
 
+    original_message = message
     persistent_agent = agent_from_session(session_id)
     persistent_instructions = None
     if persistent_agent:
-        # NPC is the single local learning entry point. This matters because a
-        # preference like "I prefer concise replies" must be learned AND
-        # acknowledged locally before we ever consider a paid provider.
-        npc = try_npc_response(persistent_agent, message)
-        if npc is not None:
+        # NPC v2 is the first local intelligence layer. It may either answer
+        # confidently on-device or enrich an ambiguous contextual follow-up for
+        # the larger model. It never invents completion of work it cannot do.
+        npc = try_npc_response(persistent_agent, message, session_id=session_id)
+        if npc is not None and npc.get("message") is not None:
             output = str(npc.get("message") or "")
             if session_id:
-                add_message(session_id,"user",message,{"agent_type":agent_type,"routed_by":"npc_brain"})
-                add_message(session_id,"assistant",output,{"agent_type":agent_type,"routed_by":"npc_brain"})
-            record_event("npc_brain", str(persistent_agent.get("name") or "agent"), metadata={"session_id":session_id,"provider_calls":0})
+                add_message(session_id,"user",original_message,{"agent_type":agent_type,"routed_by":"npc_brain","npc_confidence":npc.get("confidence")})
+                add_message(session_id,"assistant",output,{"agent_type":agent_type,"routed_by":"npc_brain","npc_confidence":npc.get("confidence")})
+            record_event("npc_brain", str(persistent_agent.get("name") or "agent"), metadata={"session_id":session_id,"provider_calls":0,"npc_role":npc.get("npc_role"),"confidence":npc.get("confidence")})
             if own_trace:finish_trace(trace_id,"completed")
             return output
+        if npc is not None and npc.get("escalate_message"):
+            message = str(npc["escalate_message"])
+            record_event("npc_context",str(persistent_agent.get("name") or "agent"),metadata={"session_id":session_id,"npc_role":npc.get("npc_role"),"confidence":npc.get("confidence"),"provider_calls":0})
         persistent_instructions = build_agent_instructions(persistent_agent)
 
     effective_message = build_context_prompt(session_id, message) if session_id else message
@@ -62,7 +66,7 @@ async def run_agent(message: str, agent_type: str = "general", session_id: str |
     provider_info = get_provider_info()
     model_name = provider_info["model"]
     if session_id:
-        add_message(session_id, "user", message, {"agent_type":agent_type,"runtime_role":role_info.get("name")})
+        add_message(session_id, "user", original_message, {"agent_type":agent_type,"runtime_role":role_info.get("name")})
     record_event("agent", str(role_info.get("name") or agent_type), metadata={"base":role_info.get("base"),"session_id":session_id})
     record_event("provider", provider_info["provider"], metadata={"model":model_name})
 
