@@ -14,7 +14,7 @@ MAX_FILE_CHARS = 200_000
 _DANGEROUS_PATTERNS = (
     r"(^|[;&|]\s*)sudo\b",
     r"(^|[;&|]\s*)su\b",
-    r"\brm\s+-[^\n]*r[^\n]*f\b",
+    r"\brm\b[^\n;&|]*\s-(?:[A-Za-z]*r[A-Za-z]*|-[A-Za-z-]*recursive[A-Za-z-]*)",
     r"\bmkfs(?:\.|\s)",
     r"\bdd\s+if=",
     r"\bshutdown\b",
@@ -53,7 +53,10 @@ def _safe_relative_path(path: str) -> str:
     posix = PurePosixPath(value)
     if posix.is_absolute() or ".." in posix.parts:
         raise ValueError("Linux file paths must stay inside AgentieWorkspace.")
-    cleaned = str(posix).strip("./")
+    cleaned = str(posix)
+    while cleaned.startswith("./"):
+        cleaned = cleaned[2:]
+    cleaned = cleaned.rstrip("/")
     if not cleaned or cleaned == ".":
         raise ValueError("A file or folder path is required.")
     return cleaned[:240]
