@@ -126,6 +126,21 @@ def create_approval(action: str, reason: str, metadata: dict | None = None):
     return item
 
 
+def _execute_approved_action(item: dict):
+    meta = item.get("metadata") or {}
+    if meta.get("kind") != "agent_delete":
+        return None
+    agent_id = str(meta.get("agent_id") or "").strip()
+    if not agent_id:
+        raise ValueError("Approved agent deletion is missing the agent id.")
+    from agentie.core.agent_registry import delete_agent
+    result = delete_agent(agent_id)
+    item["status"] = "consumed"
+    item["consumed_at"] = datetime.now(timezone.utc).isoformat()
+    item["execution_result"] = result
+    return result
+
+
 def resolve_approval(approval_id: str, approved: bool, remember: bool = False):
     raw_id = str(approval_id or "")
     if raw_id.endswith(":always"):
@@ -145,6 +160,8 @@ def resolve_approval(approval_id: str, approved: bool, remember: bool = False):
             else:
                 item["status"] = "approved" if approved else "denied"
             item["resolved_at"] = datetime.now(timezone.utc).isoformat()
+            if approved and not remember:
+                _execute_approved_action(item)
             _save(items)
             return item
     raise ValueError("Approval not found.")
