@@ -25,7 +25,7 @@ class WSLDesktopRegressionTests(unittest.TestCase):
         self.assertNotIn("2>&1", launcher)
         self.assertNotIn(">/tmp/x", launcher)
 
-    def test_x11_runtime_repair_is_root_only_and_sets_sticky_mode(self):
+    def test_x11_runtime_cleanup_does_not_touch_wslg_socket_or_require_root(self):
         calls = []
 
         def fake_run(script, timeout=25, root=False):
@@ -36,14 +36,18 @@ class WSLDesktopRegressionTests(unittest.TestCase):
             wsl_desktop._prepare_x11_runtime()
 
         self.assertEqual(len(calls), 1)
-        self.assertTrue(calls[0][1])
-        self.assertIn("chmod 1777 /tmp/.X11-unix", calls[0][0])
-        self.assertIn("rm -f /tmp/.X1-lock /tmp/.X11-unix/X1", calls[0][0])
+        self.assertFalse(calls[0][1])
+        self.assertIn("rm -f /tmp/.X1-lock", calls[0][0])
+        self.assertNotIn("chmod 1777 /tmp/.X11-unix", calls[0][0])
+        self.assertNotIn("/tmp/.X11-unix/X1", calls[0][0])
 
-    def test_start_script_does_not_copy_xstartup_onto_itself(self):
+    def test_start_script_uses_tcp_x_transport_and_avoids_wslg_socket(self):
         script = wsl_desktop._start_script()
-        self.assertNotIn("cp \"$HOME/.config/tigervnc/xstartup\"", script)
-        self.assertIn("exec dbus-launch --exit-with-session startxfce4", script)
+        self.assertIn("-nolisten unix -listen tcp", script)
+        self.assertIn("DISPLAY=127.0.0.1:1", script)
+        self.assertNotIn("chmod 1777 /tmp/.X11-unix", script)
+        self.assertNotIn("tigervncserver :1", script)
+        self.assertIn("Xtigervnc :1", script)
 
     def test_ready_desktop_does_not_restart(self):
         ready = {"supported": True, "running": True, "novnc_ready": True, "chrome_ready": True, "novnc_url": wsl_desktop.NOVNC_URL, "cdp_url": wsl_desktop.CDP_URL, "distro": "Ubuntu"}
@@ -54,7 +58,7 @@ class WSLDesktopRegressionTests(unittest.TestCase):
         self.assertTrue(result["running"])
 
     def test_missing_bridge_packages_bootstrap_once(self):
-        missing = subprocess.CompletedProcess([], 42, stdout="__MISSING__: tigervncserver websockify novnc", stderr="")
+        missing = subprocess.CompletedProcess([], 42, stdout="__MISSING__: Xtigervnc websockify novnc", stderr="")
         started = subprocess.CompletedProcess([], 0, stdout="__READY__", stderr="")
         not_ready = {"supported": True, "running": False, "novnc_ready": False, "chrome_ready": False, "novnc_url": None, "cdp_url": None, "distro": "Ubuntu"}
         ready = {"supported": True, "running": True, "novnc_ready": True, "chrome_ready": True, "novnc_url": wsl_desktop.NOVNC_URL, "cdp_url": wsl_desktop.CDP_URL, "distro": "Ubuntu"}
