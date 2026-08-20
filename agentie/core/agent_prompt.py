@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any
 from agentie.core.agent_registry import get_agent
 WORKSPACE=Path.cwd()/"workspace";PROMPTS_FILE=WORKSPACE/"agent_instruction_profiles.json"
+def _now():return datetime.now().astimezone().isoformat(timespec="seconds")
 def _load():
     try:
         value=json.loads(PROMPTS_FILE.read_text(encoding="utf-8")) if PROMPTS_FILE.exists() else {"agents":{}};return value if isinstance(value,dict) else {"agents":{}}
@@ -12,45 +13,61 @@ def _load():
 def _save(data):PROMPTS_FILE.parent.mkdir(parents=True,exist_ok=True);PROMPTS_FILE.write_text(json.dumps(data,indent=2,ensure_ascii=False),encoding="utf-8")
 def agent_from_session(session_id):
     m=re.match(r"^agent:(agt_[a-z0-9]+):",str(session_id or ""),re.I);return get_agent(m.group(1)) if m else None
-def _base_profile(agent):return {"agent_id":agent["id"],"name":agent.get("name"),"role":str(agent.get("role") or "general"),"purpose":str(agent.get("purpose") or "").strip(),"manual_instructions":"","communication":{},"task_preferences":{},"durable_context":[],"learned_rules":[],"updated_at":datetime.now().astimezone().isoformat(timespec="seconds")}
+def _base_profile(agent):return {"agent_id":agent["id"],"name":agent.get("name"),"role":str(agent.get("role") or "general"),"purpose":str(agent.get("purpose") or "").strip(),"manual_instructions":"","communication":{},"task_preferences":{},"durable_context":[],"learned_rules":[],"learning_candidates":{},"learning_audit":[],"updated_at":_now()}
 def get_instruction_profile(agent):
     data=_load();profiles=data.setdefault("agents",{});profile=profiles.get(agent["id"])
     if not isinstance(profile,dict):profile=_base_profile(agent);profiles[agent["id"]]=profile;_save(data)
     changed=False
-    if "manual_instructions" not in profile:profile["manual_instructions"]="";changed=True
+    for key,default in (("manual_instructions",""),("communication",{}),("task_preferences",{}),("durable_context",[]),("learned_rules",[]),("learning_candidates",{}),("learning_audit",[])):
+        if key not in profile:profile[key]=default;changed=True
     for key,value in (("name",agent.get("name")),("role",agent.get("role")),("purpose",agent.get("purpose",""))):
         if profile.get(key)!=value:profile[key]=value;changed=True
-    if changed:profile["updated_at"]=datetime.now().astimezone().isoformat(timespec="seconds");_save(data)
+    if changed:profile["updated_at"]=_now();_save(data)
     return profile
+def _audit(profile,kind,summary,source="conversation",confidence="high",metadata=None):
+    items=profile.setdefault("learning_audit",[]);items.append({"at":_now(),"kind":kind,"summary":summary,"source":source,"confidence":confidence,"metadata":metadata or {}});profile["learning_audit"]=items[-100:]
 def set_manual_instructions(agent,instructions):
-    data=_load();profiles=data.setdefault("agents",{});profile=profiles.get(agent["id"]) or _base_profile(agent);profile["manual_instructions"]=str(instructions or "").strip()[:12000];profile["updated_at"]=datetime.now().astimezone().isoformat(timespec="seconds");profiles[agent["id"]]=profile;_save(data);return profile
+    data=_load();profiles=data.setdefault("agents",{});profile=profiles.get(agent["id"]) or _base_profile(agent);value=str(instructions or "").strip()[:12000]
+    if profile.get("manual_instructions","")!=value:_audit(profile,"manual_instruction","User-edited instructions updated.","manual","explicit")
+    profile["manual_instructions"]=value;profile["updated_at"]=_now();profiles[agent["id"]]=profile;_save(data);return profile
+def learning_audit(agent,limit=50):return list(reversed(get_instruction_profile(agent).get("learning_audit",[])[-max(1,min(int(limit),100)):]))
 def instruction_card(agent):
-    p=get_instruction_profile(agent);return {"type":"agent_instructions","agent_id":agent["id"],"name":agent.get("name"),"role":agent.get("role"),"manual_instructions":p.get("manual_instructions","") or "","generated_prompt":build_agent_instructions(agent),"learned":{"communication":p.get("communication",{}),"task_preferences":p.get("task_preferences",{}),"learned_rules":p.get("learned_rules",[])}}
+    p=get_instruction_profile(agent);return {"type":"agent_instructions","agent_id":agent["id"],"name":agent.get("name"),"role":agent.get("role"),"manual_instructions":p.get("manual_instructions","") or "","generated_prompt":build_agent_instructions(agent),"learned":{"communication":p.get("communication",{}),"task_preferences":p.get("task_preferences",{}),"learned_rules":p.get("learned_rules",[])},"learning_audit":learning_audit(agent)}
 def purge_instruction_profile(agent_id):
     data=_load();profiles=data.setdefault("agents",{});existed=1 if str(agent_id) in profiles else 0;profiles.pop(str(agent_id),None)
     if existed:_save(data)
     return existed
 def _set(profile,section,key,value):
     bucket=profile.setdefault(section,{});changed=bucket.get(key)!=value;bucket[key]=value;return changed
+def _promote(profile,section,key,value,summary,signal,explicit=False):
+    bucket=profile.setdefault(section,{})
+    if bucket.get(key)==value:return False
+    candidates=profile.setdefault("learning_candidates",{});cid=f"{section}.{key}={value}";entry=candidates.get(cid,{"count":0});entry["count"]=int(entry.get("count",0))+1;entry["last_seen"]=_now();candidates[cid]=entry
+    # Explicit stable wording learns immediately. Ordinary preference-like wording must repeat.
+    if not explicit and entry["count"]<2:return False
+    bucket[key]=value;candidates.pop(cid,None);_audit(profile,"learned_preference",summary,"conversation","explicit" if explicit else "repeated",{"signal":signal});return True
 def learn_from_user_message(agent,message):
     text=" ".join(str(message or "").strip().split());low=text.casefold();data=_load();profiles=data.setdefault("agents",{});profile=profiles.get(agent["id"]) or _base_profile(agent);changes=[]
-    concise=bool(re.search(r"\b(?:repl(?:y|ies)|answers?|responses?)\b",low)) and bool(re.search(r"\b(?:short|brief|concise|compact)\b",low)) and bool(re.search(r"\b(?:i\s+(?:like|prefer|want)|keep|make|prefer|want|give|from now on|always)\b",low))
-    if concise and _set(profile,"communication","default_length","concise"):changes.append("Default replies should be concise.")
+    stable=bool(re.search(r"\b(?:i\s+(?:like|prefer|want)|from now on|always|whenever|usually|in general|my preference)\b",low));temporary=bool(re.search(r"\b(?:this time|this one|for this|just this|only this|right now|today only)\b",low))
+    explicit=stable and not temporary
+    concise=bool(re.search(r"\b(?:repl(?:y|ies)|answers?|responses?)\b",low)) and bool(re.search(r"\b(?:short|brief|concise|compact)\b",low))
+    if concise and not temporary and _promote(profile,"communication","default_length","concise","Default replies should be concise.",text,explicit):changes.append("Default replies should be concise.")
     detailed=bool(re.search(r"\b(?:reports?|analysis|research|breakdowns?)\b.{0,35}\b(?:detailed|thorough|comprehensive|long)\b|\b(?:detailed|thorough|comprehensive)\b.{0,25}\b(?:reports?|analysis|research|breakdowns?)\b",low))
-    if detailed and _set(profile,"task_preferences","reports","detailed"):changes.append("Reports and analysis should be detailed.")
-    bullets=bool(re.search(r"\b(?:use|prefer|want)\b.{0,20}\b(?:bullet|bullets|bullet points)\b",low));no_bullets=bool(re.search(r"\b(?:do not|don't|dont|avoid)\b.{0,20}\b(?:bullet|bullets|lists?)\b",low))
-    if bullets and _set(profile,"communication","format","bullets_when_useful"):changes.append("Use bullets when useful.")
-    if no_bullets and _set(profile,"communication","format","prose"):changes.append("Prefer prose over lists.")
+    if detailed and not temporary and _promote(profile,"task_preferences","reports","detailed","Reports and analysis should be detailed.",text,explicit):changes.append("Reports and analysis should be detailed.")
+    bullets=bool(re.search(r"\b(?:use|prefer|want)\b.{0,20}\b(?:bullet|bullets|bullet points)\b",low));no_bullets=bool(re.search(r"\b(?:do not|don't|dont|avoid|prefer no)\b.{0,20}\b(?:bullet|bullets|lists?)\b",low))
+    if bullets and not temporary and _promote(profile,"communication","format","bullets_when_useful","Use bullets when useful.",text,explicit):changes.append("Use bullets when useful.")
+    if no_bullets and not temporary and _promote(profile,"communication","format","prose","Prefer prose over lists.",text,explicit):changes.append("Prefer prose over lists.")
     formal=bool(re.search(r"\b(?:prefer|want|use)\b.{0,20}\bformal\b",low));casual=bool(re.search(r"\b(?:prefer|want|use)\b.{0,20}\b(?:casual|friendly|conversational)\b",low))
-    if formal and _set(profile,"communication","tone","formal"):changes.append("Use a formal tone.")
-    elif casual and _set(profile,"communication","tone","conversational"):changes.append("Use a conversational tone.")
+    if formal and not temporary and _promote(profile,"communication","tone","formal","Use a formal tone.",text,explicit):changes.append("Use a formal tone.")
+    elif casual and not temporary and _promote(profile,"communication","tone","conversational","Use a conversational tone.",text,explicit):changes.append("Use a conversational tone.")
     copyable=bool(re.search(r"\b(?:prompt|commands?|code)\b.{0,30}\b(?:copyable|easy to copy|copy and paste)\b|\b(?:copyable|copy and paste)\b.{0,30}\b(?:prompt|commands?|code)\b",low))
-    if copyable and _set(profile,"task_preferences","implementation_output","copyable"):changes.append("Implementation prompts/commands should be easy to copy.")
-    explicit=re.match(r"^(?:remember that |from now on |always |when you |whenever you )(.{8,220})$",text,re.I)
-    if explicit and not (concise or detailed or bullets or no_bullets or formal or casual or copyable):
-        rule=explicit.group(1).strip(" .");rules=profile.setdefault("learned_rules",[])
-        if rule and rule.casefold() not in {str(x).casefold() for x in rules}:rules.append(rule);profile["learned_rules"]=rules[-20:];changes.append("Saved a durable instruction.")
-    if changes:profile["updated_at"]=datetime.now().astimezone().isoformat(timespec="seconds");profiles[agent["id"]]=profile;_save(data)
+    if copyable and not temporary and _promote(profile,"task_preferences","implementation_output","copyable","Implementation prompts/commands should be easy to copy.",text,explicit):changes.append("Implementation prompts/commands should be easy to copy.")
+    durable=re.match(r"^(?:remember that |from now on |always |when you |whenever you )(.{8,220})$",text,re.I)
+    if durable and not temporary and not (concise or detailed or bullets or no_bullets or formal or casual or copyable):
+        rule=durable.group(1).strip(" .");rules=profile.setdefault("learned_rules",[])
+        if rule and rule.casefold() not in {str(x).casefold() for x in rules}:rules.append(rule);profile["learned_rules"]=rules[-20:];changes.append("Saved a durable instruction.");_audit(profile,"learned_rule",rule,"conversation","explicit")
+    if changes or profile.get("learning_candidates"):
+        profile["updated_at"]=_now();profiles[agent["id"]]=profile;_save(data)
     return changes
 def build_agent_instructions(agent):
     p=get_instruction_profile(agent);name=str(agent.get("name") or "Agent");role=str(agent.get("role") or "general");purpose=str(agent.get("purpose") or "").strip();permissions=agent.get("permissions") or {};skills=agent.get("skills") or []
