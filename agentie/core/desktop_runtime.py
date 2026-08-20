@@ -8,6 +8,7 @@ from typing import Any
 from agentie.core.wsl_bridge import list_files as list_linux_files
 from agentie.core.wsl_bridge import read_text_file as read_linux_text_file
 from agentie.core.wsl_bridge import run_terminal as run_linux_terminal
+from agentie.core.wsl_bridge import write_text_file as write_linux_text_file
 from agentie.core.wsl_desktop import ensure_started as ensure_wsl_desktop, status as wsl_status, stop as stop_wsl_desktop
 
 WORKSPACE = Path.cwd() / "workspace"
@@ -91,6 +92,9 @@ def _natural_command(text: str) -> str | None:
     m = re.match(r"^(?:read|open|show)\s+(?:the\s+)?linux file\s+(.+)$", text, re.I)
     if m:
         return "linux file " + m.group(1).strip()
+    m = re.match(r"^(?:write|save|create)\s+(?:the\s+)?linux file\s+(.+?)\s+(?:with|containing)\s+(.+)$", text, re.I | re.S)
+    if m:
+        return "write linux file " + m.group(1).strip() + " :: " + m.group(2)
     return None
 
 
@@ -146,6 +150,13 @@ def route_desktop_request(message: str) -> dict[str, Any] | None:
         if low.startswith("linux file "):
             item = read_linux_text_file(command[len("linux file "):].strip())
             return {"message": f"Opened {item['path']} from Linux.", "card": desktop_card("file", file=item, workspace=item["workspace"], mode="wsl")}
+        if low.startswith("write linux file "):
+            payload = command[len("write linux file "):]
+            if " :: " not in payload:
+                raise ValueError("Use: write Linux file <path> with <content>.")
+            name, content = payload.split(" :: ", 1)
+            item = write_linux_text_file(name.strip(), content)
+            return {"message": f"Saved {item['path']} in Linux.", "card": desktop_card("file", file={**item, "binary": False, "content": content[:200000]}, workspace=item["workspace"], mode="wsl")}
         if low in {"notes", "open notes"}:
             return {"message": "Notes.", "card": desktop_card("notes", items=_read_json("notes.json", []))}
         if low in {"tasks", "open tasks"}:
