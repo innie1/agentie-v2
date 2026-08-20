@@ -168,29 +168,61 @@ def _fallback_proposal(text: str, candidate: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _desktop_fallback_card(info: dict[str, Any], candidate: dict[str, Any], task: str, *, navigated_url: str | None = None) -> dict[str, Any]:
+    return {
+        "type":"desktop_view",
+        "app":"desktop",
+        "mode":"wsl",
+        "running":bool(info.get("running")),
+        "novnc_url":info.get("novnc_url") or info.get("kasmvnc_url"),
+        "kasmvnc_url":info.get("kasmvnc_url") or info.get("novnc_url"),
+        "chrome_ready":bool(info.get("chrome_ready")),
+        "setup_required":bool(info.get("setup_required")),
+        "setup_command":info.get("setup_command"),
+        "distro":info.get("distro"),
+        "fallback_service":candidate["service"],
+        "fallback_task":task,
+        "fallback_url":navigated_url or candidate["url"],
+        "consequential":candidate["consequential"],
+    }
+
+
 async def _launch_computer_fallback(task: str) -> dict[str, Any]:
     candidate=_service_for_task(task,ignore_plugins=True)
     if not candidate:
         return {"message":"I couldn’t determine which website the Computer should use for that task.","card":None}
-    from agentie.core.browser_automation import _ensure_page
+    from agentie.core.wsl_desktop import ensure_started as ensure_wsl_desktop, _run_wsl
     try:
-        page=await _ensure_page(str(candidate["url"]))
-        title=await page.title()
-        await _publish_frame(page,status="ready",url=page.url,detail=f"Computer ready for: {task[:160]}")
-        _set_live_state(active=True,status="ready",url=page.url,detail=f"Computer fallback ready for {candidate['service']}")
-        return {
-            "message":f"Agentie Computer is open on {candidate['service']}. I’ve staged the task there. Continue with a browser instruction such as click, type, search, or submit; consequential actions still require approval.",
-            "card":{
-                "type":"computer_fallback",
-                "service":candidate["service"],
-                "url":page.url,
-                "title":title or candidate["service"],
-                "task":task,
-                "status":"ready",
-                "computer_mode":"wsl",
-                "consequential":candidate["consequential"],
-            },
-        }
+        # Start the real desktop first. This path is bounded and runs off the event loop,
+        # so the chat cannot sit forever on an unexplained "Agentie is working" state.
+        info=await asyncio.wait_for(asyncio.to_thread(ensure_wsl_desktop),timeout=40)
+        try:
+            # XFCE notifyd can inherit a stale WSLg/Wayland environment and display a
+            # modal protocol warning over KasmVNC. It is not required by Agentie.
+            await asyncio.to_thread(_run_wsl,"pkill -u \"$(id -u)\" -f xfce4-notifyd >/dev/null 2>&1 || true",8)
+        except Exception:
+            pass
+        navigated_url=None
+        if info.get("chrome_ready") and info.get("cdp_url"):
+            try:
+                from agentie.core.browser_automation import _ensure_page
+                page=await asyncio.wait_for(_ensure_page(str(candidate["url"])),timeout=12)
+                navigated_url=page.url
+                await _publish_frame(page,status="ready",url=page.url,detail=f"Computer ready for: {task[:160]}")
+            except Exception:
+                # The desktop is still useful even when CDP navigation is temporarily
+                # unavailable; never hide a ready Computer behind a browser timeout.
+                navigated_url=None
+        _set_live_state(active=True,status="ready",url=navigated_url or str(candidate["url"]),detail=f"Computer fallback ready for {candidate['service']}")
+        message=(
+            f"Agentie Computer is open on {candidate['service']} and the task is staged there."
+            if navigated_url else
+            f"Agentie Computer is ready for {candidate['service']}. Chrome automation is not ready yet, but the visible desktop is available and the task is staged there."
+        )
+        return {"message":message,"card":_desktop_fallback_card(info,candidate,task,navigated_url=navigated_url)}
+    except asyncio.TimeoutError:
+        _set_live_state(active=False,status="error",url=str(candidate["url"]),detail="Computer fallback timed out",error="Desktop startup timed out")
+        return {"message":"Agentie Computer took too long to start. The request stopped instead of remaining stuck; try starting the Computer directly and retry the task.","card":None}
     except Exception as exc:
         _set_live_state(active=False,status="error",url=str(candidate["url"]),detail="Computer fallback failed",error=str(exc)[:500])
         return {"message":f"I couldn’t start the Computer fallback: {str(exc)[:500]}","card":None}
@@ -216,7 +248,6 @@ async def capture_website(url: str, *, track_change: bool=False)->dict[str,Any]:
     else:changed,similarity=False,None
     excerpt=text[:900];_set_live_state(active=False,status="done",url=page.url,detail="Browser task complete")
     return {"message":f"Checked {url}. The page has meaningfully changed since the previous check." if track_change and changed and previous else f"Checked {url}. No meaningful change was detected." if track_change and previous else f"Captured a screenshot of {url}.","card":_card(url,title,filename,changed,similarity,excerpt),"status":status,"changed":changed,"first_check":previous is None if track_change else True}
-
 
 async def route_browser_request(message: str)->dict[str,Any]|None:
     text=" ".join(str(message or "").strip().split())
