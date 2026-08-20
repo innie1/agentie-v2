@@ -20,12 +20,14 @@ class SpecialtyDelegationRegressionTests(unittest.TestCase):
         team_orchestrator.TEAM_FILE=self.old_team;team_orchestrator.WORKSPACE=self.old_tw
         self.temp.cleanup()
 
-    def test_out_of_specialty_task_routes_to_existing_specialist(self):
+    def test_out_of_specialty_task_proposes_existing_specialist_before_starting(self):
         with patch.object(specialty_router,'start_team_job') as start:
             result=specialty_router.maybe_auto_delegate('Write a social media launch post',self.alex['session_prefix']+'main')
-        self.assertIsNotNone(result);self.assertEqual(result['card']['type'],'agent_handoff')
+        self.assertIsNotNone(result);self.assertEqual(result['card']['type'],'agent_handoff_proposal')
         self.assertEqual(result['card']['from_agent']['name'],'Alex');self.assertEqual(result['card']['to_agent']['name'],'Writer')
-        start.assert_called_once()
+        self.assertEqual(result['card']['specialty'],'writing')
+        self.assertIn('Accept',result['card']['actions']);self.assertIn('Always accept',result['card']['actions'])
+        start.assert_not_called()
 
     def test_agent_keeps_work_that_matches_own_specialty(self):
         result=specialty_router.maybe_auto_delegate('Write a blog post about our launch',self.writer['session_prefix']+'main')
