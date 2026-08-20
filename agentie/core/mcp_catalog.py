@@ -33,9 +33,6 @@ def presets() -> list[dict[str, Any]]:
         _preset("time-mcp","Time","Timezone-aware time queries and timezone conversion.","uvx mcp-server-time","uv / uvx",["timezone","time_conversion"],False,permission_groups=["read"]),
         _preset("git","Git","Read, search and manipulate the current local Git repository.",f'uvx mcp-server-git --repository "{_repo_path()}"',"uv / uvx",["git","repository","commit","branch","diff","log"],True,permission_groups=["git_read","git_write"]),
         _preset("everything","Everything","MCP reference/test server exposing tools, resources and prompts.",_npx("-y","@modelcontextprotocol/server-everything"),"Node.js / npx",["mcp_testing","tools","resources","prompts"],False,permission_groups=["read"]),
-        _preset("imap-email","IMAP / SMTP Email","Community MCP for IMAP/SMTP email providers; inspect before enabling write actions.",_npx("-y","@aiwerk/mcp-server-imap"),"Node.js / npx · mail credentials",["email","imap","smtp","search","send"],False,permission_groups=["email_read","email_write","send"],registry_name="io.github.AIWerk/mcp-server-imap",unverified_command=True),
-        _preset("calcom","Cal.com","Community MCP for Cal.com scheduling, bookings, event types and availability.",_npx("-y","@aiwerk/mcp-server-cal"),"Node.js / npx · Cal.com credentials",["calendar","bookings","availability","events"],False,permission_groups=["calendar_read","calendar_write"],registry_name="io.github.AIWerk/mcp-server-cal",unverified_command=True),
-        _preset("mcp-finder","MCP Finder","Discovery helper that can search multiple MCP registries. Keep installation and permissions user-controlled.",_npx("-y","mcpfinder"),"Node.js / npx",["mcp_discovery","registry_search"],False,permission_groups=["web_read"],registry_name="dev.mcpfinder/server",unverified_command=True),
     ]
 
 
