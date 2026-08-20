@@ -63,8 +63,9 @@ Agentie includes local tools and routing for capabilities such as:
 - Per-agent overrides: an individual agent can still be explicitly blocked from a globally allowed capability.
 - Consequential actions remain separately approval-gated even when the underlying skill/MCP is globally allowed.
 - Connected MCP examples include Filesystem, Playwright, GitHub, Memory, Fetch, Time and Git when their real runtimes/dependencies are available.
-- `Last30Days` is integrated as a real external research skill from `mvanhorn/last30days-skill`, with upstream Git installation, runtime health reporting and execution of its actual `last30days.py` engine.
-- Last30Days currently requires Git, Node.js and Python 3.12+; Agentie reports the skill as not ready rather than pretending it can execute when these requirements are missing.
+- `Last30Days` now defaults to an Agentie-native Python 3.11+ implementation that searches separate recent-source lanes for Reddit, X, YouTube, Hacker News, GitHub and the wider web.
+- Native Last30Days uses the exact gathered evidence for synthesis and citations, and falls back to a deterministic evidence summary if the configured AI provider is unavailable.
+- The original `mvanhorn/last30days-skill` remains available as an optional upstream engine with its own Git/Python 3.12+ requirements.
 
 Some service integrations still require credentials, provider setup or additional reliability work before they should be considered complete product integrations.
 
@@ -104,6 +105,7 @@ The current UI includes:
 - Collapsible workspace panels
 - Routines panel
 - Skills/MCP catalog with global defaults and per-agent restrictions
+- Native Last30Days result cards with source coverage and clickable evidence
 
 ## Architecture
 
@@ -122,7 +124,7 @@ agentie-v2/
 └── README.md
 ```
 
-Important core modules include `agent_registry.py`, `agent_prompt.py`, `npc_brain.py`, `job_engine.py`, `team_orchestrator.py`, `memory_store.py`, `advanced_local_router.py`, `agent_access.py`, `skill_registry.py`, `external_skill_runtime.py`, `capability_router.py`, `browser_automation.py`, and `computer_session.py`.
+Important core modules include `agent_registry.py`, `agent_prompt.py`, `npc_brain.py`, `job_engine.py`, `team_orchestrator.py`, `memory_store.py`, `advanced_local_router.py`, `agent_access.py`, `skill_registry.py`, `native_last30days.py`, `external_skill_runtime.py`, `capability_router.py`, `browser_automation.py`, and `computer_session.py`.
 
 ## Local-first execution philosophy
 
@@ -150,18 +152,26 @@ This means users do not need to approve the same safe tool separately for every 
 
 ## Last30Days
 
-Agentie can install the upstream Last30Days skill into `workspace/external_skills/last30days-skill`.
+Agentie now includes a native Last30Days-compatible research engine that works on Python 3.11+ and is the default for normal `Last30Days ...` commands.
+
+The native engine searches recent-source lanes for Reddit, X, YouTube, Hacker News, GitHub and the general web, de-duplicates evidence, synthesizes only from the gathered evidence, cites evidence IDs, and returns a dedicated research card. If the configured AI provider is unavailable, the gathered evidence is still returned as a deterministic summary rather than failing the whole skill.
 
 Useful commands:
 
 ```text
-Install Last30Days skill
 Last30Days status
 Last30Days AI coding agents
+Last30Days what users want in AI assistants
+```
+
+The original upstream engine is still optional:
+
+```text
+Install Last30Days skill
 Update Last30Days skill
 ```
 
-The integration runs the actual upstream `skills/last30days/scripts/last30days.py` engine with `--emit=compact`. Current upstream Last30Days v3 requires Python 3.12+. If Agentie is running under Python 3.11, install Python 3.12 separately (for example with `py -3.12` available on Windows); the main Agentie runtime does not need to be migrated immediately.
+That optional upstream runtime is installed into `workspace/external_skills/last30days-skill` and currently requires Python 3.12+. Agentie's native implementation does not require that runtime.
 
 ## Run locally
 
@@ -207,7 +217,7 @@ When extending Agentie:
 ## Current development roadmap
 
 ### 1. Skills and plugin permissions - active
-Continue hardening real external skill/MCP discovery, credentials, health checks and permission UX. Global defaults + per-agent restrictions are now implemented.
+Continue hardening real external skill/MCP discovery, credentials, health checks and permission UX. Global defaults + per-agent restrictions are now implemented, and Last30Days now has a native Python 3.11+ runtime.
 
 ### 2. Background/routine reliability - next
 Harden scheduled work, restart recovery, missed-run behavior, job continuation and failure recovery.
