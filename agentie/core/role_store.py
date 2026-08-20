@@ -32,6 +32,12 @@ def resolve_role(agent_name:str)->dict[str,str]:
     if assigned and assigned in roles:return {"name":assigned,**roles[assigned]}
     if key in roles:return {"name":key,**roles[key]}
     base=key if key in BASE_AGENTS else "general";return {"name":base,"base":base,"instruction":f"Act in the {base} role for this task."}
+def configure_custom_role(agent_name:str,role_name:str,instruction:str,base:str|None=None)->dict[str,str]:
+    agent_name=agent_name.lower().strip();role_name=role_name.lower().strip();base=(base or agent_name).lower().strip()
+    if base not in BASE_AGENTS:base="general"
+    instruction=" ".join(str(instruction or "").strip().split())[:8000]
+    if not instruction:instruction=f"Act as {role_name}. Adapt your approach and communication to that role while obeying Agentie safety and tool rules."
+    data=_load();data.setdefault("custom_roles",{})[role_name]={"base":base,"instruction":instruction};data.setdefault("assignments",{})[agent_name]=role_name;data["updated_at"]=datetime.now().astimezone().isoformat(timespec="seconds");_save(data);return resolve_role(agent_name)
 def assign_role(agent_name:str,role_name:str)->dict[str,str]:
     agent_name=agent_name.lower().strip();role_name=role_name.lower().strip();data=_load();roles={**ROLE_PRESETS,**data.get("custom_roles",{})}
     if role_name not in roles:
@@ -48,6 +54,15 @@ def route_role_command(message:str)->dict[str,Any]|None:
     text=" ".join(message.strip().split());lower=text.lower().strip(" .?!")
     if re.search(r"\b(show|list|what are)\b.*\b(agent )?roles?\b",lower):
         state=list_roles();return {"message":"Here are the current agent role assignments.","card":{"type":"agent_roles",**state}}
+    # UI/runtime configuration path for conversationally-created agents. This is
+    # deliberately a local command so creating or switching an Agentie persona
+    # never burns a provider call and the generated instruction becomes the
+    # actual system-level runtime role used by build_assistant().
+    m=re.match(r'^configure agent (general|research|coding|manager|github) role ([a-z0-9][a-z0-9_-]{1,63}) base (general|research|coding|manager|github) instruction (.+)$',text,re.I)
+    if m:
+        agent,role,base,instruction=m.group(1),m.group(2),m.group(3),m.group(4).strip()
+        resolved=configure_custom_role(agent,role,instruction,base)
+        return {"message":f"Configured {agent.title()} agent as {resolved['name']}.","card":{"type":"agent_role","agent":agent,**resolved}}
     patterns=[
         r"\b(?:make|set|assign|change)\s+(?:the\s+)?(general|research|coding|manager|github)(?:\s+agent)?\s+(?:to|as|into)\s+(?:a|an|the)?\s*([a-z][a-z0-9 -]{1,50})$",
         r"\b(?:make|set|assign|change)\s+(?:the\s+)?(general|research|coding|manager|github)(?:\s+agent)?\s+(?:to\s+)?(?:the\s+)?role\s+of\s+(?:a|an|the)?\s*([a-z][a-z0-9 -]{1,50})$",
