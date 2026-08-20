@@ -4,7 +4,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 from agentie.core.agent_registry import create_agent,delete_agent,get_agent,hierarchy,list_agents,update_agent_manager,update_agent_profile
-from agentie.core.agent_prompt import instruction_card,set_manual_instructions
+from agentie.core.agent_prompt import instruction_card,learning_audit,set_manual_instructions
 from agentie.core.team_orchestrator import route_team_command
 from agentie.tools.approval_tools import approval_is_granted,create_approval
 WORKSPACE=Path.cwd()/"workspace";ROLES=WORKSPACE/"agent_roles.json";BASE_AGENTS={"general","research","coding","manager","github"}
@@ -54,6 +54,11 @@ def route_role_command(message):
     if team is not None:return team
     created=_agent_creation_command(text)
     if created is not None:return created
+    audit=re.match(r"^(?:show|view|what has|what did)\s+(?:agent\s+)?(.+?)(?:['’]s)?\s+(?:learning audit|learned history|instruction history|learned)[.!?]?$",text,re.I)
+    if audit:
+        agent=get_agent(audit.group(1).strip())
+        if not agent:return {"message":"Agent was not found.","card":None}
+        items=learning_audit(agent);return {"message":f"{agent['name']} has {len(items)} recorded instruction-learning change(s).","card":{"type":"agent_learning_audit","agent_id":agent['id'],"name":agent['name'],"items":items}}
     view=re.match(r"^(?:show|view|open|inspect)\s+(?:agent\s+)?(.+?)(?:['’]s)?\s+(?:system\s+prompt|instructions|prompt)[.!?]?$",text,re.I)
     if view:
         agent=get_agent(view.group(1).strip())
@@ -79,11 +84,9 @@ def route_role_command(message):
         target=get_agent(delete_match.group(1).strip(' .?!\"“”'))
         if not target:return {"message":"Agent was not found.","card":None}
         action=f"delete_agent:{target['id']}"
-        if not approval_is_granted(action):
-            approval=create_approval(action,f"Permanently delete {target['name']} and all of this agent's private memories, chats, semantic shards and agent-owned data.",{"kind":"agent_delete","agent_id":target["id"],"agent_name":target["name"]});return {"message":f"Deleting {target['name']} is permanent. Approve the deletion to continue.","card":{"type":"approvals","items":[approval]}}
+        if not approval_is_granted(action):approval=create_approval(action,f"Permanently delete {target['name']} and all of this agent's private memories, chats, semantic shards and agent-owned data.",{"kind":"agent_delete","agent_id":target["id"],"agent_name":target["name"]});return {"message":f"Deleting {target['name']} is permanent. Approve the deletion to continue.","card":{"type":"approvals","items":[approval]}}
         result=delete_agent(target["id"]);p=result["purged"];return {"message":f"Deleted {target['name']} permanently, including {p.get('memories',0)} memories, {p.get('messages',0)} chat messages and {p.get('semantic_items',0)} semantic memory items.","card":{"type":"agent_deleted","id":target["id"],"name":target["name"],"purged":p}}
-    if lower in {"agents","show agents","list agents","show my agents","list my agents","agent directory","show agent directory"}:
-        items=list_agents();return {"message":f"You have {len(items)} persistent agent(s).","card":{"type":"agents","items":items}}
+    if lower in {"agents","show agents","list agents","show my agents","list my agents","agent directory","show agent directory"}:items=list_agents();return {"message":f"You have {len(items)} persistent agent(s).","card":{"type":"agents","items":items}}
     m=re.match(r"^(?:show|inspect|open)\s+(?:agent\s+)?(.+)$",text,re.I)
     if m and "roles" not in lower:
         agent=get_agent(m.group(1).strip(' .?!\"“”'))
