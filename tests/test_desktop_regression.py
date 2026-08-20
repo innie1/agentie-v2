@@ -23,9 +23,9 @@ class AgentieDesktopRegressionTests(unittest.TestCase):
     def test_natural_app_commands_route_to_desktop(self):
         cases = {
             "Open the terminal": "terminal",
-            "Show my files": "files",
-            "Open my notes": "notes",
-            "Open my tasks": "tasks",
+            "Open file manager": "files",
+            "Open computer notes": "notes",
+            "Open computer tasks": "tasks",
             "Show desktop": "home",
         }
         for text, app in cases.items():
@@ -35,8 +35,13 @@ class AgentieDesktopRegressionTests(unittest.TestCase):
                 self.assertEqual(result["card"]["type"], "desktop_view")
                 self.assertEqual(result["card"]["app"], app)
 
+    def test_existing_native_phrases_are_not_stolen(self):
+        for text in ("Show my tasks", "Show my files", "Open my notes"):
+            with self.subTest(text=text):
+                self.assertIsNone(desktop_runtime.route_desktop_request(text))
+
     def test_files_app_uses_real_workspace(self):
-        result = desktop_runtime.route_desktop_request("Show my files")
+        result = desktop_runtime.route_desktop_request("Desktop control: files")
         names = {item["name"] for item in result["card"]["items"]}
         self.assertIn("hello.txt", names)
         opened = desktop_runtime.route_desktop_request("Desktop control: open file hello.txt")
