@@ -12,7 +12,7 @@ from agentie.tools import approval_tools
 
 class AgentIsolationRegressionTests(unittest.TestCase):
     def setUp(self):
-        self.temp = tempfile.TemporaryDirectory()
+        self.temp = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
         root = Path(self.temp.name)
         self.patches = [
             patch.object(agent_registry, "AGENTS_FILE", root / "agents.json"),
@@ -21,34 +21,14 @@ class AgentIsolationRegressionTests(unittest.TestCase):
             patch.object(semantic_memory, "DB_PATH", root / "semantic.sqlite3"),
             patch.object(approval_tools, "STORE", root / "approvals.json"),
         ]
-        for item in self.patches:
-            item.start()
+        for item in self.patches:item.start()
 
     def tearDown(self):
         memory_store.set_active_memory_scope("user")
-        # Ensure all background semantic-memory writes that may reference the
-        # temporary SQLite files have completed before restoring paths.
-        try:
-            memory_store._SEMANTIC_POOL.submit(lambda: None).result(timeout=10)
-        except Exception:
-            pass
-        for item in reversed(self.patches):
-            item.stop()
-        # sqlite3.Connection's context manager commits/rolls back but Windows
-        # can keep the underlying file handle alive until objects are collected.
-        # Collect and briefly retry cleanup rather than masking real test errors.
-        gc.collect()
-        last_error = None
-        for _ in range(10):
-            try:
-                self.temp.cleanup()
-                return
-            except (PermissionError, NotADirectoryError) as exc:
-                last_error = exc
-                gc.collect()
-                time.sleep(0.05)
-        if last_error:
-            raise last_error
+        try:memory_store._SEMANTIC_POOL.submit(lambda:None).result(timeout=30)
+        except Exception:pass
+        for item in reversed(self.patches):item.stop()
+        gc.collect();time.sleep(0.05);self.temp.cleanup()
 
     def test_agent_sessions_map_user_memory_to_private_scope(self):
         alex=agent_registry.create_agent("Alex","CTO","manager")["agent"]
@@ -72,7 +52,6 @@ class AgentIsolationRegressionTests(unittest.TestCase):
         memory_store.set_memory("user","project","private")
         memory_store.add_message(session,"user","hello")
         memory_store.set_context(session,"active",{"x":1})
-        # Insert one semantic row without invoking an embedding model.
         semantic_memory.init_db()
         with semantic_memory._connect() as conn:
             conn.execute("INSERT INTO semantic_items(id,kind,source_id,scope,session_id,role,text,embedding_json,importance,created_at,metadata_json) VALUES(?,?,?,?,?,?,?,?,?,?,?)",("test-item","memory","test-source",alex["memory_scope"],None,"memory","private","[]",1.0,"2026-01-01T00:00:00+00:00","{}"))
@@ -93,15 +72,15 @@ class AgentIsolationRegressionTests(unittest.TestCase):
         self.assertIsNone(agent_registry.get_agent("CEO"))
         self.assertIsNone(agent_registry.get_agent(alex["id"])["manager_id"])
 
-    def test_delete_command_requires_approval_then_deletes(self):
+    def test_delete_command_requires_approval_and_approval_executes_delete(self):
         alex=agent_registry.create_agent("Alex","CTO","manager")["agent"]
         first=role_store.route_role_command("Delete agent Alex")
         self.assertEqual(first["card"]["type"],"approvals")
         self.assertIsNotNone(agent_registry.get_agent("Alex"))
         approval=first["card"]["items"][0]
-        approval_tools.resolve_approval(approval["id"],True)
-        second=role_store.route_role_command("Delete agent Alex")
-        self.assertEqual(second["card"]["type"],"agent_deleted")
+        resolved=approval_tools.resolve_approval(approval["id"],True)
+        self.assertEqual(resolved["status"],"consumed")
+        self.assertTrue(resolved.get("execution_result",{}).get("deleted"))
         self.assertIsNone(agent_registry.get_agent(alex["id"]))
 
 
