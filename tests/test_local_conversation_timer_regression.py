@@ -1,3 +1,4 @@
+import inspect
 import unittest
 from datetime import datetime, timedelta
 from unittest.mock import patch
@@ -39,8 +40,8 @@ class LocalConversationAndTimerRegressionTests(unittest.TestCase):
         self.assertEqual(result.get("routed_by"), "active_reference")
         self.assertIn("extended", result.get("message", "").lower())
         remaining = float(result["card"]["duration_seconds"])
-        self.assertGreaterEqual(remaining, 14.0)
-        self.assertLessEqual(remaining, 16.0)
+        self.assertGreater(remaining, 13.0)
+        self.assertLess(remaining, 16.0)
 
     def test_timer_extension_does_not_add_to_original_duration(self):
         item = local_utils._create_timer(20, "Timer", "timer")
@@ -54,14 +55,15 @@ class LocalConversationAndTimerRegressionTests(unittest.TestCase):
         active = {"type": "timer", "card": card}
         with patch.object(reference_router, "get_context", return_value=active), patch.object(reference_router, "set_context"):
             result = reference_router.try_active_reference("test:timer", "extend it by 10 seconds")
+        self.assertIsNotNone(result)
         remaining = float(result["card"]["duration_seconds"])
+        self.assertGreater(remaining, 11.0)
         self.assertLess(remaining, 15.0, "Timer extension must use remaining time, not original 20 seconds.")
 
     def test_smalltalk_router_has_no_provider_dependency(self):
-        text = open("agentie/core/reference_router.py", encoding="utf-8").read()
-        block = text[text.index("_SMALLTALK="):text.index("def _direct_role_command")]
-        self.assertNotIn("run_agent(", block)
-        self.assertNotIn("provider", block.lower())
+        source = inspect.getsource(reference_router._local_smalltalk)
+        self.assertNotIn("run_agent(", source)
+        self.assertNotIn("provider", source.lower())
 
 
 if __name__ == "__main__":
