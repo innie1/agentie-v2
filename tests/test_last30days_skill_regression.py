@@ -58,5 +58,11 @@ class Last30DaysSkillRegressionTests(unittest.TestCase):
         self.assertIn("LAST-30-DAYS EVIDENCE",text)
         self.assertNotIn('answer_web_search',text)
 
+    def test_native_result_has_dedicated_ui_not_raw_json(self):
+        ui=Path('frontend/plugin_access.js').read_text(encoding='utf-8')
+        self.assertIn("card?.type==='last30days'",ui)
+        self.assertIn('last30-source',ui)
+        self.assertIn('source_counts',ui)
+
 
 if __name__=='__main__':unittest.main()
