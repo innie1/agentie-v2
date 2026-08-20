@@ -60,39 +60,41 @@ def _http_ready(url: str, timeout: float = 0.6) -> bool:
         return False
 
 
-def _urls(host: str | None) -> tuple[str | None, str | None]:
-    if not host:
-        return None, None
-    return (
-        f"http://{host}:6080/vnc_lite.html?autoconnect=1&resize=scale&reconnect=1&path=websockify",
-        f"http://{host}:9222",
-    )
+def _urls(novnc_host: str | None, cdp_host: str | None) -> tuple[str | None, str | None]:
+    novnc = f"http://{novnc_host}:6080/vnc_lite.html?autoconnect=1&resize=scale&reconnect=1&path=websockify" if novnc_host else None
+    cdp = f"http://{cdp_host}:9222" if cdp_host else None
+    return novnc, cdp
 
 
-def _reachable_host(wsl_ip: str | None) -> str | None:
+def _reachable_endpoints(wsl_ip: str | None) -> tuple[str | None, str | None]:
+    novnc_host = None
+    cdp_host = None
     for host in ("127.0.0.1", wsl_ip):
-        if not host:
-            continue
-        if _port_open(host, 6080) and _http_ready(f"http://{host}:9222/json/version"):
-            return host
-    return None
+        if host and not novnc_host and _port_open(host, 6080):
+            novnc_host = host
+    for host in ("127.0.0.1", wsl_ip):
+        if host and not cdp_host and _http_ready(f"http://{host}:9222/json/version"):
+            cdp_host = host
+    return novnc_host, cdp_host
 
 
 def status() -> dict[str, Any]:
     supported = bool(_windows_wsl())
     wsl_ip = _wsl_ip() if supported else None
-    host = _reachable_host(wsl_ip) if supported else None
-    novnc_url, cdp_url = _urls(host)
+    novnc_host, cdp_host = _reachable_endpoints(wsl_ip) if supported else (None, None)
+    novnc_url, cdp_url = _urls(novnc_host, cdp_host)
     return {
         "supported": supported,
-        "running": bool(host),
-        "novnc_ready": bool(host),
-        "chrome_ready": bool(host),
+        "running": bool(novnc_host),
+        "novnc_ready": bool(novnc_host),
+        "chrome_ready": bool(cdp_host),
         "novnc_url": novnc_url,
         "cdp_url": cdp_url,
         "distro": DISTRO,
         "wsl_ip": wsl_ip,
-        "bridge_host": host,
+        "bridge_host": novnc_host,
+        "novnc_host": novnc_host,
+        "cdp_host": cdp_host,
     }
 
 
@@ -125,7 +127,6 @@ def _set_ini_option_preserving_text(text: str, section: str, key: str, value: st
 
 
 def _ensure_mirrored_networking() -> bool:
-    """Enable WSL mirrored networking once, preserving the rest of .wslconfig."""
     if os.name != "nt":
         return False
     path = Path.home() / ".wslconfig"
@@ -153,7 +154,7 @@ def _shutdown_wsl() -> None:
 
 
 def _bootstrap_packages() -> None:
-    script = "DEBIAN_FRONTEND=noninteractive apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y tigervnc-standalone-server tigervnc-tools novnc websockify xfce4 dbus-x11"
+    script = "DEBIAN_FRONTEND=noninteractive apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y tigervnc-standalone-server tigervnc-tools novnc websockify xfce4 dbus-x11 socat"
     try:
         proc = _run_wsl(script, timeout=300, root=True)
     except subprocess.TimeoutExpired as exc:
@@ -184,10 +185,15 @@ command -v websockify >/dev/null 2>&1 || missing="$missing websockify"
 command -v startxfce4 >/dev/null 2>&1 || missing="$missing xfce4"
 command -v dbus-launch >/dev/null 2>&1 || missing="$missing dbus-x11"
 command -v google-chrome >/dev/null 2>&1 || missing="$missing google-chrome"
+command -v socat >/dev/null 2>&1 || missing="$missing socat"
 if [ -n "$missing" ]; then echo "__MISSING__:$missing"; exit 42; fi
+
+WSL_IP="$(hostname -I | awk '{print $1}')"
+if [ -z "$WSL_IP" ]; then echo '__NO_WSL_IP__'; exit 57; fi
 
 pkill -f 'Xtigervnc.*:1' >/dev/null 2>&1 || true
 pkill -f 'websockify.*6080' >/dev/null 2>&1 || true
+pkill -f 'socat.*9222' >/dev/null 2>&1 || true
 pkill -f 'google-chrome.*\.agentie-chrome' >/dev/null 2>&1 || true
 pkill -f 'AGENTIE_DESKTOP=1.*startxfce4' >/dev/null 2>&1 || true
 sleep 0.3
@@ -220,6 +226,8 @@ nohup env \
 
 nohup websockify --web=/usr/share/novnc 0.0.0.0:6080 127.0.0.1:5901 >/tmp/agentie-novnc.log 2>&1 </dev/null &
 
+# Chrome stays on Ubuntu loopback. Some Chrome builds ignore a requested
+# non-loopback DevTools bind. socat exposes only the WSL-IP side of 9222.
 nohup env \
   -u WAYLAND_DISPLAY -u WAYLAND_SOCKET \
   DISPLAY=127.0.0.1:1 \
@@ -228,16 +236,26 @@ nohup env \
   --ozone-platform=x11 \
   --user-data-dir="$HOME/.agentie-chrome" \
   --remote-debugging-port=9222 \
-  --remote-debugging-address=0.0.0.0 \
+  --remote-debugging-address=127.0.0.1 \
   --remote-allow-origins=* \
   --no-first-run --no-default-browser-check --disable-gpu \
   about:blank >/tmp/agentie-chrome.log 2>&1 </dev/null &
 
+for i in $(seq 1 80); do
+  (echo >/dev/tcp/127.0.0.1/9222) >/dev/null 2>&1 && break
+  sleep 0.1
+done
+if ! (echo >/dev/tcp/127.0.0.1/9222) >/dev/null 2>&1; then
+  echo '__CHROME_ERROR__'; cat /tmp/agentie-chrome.log 2>/dev/null || true; exit 58
+fi
+
+nohup socat TCP-LISTEN:9222,bind="$WSL_IP",reuseaddr,fork TCP:127.0.0.1:9222 >/tmp/agentie-cdp-bridge.log 2>&1 </dev/null &
+
 for i in $(seq 1 120); do
-  novnc_ok=0; chrome_ok=0
+  novnc_ok=0; cdp_ok=0
   (echo >/dev/tcp/127.0.0.1/6080) >/dev/null 2>&1 && novnc_ok=1
-  (echo >/dev/tcp/127.0.0.1/9222) >/dev/null 2>&1 && chrome_ok=1
-  if [ "$novnc_ok" = 1 ] && [ "$chrome_ok" = 1 ]; then echo '__READY__'; exit 0; fi
+  (echo >/dev/tcp/"$WSL_IP"/9222) >/dev/null 2>&1 && cdp_ok=1
+  if [ "$novnc_ok" = 1 ] && [ "$cdp_ok" = 1 ]; then echo "__READY__:$WSL_IP"; exit 0; fi
   sleep 0.2
 done
 
@@ -246,6 +264,7 @@ echo '--- VNC ---'; cat /tmp/agentie-vnc.log 2>/dev/null || true
 echo '--- XFCE ---'; cat /tmp/agentie-xfce.log 2>/dev/null || true
 echo '--- noVNC ---'; cat /tmp/agentie-novnc.log 2>/dev/null || true
 echo '--- Chrome ---'; cat /tmp/agentie-chrome.log 2>/dev/null || true
+echo '--- CDP bridge ---'; cat /tmp/agentie-cdp-bridge.log 2>/dev/null || true
 exit 56
 '''
 
@@ -269,7 +288,7 @@ def _start_once() -> dict[str, Any]:
     for _ in range(60):
         current = status()
         if current["novnc_ready"] and current["chrome_ready"]:
-            return {**current, "message": f"Agentie Computer started through {current.get('bridge_host')}."}
+            return {**current, "message": f"Agentie Computer started. noVNC={current.get('novnc_host')}, CDP={current.get('cdp_host')}."}
         time.sleep(0.25)
     return status()
 
@@ -286,9 +305,6 @@ def ensure_started() -> dict[str, Any]:
         if first.get("setup_required"):
             return first
 
-        # If Linux services started but Windows cannot see them, migrate WSL to
-        # mirrored networking once. Microsoft recommends mirrored networking for
-        # reliable localhost connectivity between Windows and WSL2.
         changed = _ensure_mirrored_networking()
         if changed:
             _shutdown_wsl()
@@ -297,13 +313,13 @@ def ensure_started() -> dict[str, Any]:
                 return {**second, "message": "Agentie Computer started after enabling WSL mirrored networking."}
             if second.get("setup_required"):
                 return second
-            current = second
-        else:
-            current = first
 
+        current = status()
         raise RuntimeError(
-            "Agentie started the Linux desktop, but Windows still cannot reach the local Computer bridge. "
-            "WSL mirrored networking is already enabled. Check whether Windows or Hyper-V firewall policy is blocking localhost access to ports 6080/9222."
+            "Agentie started the Linux desktop, but the Windows bridge is incomplete. "
+            f"noVNC host={current.get('novnc_host') or 'unreachable'}, "
+            f"Chrome CDP host={current.get('cdp_host') or 'unreachable'}, "
+            f"WSL IP={current.get('wsl_ip') or 'unknown'}."
         )
 
 
@@ -312,6 +328,7 @@ def stop() -> dict[str, Any]:
         return {**status(), "message": "Agentie Computer is already stopped."}
     script = r'''
 pkill -f 'websockify.*6080' >/dev/null 2>&1 || true
+pkill -f 'socat.*9222' >/dev/null 2>&1 || true
 pkill -f 'google-chrome.*\.agentie-chrome' >/dev/null 2>&1 || true
 pkill -f 'Xtigervnc.*:1' >/dev/null 2>&1 || true
 pkill -f 'AGENTIE_DESKTOP=1.*startxfce4' >/dev/null 2>&1 || true
