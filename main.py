@@ -25,6 +25,7 @@ from agentie.core.reference_router import remember_active_from_card,try_active_r
 from agentie.core.routine_worker import poll_routine_events,start_routine_worker
 from agentie.core.runner import run_agent
 from agentie.core.skill_registry import list_skills
+from agentie.core.specialty_router import maybe_auto_delegate
 from agentie.tools import local_utility_tools as local_utils
 from agentie.tools.approval_tools import resolve_approval
 from agentie.tools.advanced_utility_tools import SCHEDULES
@@ -220,6 +221,11 @@ async def agent_run(request:AgentRequest,http_request:Request):
         if preflight is not None:
             message=str(preflight.get("message",""));card=preflight.get("card");_record_local(session_key,request.message,message,card,request.agent_type,"capability");return AgentResponse(message=message,result=message,card=card,agent_type=request.agent_type,routed_by="capability")
         routed=_route_request_actions(effective);local_results=routed.get("results",[]);unresolved=routed.get("unresolved",[])
+        # Persistent-agent specialty handoff is local/deterministic and only applies to unresolved work.
+        if not local_results and unresolved:
+            handoff=maybe_auto_delegate(effective,session_key)
+            if handoff is not None:
+                message=str(handoff.get("message",""));card=handoff.get("card");_record_local(session_key,request.message,message,card,request.agent_type,"agent_handoff");return AgentResponse(message=message,result=message,card=card,agent_type=request.agent_type,routed_by="agent_handoff")
         capability_remaining=[]
         for clause in unresolved:
             capability=await route_capability_request(clause,request.agent_type)
