@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import base64
 import os
+import re
 import shutil
 import socket
 import subprocess
 import threading
 import time
 import urllib.request
+from pathlib import Path
 from typing import Any
 
 DISTRO = os.getenv("AGENTIE_WSL_DISTRO", "Ubuntu")
@@ -68,9 +70,6 @@ def _urls(host: str | None) -> tuple[str | None, str | None]:
 
 
 def _reachable_host(wsl_ip: str | None) -> str | None:
-    # WSL2 normally forwards Linux listeners to Windows localhost. Prefer that
-    # stable address because the WSL VM IP changes across restarts. Fall back
-    # to the VM IP for systems with localhostForwarding disabled.
     for host in ("127.0.0.1", wsl_ip):
         if not host:
             continue
@@ -95,6 +94,62 @@ def status() -> dict[str, Any]:
         "wsl_ip": wsl_ip,
         "bridge_host": host,
     }
+
+
+def _set_ini_option_preserving_text(text: str, section: str, key: str, value: str) -> str:
+    lines = text.splitlines()
+    section_re = re.compile(rf"^\s*\[{re.escape(section)}\]\s*$", re.I)
+    key_re = re.compile(rf"^\s*{re.escape(key)}\s*=", re.I)
+    section_start = None
+    section_end = len(lines)
+    for index, line in enumerate(lines):
+        if section_re.match(line):
+            section_start = index
+            for end in range(index + 1, len(lines)):
+                if re.match(r"^\s*\[[^]]+\]\s*$", lines[end]):
+                    section_end = end
+                    break
+            break
+    replacement = f"{key}={value}"
+    if section_start is None:
+        if lines and lines[-1].strip():
+            lines.append("")
+        lines.extend([f"[{section}]", replacement])
+        return "\n".join(lines) + "\n"
+    for index in range(section_start + 1, section_end):
+        if key_re.match(lines[index]):
+            lines[index] = replacement
+            return "\n".join(lines) + ("\n" if text.endswith("\n") else "")
+    lines.insert(section_end, replacement)
+    return "\n".join(lines) + ("\n" if text.endswith("\n") else "")
+
+
+def _ensure_mirrored_networking() -> bool:
+    """Enable WSL mirrored networking once, preserving the rest of .wslconfig."""
+    if os.name != "nt":
+        return False
+    path = Path.home() / ".wslconfig"
+    try:
+        original = path.read_text(encoding="utf-8") if path.exists() else ""
+    except Exception:
+        original = ""
+    updated = _set_ini_option_preserving_text(original, "wsl2", "networkingMode", "mirrored")
+    updated = _set_ini_option_preserving_text(updated, "wsl2", "localhostForwarding", "true")
+    if updated == original:
+        return False
+    path.write_text(updated, encoding="utf-8")
+    return True
+
+
+def _shutdown_wsl() -> None:
+    executable = _windows_wsl()
+    if not executable:
+        raise RuntimeError("WSL is not available.")
+    proc = subprocess.run([executable, "--shutdown"], capture_output=True, text=True, timeout=20, shell=False)
+    if proc.returncode != 0:
+        output = ((proc.stdout or "") + "\n" + (proc.stderr or "")).strip()
+        raise RuntimeError("Could not restart WSL after networking setup: " + (output[-1000:] or f"exit {proc.returncode}"))
+    time.sleep(2.0)
 
 
 def _bootstrap_packages() -> None:
@@ -163,8 +218,6 @@ nohup env \
   dbus-launch --exit-with-session startxfce4 \
   >/tmp/agentie-xfce.log 2>&1 </dev/null &
 
-# Bind bridge services on all WSL interfaces. Windows normally reaches these
-# through WSL localhost forwarding; direct WSL-IP access remains a fallback.
 nohup websockify --web=/usr/share/novnc 0.0.0.0:6080 127.0.0.1:5901 >/tmp/agentie-novnc.log 2>&1 </dev/null &
 
 nohup env \
@@ -197,31 +250,61 @@ exit 56
 '''
 
 
+def _start_once() -> dict[str, Any]:
+    _prepare_x11_runtime()
+    try:
+        proc = _run_wsl(_start_script(), timeout=45)
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError("The Agentie Computer took too long to start.") from exc
+    output = ((proc.stdout or "") + "\n" + (proc.stderr or "")).strip()
+    if proc.returncode == 42 or "__MISSING__" in output:
+        _bootstrap_packages()
+        _prepare_x11_runtime()
+        proc = _run_wsl(_start_script(), timeout=45)
+        output = ((proc.stdout or "") + "\n" + (proc.stderr or "")).strip()
+    if proc.returncode == 42 or "__MISSING__" in output:
+        return {**status(), "setup_required": True, "message": "Google Chrome or a required desktop component is still missing inside Ubuntu.", "setup_command": "google-chrome --version", "details": output[-1000:]}
+    if proc.returncode != 0:
+        raise RuntimeError("Could not start the Agentie WSL desktop: " + (output[-3000:] or f"exit {proc.returncode}"))
+    for _ in range(60):
+        current = status()
+        if current["novnc_ready"] and current["chrome_ready"]:
+            return {**current, "message": f"Agentie Computer started through {current.get('bridge_host')}."}
+        time.sleep(0.25)
+    return status()
+
+
 def ensure_started() -> dict[str, Any]:
     with _START_LOCK:
         current = status()
         if current["novnc_ready"] and current["chrome_ready"]:
             return {**current, "message": "Agentie Computer is ready."}
-        _prepare_x11_runtime()
-        try:
-            proc = _run_wsl(_start_script(), timeout=45)
-        except subprocess.TimeoutExpired as exc:
-            raise RuntimeError("The Agentie Computer took too long to start.") from exc
-        output = ((proc.stdout or "") + "\n" + (proc.stderr or "")).strip()
-        if proc.returncode == 42 or "__MISSING__" in output:
-            _bootstrap_packages(); _prepare_x11_runtime(); proc = _run_wsl(_start_script(), timeout=45)
-            output = ((proc.stdout or "") + "\n" + (proc.stderr or "")).strip()
-        if proc.returncode == 42 or "__MISSING__" in output:
-            return {**status(), "setup_required": True, "message": "Google Chrome or a required desktop component is still missing inside Ubuntu.", "setup_command": "google-chrome --version", "details": output[-1000:]}
-        if proc.returncode != 0:
-            raise RuntimeError("Could not start the Agentie WSL desktop: " + (output[-3000:] or f"exit {proc.returncode}"))
-        for _ in range(60):
-            current = status()
-            if current["novnc_ready"] and current["chrome_ready"]:
-                return {**current, "message": f"Agentie Computer started through {current.get('bridge_host')}."}
-            time.sleep(0.25)
-        current = status()
-        raise RuntimeError(f"The WSL desktop started at {current.get('wsl_ip') or 'unknown WSL IP'}, but Windows could not reach noVNC or Chrome through localhost forwarding or the WSL address.")
+
+        first = _start_once()
+        if first.get("novnc_ready") and first.get("chrome_ready"):
+            return first
+        if first.get("setup_required"):
+            return first
+
+        # If Linux services started but Windows cannot see them, migrate WSL to
+        # mirrored networking once. Microsoft recommends mirrored networking for
+        # reliable localhost connectivity between Windows and WSL2.
+        changed = _ensure_mirrored_networking()
+        if changed:
+            _shutdown_wsl()
+            second = _start_once()
+            if second.get("novnc_ready") and second.get("chrome_ready"):
+                return {**second, "message": "Agentie Computer started after enabling WSL mirrored networking."}
+            if second.get("setup_required"):
+                return second
+            current = second
+        else:
+            current = first
+
+        raise RuntimeError(
+            "Agentie started the Linux desktop, but Windows still cannot reach the local Computer bridge. "
+            "WSL mirrored networking is already enabled. Check whether Windows or Hyper-V firewall policy is blocking localhost access to ports 6080/9222."
+        )
 
 
 def stop() -> dict[str, Any]:
@@ -234,7 +317,8 @@ pkill -f 'Xtigervnc.*:1' >/dev/null 2>&1 || true
 pkill -f 'AGENTIE_DESKTOP=1.*startxfce4' >/dev/null 2>&1 || true
 '''
     try:
-        _run_wsl(script, timeout=12); _prepare_x11_runtime()
+        _run_wsl(script, timeout=12)
+        _prepare_x11_runtime()
     except Exception:
         pass
     return {**status(), "running": False, "novnc_ready": False, "chrome_ready": False, "novnc_url": None, "cdp_url": None, "message": "Agentie Computer stopped."}
