@@ -183,9 +183,6 @@ if ! command -v vncserver >/dev/null 2>&1 || ! command -v Xkasmvnc >/dev/null 2>
   apt-get install -y "/tmp/$deb"
   rm -f "/tmp/$deb"
 fi
-# KasmVNC's Debian/Ubuntu package expects the ssl-cert key and group. WSL starts
-# a fresh process for later Agentie calls, so the supplementary group is picked
-# up automatically without asking the user to log out of Windows.
 agentie_user="$(awk -F: '$3 >= 1000 && $3 < 65534 {{print $1; exit}}' /etc/passwd)"
 if [ -n "$agentie_user" ]; then
   adduser "$agentie_user" ssl-cert >/dev/null 2>&1 || true
@@ -198,6 +195,25 @@ fi
     if proc.returncode != 0:
         output = ((proc.stdout or "") + "\n" + (proc.stderr or "")).strip()
         raise RuntimeError("Could not install the Agentie KasmVNC desktop: " + (output[-1800:] or f"exit {proc.returncode}"))
+
+
+def _ensure_system_runtime() -> None:
+    script = r'''
+set -eu
+export DEBIAN_FRONTEND=noninteractive
+if [ ! -f /etc/ssl/private/ssl-cert-snakeoil.key ] || ! getent group ssl-cert >/dev/null 2>&1; then
+  apt-get update
+  apt-get install -y ssl-cert
+fi
+agentie_user="$(awk -F: '$3 >= 1000 && $3 < 65534 {print $1; exit}' /etc/passwd)"
+if [ -n "$agentie_user" ]; then
+  adduser "$agentie_user" ssl-cert >/dev/null 2>&1 || true
+fi
+'''
+    proc = _run_wsl(script, timeout=120, root=True)
+    if proc.returncode != 0:
+        output = ((proc.stdout or "") + "\n" + (proc.stderr or "")).strip()
+        raise RuntimeError("Could not prepare KasmVNC system permissions: " + (output[-1200:] or f"exit {proc.returncode}"))
 
 
 def _prepare_x11_runtime() -> None:
@@ -224,15 +240,41 @@ network:
 command_line:
   prompt: false
 EOF
-# KasmVNC refuses to start with prompting disabled until a password-file user
-# exists, even though Agentie runs the local desktop with VNC auth disabled.
-# Create a random local-only bootstrap credential once; it is never exposed to
-# the browser or user and only satisfies KasmVNC's startup requirement.
-if command -v vncpasswd >/dev/null 2>&1 && [ ! -s "$HOME/.kasmpasswd" ]; then
-  kasm_bootstrap_password="$(tr -d '-' </proc/sys/kernel/random/uuid 2>/dev/null | cut -c1-24)"
-  [ -n "$kasm_bootstrap_password" ] || kasm_bootstrap_password="AgentieLocal$(date +%s)"
-  printf '%s\n%s\n' "$kasm_bootstrap_password" "$kasm_bootstrap_password" | vncpasswd -u agentie-local >/dev/null 2>&1
+
+# Keep a KasmVNC user configured even though Agentie's embedded local desktop
+# disables browser authentication. KasmVNC refuses to launch with no users.
+if command -v vncpasswd >/dev/null 2>&1; then
+  if [ ! -s "$HOME/.kasmpasswd" ]; then
+    kasm_bootstrap_password="$(tr -d '-' </proc/sys/kernel/random/uuid 2>/dev/null | cut -c1-24)"
+    [ -n "$kasm_bootstrap_password" ] || kasm_bootstrap_password="AgentieLocal$(date +%s)"
+    printf '%s\n%s\n' "$kasm_bootstrap_password" "$kasm_bootstrap_password" | vncpasswd -u "$USER" >/dev/null 2>&1
+  fi
+  # Grant read and write so direct mouse/keyboard control is never view-only.
+  vncpasswd -u "$USER" -r >/dev/null 2>&1 || true
+  vncpasswd -u "$USER" -w >/dev/null 2>&1 || true
 fi
+
+# Manual desktop mode is deliberate. -select-de XFCE rewrites xstartup and
+# causes recent XFCE builds under WSLg to inherit Wayland state, producing a
+# black or unstable desktop. This clean X11 session is the tested Agentie path.
+cat > "$HOME/.vnc/xstartup" <<'EOF'
+#!/bin/bash
+unset SESSION_MANAGER
+unset DBUS_SESSION_BUS_ADDRESS
+unset WAYLAND_DISPLAY
+unset WAYLAND_SOCKET
+unset WAYLAND_DEBUG
+export DISPLAY=:1
+export XDG_SESSION_TYPE=x11
+export XDG_CURRENT_DESKTOP=XFCE
+export XDG_SESSION_DESKTOP=xfce
+export DESKTOP_SESSION=xfce
+export GDK_BACKEND=x11
+export QT_QPA_PLATFORM=xcb
+exec dbus-launch --exit-with-session /usr/bin/startxfce4 --replace
+EOF
+chmod +x "$HOME/.vnc/xstartup"
+
 cat > "$HOME/.config/autostart/xfce4-notifyd.desktop" <<'EOF'
 [Desktop Entry]
 Type=Application
@@ -287,10 +329,10 @@ EOF
 chmod +x "$HOME/Desktop"/*.desktop
 for shortcut in "$HOME/Desktop"/*.desktop; do gio set "$shortcut" metadata::trusted true >/dev/null 2>&1 || true; done
 '''
-    proc = _run_wsl(script, timeout=12)
+    proc = _run_wsl(script, timeout=15)
     if proc.returncode != 0:
         output = ((proc.stdout or "") + "\n" + (proc.stderr or "")).strip()
-        raise RuntimeError("Could not prepare the Agentie desktop: " + (output[-1000:] or f"exit {proc.returncode}"))
+        raise RuntimeError("Could not prepare the Agentie desktop: " + (output[-1200:] or f"exit {proc.returncode}"))
 
 
 def _start_script() -> str:
@@ -306,13 +348,15 @@ command -v thunar >/dev/null 2>&1 || missing="$missing thunar"
 if [ -n "$missing" ]; then echo "__MISSING__:$missing"; exit 42; fi
 WSL_IP="$(hostname -I | awk '{{print $1}}')"
 vncserver -kill :1 >/dev/null 2>&1 || true
+pkill -u "$(id -u)" -f 'xfce4-panel|xfdesktop|xfce4-session|xfwm4' >/dev/null 2>&1 || true
 pkill -f 'socat.*9222' >/dev/null 2>&1 || true
 pkill -f 'google-chrome.*\.agentie-chrome' >/dev/null 2>&1 || true
 rm -f /tmp/.X1-lock 2>/dev/null || true
-sleep 0.3
-nohup env -u WAYLAND_DISPLAY -u WAYLAND_SOCKET \
-  XDG_SESSION_TYPE=x11 GDK_BACKEND=x11 QT_QPA_PLATFORM=xcb AGENTIE_DESKTOP=1 \
-  vncserver :1 -select-de XFCE -geometry 1440x900 -depth 24 \
+sleep 0.4
+nohup env -u WAYLAND_DISPLAY -u WAYLAND_SOCKET -u WAYLAND_DEBUG -u SESSION_MANAGER -u DBUS_SESSION_BUS_ADDRESS \
+  DISPLAY=:1 XDG_SESSION_TYPE=x11 XDG_CURRENT_DESKTOP=XFCE XDG_SESSION_DESKTOP=xfce DESKTOP_SESSION=xfce \
+  GDK_BACKEND=x11 QT_QPA_PLATFORM=xcb AGENTIE_DESKTOP=1 \
+  vncserver :1 -select-de manual -geometry 1440x900 -depth 24 \
   -disableBasicAuth -SecurityTypes None \
   >/tmp/agentie-kasmvnc.log 2>&1 </dev/null &
 for i in $(seq 1 120); do
@@ -323,7 +367,7 @@ if ! (echo >/dev/tcp/127.0.0.1/{KASMVNC_PORT}) >/dev/null 2>&1; then
   echo '__KASMVNC_ERROR__'; cat /tmp/agentie-kasmvnc.log 2>/dev/null || true; cat "$HOME/.vnc"/*.log 2>/dev/null || true; exit 55
 fi
 if command -v google-chrome >/dev/null 2>&1; then
-  nohup env -u WAYLAND_DISPLAY -u WAYLAND_SOCKET DISPLAY=:1 XDG_SESSION_TYPE=x11 GDK_BACKEND=x11 \
+  nohup env -u WAYLAND_DISPLAY -u WAYLAND_SOCKET -u WAYLAND_DEBUG DISPLAY=:1 XDG_SESSION_TYPE=x11 GDK_BACKEND=x11 \
     google-chrome --ozone-platform=x11 --user-data-dir="$HOME/.agentie-chrome" \
     --remote-debugging-port=9222 --remote-debugging-address=127.0.0.1 --remote-allow-origins=* \
     --no-first-run --no-default-browser-check --disable-gpu about:blank >/tmp/agentie-chrome.log 2>&1 </dev/null &
@@ -338,6 +382,7 @@ exit 0
 
 
 def _start_once() -> dict[str, Any]:
+    _ensure_system_runtime()
     _prepare_x11_runtime()
     try:
         proc = _run_wsl(_start_script(), timeout=45)
@@ -346,6 +391,7 @@ def _start_once() -> dict[str, Any]:
     output = ((proc.stdout or "") + "\n" + (proc.stderr or "")).strip()
     if proc.returncode == 42 or "__MISSING__" in output:
         _bootstrap_packages()
+        _ensure_system_runtime()
         _prepare_x11_runtime()
         proc = _run_wsl(_start_script(), timeout=45)
         output = ((proc.stdout or "") + "\n" + (proc.stderr or "")).strip()
@@ -386,6 +432,7 @@ def stop() -> dict[str, Any]:
         return {**status(), "message": "Agentie Computer is already stopped."}
     script = r'''
 vncserver -kill :1 >/dev/null 2>&1 || true
+pkill -u "$(id -u)" -f 'xfce4-panel|xfdesktop|xfce4-session|xfwm4' >/dev/null 2>&1 || true
 pkill -f 'Xkasmvnc.*:1' >/dev/null 2>&1 || true
 pkill -f 'socat.*9222' >/dev/null 2>&1 || true
 pkill -f 'google-chrome.*\.agentie-chrome' >/dev/null 2>&1 || true
