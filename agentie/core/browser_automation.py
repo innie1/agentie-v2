@@ -7,7 +7,7 @@ from typing import Any
 from playwright.async_api import Browser, BrowserContext, Page, Playwright, async_playwright
 
 from agentie.core.browser_monitor import _publish_frame, _set_live_state, _stop_requested, _url, _validate_url, get_live_state
-from agentie.core.wsl_desktop import CDP_URL, ensure_started as ensure_wsl_desktop
+from agentie.core.wsl_desktop import ensure_started as ensure_wsl_desktop
 from agentie.tools.approval_tools import approval_is_granted, consume_approval, create_approval
 
 _PLAYWRIGHT: Playwright | None = None
@@ -102,12 +102,13 @@ async def _connect_visible_chrome() -> bool:
         info = await asyncio.to_thread(ensure_wsl_desktop)
     except Exception:
         return False
-    if not info.get("chrome_ready"):
+    cdp_url = str(info.get("cdp_url") or "").strip()
+    if not info.get("chrome_ready") or not cdp_url:
         return False
     if _PLAYWRIGHT is None:
         _PLAYWRIGHT = await async_playwright().start()
     try:
-        _BROWSER = await _PLAYWRIGHT.chromium.connect_over_cdp(CDP_URL, timeout=6000)
+        _BROWSER = await _PLAYWRIGHT.chromium.connect_over_cdp(cdp_url, timeout=6000)
     except Exception:
         return False
     contexts = _BROWSER.contexts
