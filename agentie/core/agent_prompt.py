@@ -30,30 +30,24 @@ def agent_from_session(session_id:str|None)->dict[str,Any]|None:
 
 
 def _base_profile(agent:dict[str,Any])->dict[str,Any]:
-    role=str(agent.get("role") or "general")
-    purpose=str(agent.get("purpose") or "").strip()
-    return {
-        "agent_id":agent["id"],
-        "name":agent.get("name"),
-        "role":role,
-        "purpose":purpose,
-        "communication":{},
-        "task_preferences":{},
-        "durable_context":[],
-        "learned_rules":[],
-        "updated_at":datetime.now().astimezone().isoformat(timespec="seconds"),
-    }
+    role=str(agent.get("role") or "general");purpose=str(agent.get("purpose") or "").strip()
+    return {"agent_id":agent["id"],"name":agent.get("name"),"role":role,"purpose":purpose,"communication":{},"task_preferences":{},"durable_context":[],"learned_rules":[],"updated_at":datetime.now().astimezone().isoformat(timespec="seconds")}
 
 
 def get_instruction_profile(agent:dict[str,Any])->dict[str,Any]:
     data=_load();profiles=data.setdefault("agents",{});profile=profiles.get(agent["id"])
-    if not isinstance(profile,dict):
-        profile=_base_profile(agent);profiles[agent["id"]]=profile;_save(data)
+    if not isinstance(profile,dict):profile=_base_profile(agent);profiles[agent["id"]]=profile;_save(data)
     changed=False
     for key,value in (("name",agent.get("name")),("role",agent.get("role")),("purpose",agent.get("purpose",""))):
         if profile.get(key)!=value:profile[key]=value;changed=True
     if changed:profile["updated_at"]=datetime.now().astimezone().isoformat(timespec="seconds");_save(data)
     return profile
+
+
+def purge_instruction_profile(agent_id:str)->int:
+    data=_load();profiles=data.setdefault("agents",{});existed=1 if str(agent_id) in profiles else 0;profiles.pop(str(agent_id),None)
+    if existed:_save(data)
+    return existed
 
 
 def _set(profile:dict[str,Any],section:str,key:str,value:Any)->bool:
@@ -65,29 +59,22 @@ def _set(profile:dict[str,Any],section:str,key:str,value:Any)->bool:
 def learn_from_user_message(agent:dict[str,Any],message:str)->list[str]:
     """Extract only explicit, durable preferences/context. Never copy the whole chat."""
     text=" ".join(str(message or "").strip().split());low=text.casefold();data=_load();profiles=data.setdefault("agents",{});profile=profiles.get(agent["id"]) or _base_profile(agent);changes=[]
-
     concise=bool(re.search(r"\b(?:keep|make|prefer|want|give)\b.{0,35}\b(?:repl(?:y|ies)|answer|responses?)\b.{0,25}\b(?:short|brief|concise|compact)\b|\bi (?:like|prefer|want) (?:short|brief|concise) (?:repl(?:y|ies)|answers?|responses?)\b",low))
     if concise and _set(profile,"communication","default_length","concise"):changes.append("Default replies should be concise.")
     detailed=bool(re.search(r"\b(?:reports?|analysis|research|breakdowns?)\b.{0,35}\b(?:detailed|thorough|comprehensive|long)\b|\b(?:detailed|thorough|comprehensive)\b.{0,25}\b(?:reports?|analysis|research|breakdowns?)\b",low))
     if detailed and _set(profile,"task_preferences","reports","detailed"):changes.append("Reports and analysis should be detailed.")
-    bullets=bool(re.search(r"\b(?:use|prefer|want)\b.{0,20}\b(?:bullet|bullets|bullet points)\b",low))
+    bullets=bool(re.search(r"\b(?:use|prefer|want)\b.{0,20}\b(?:bullet|bullets|bullet points)\b",low));no_bullets=bool(re.search(r"\b(?:do not|don't|dont|avoid)\b.{0,20}\b(?:bullet|bullets|lists?)\b",low))
     if bullets and _set(profile,"communication","format","bullets_when_useful"):changes.append("Use bullets when useful.")
-    no_bullets=bool(re.search(r"\b(?:do not|don't|dont|avoid)\b.{0,20}\b(?:bullet|bullets|lists?)\b",low))
     if no_bullets and _set(profile,"communication","format","prose"):changes.append("Prefer prose over lists.")
-    formal=bool(re.search(r"\b(?:prefer|want|use)\b.{0,20}\bformal\b",low))
-    casual=bool(re.search(r"\b(?:prefer|want|use)\b.{0,20}\b(?:casual|friendly|conversational)\b",low))
+    formal=bool(re.search(r"\b(?:prefer|want|use)\b.{0,20}\bformal\b",low));casual=bool(re.search(r"\b(?:prefer|want|use)\b.{0,20}\b(?:casual|friendly|conversational)\b",low))
     if formal and _set(profile,"communication","tone","formal"):changes.append("Use a formal tone.")
     elif casual and _set(profile,"communication","tone","conversational"):changes.append("Use a conversational tone.")
     copyable=bool(re.search(r"\b(?:prompt|commands?|code)\b.{0,30}\b(?:copyable|easy to copy|copy and paste)\b|\b(?:copyable|copy and paste)\b.{0,30}\b(?:prompt|commands?|code)\b",low))
     if copyable and _set(profile,"task_preferences","implementation_output","copyable"):changes.append("Implementation prompts/commands should be easy to copy.")
-
     explicit_rule=re.match(r"^(?:remember that |from now on |always |when you |whenever you )(.{8,220})$",text,re.I)
     if explicit_rule:
-        rule=explicit_rule.group(1).strip(" .")
-        rules=profile.setdefault("learned_rules",[])
-        if rule and rule.casefold() not in {str(x).casefold() for x in rules}:
-            rules.append(rule);profile["learned_rules"]=rules[-20:];changes.append("Saved a durable instruction.")
-
+        rule=explicit_rule.group(1).strip(" .");rules=profile.setdefault("learned_rules",[])
+        if rule and rule.casefold() not in {str(x).casefold() for x in rules}:rules.append(rule);profile["learned_rules"]=rules[-20:];changes.append("Saved a durable instruction.")
     profile["updated_at"]=datetime.now().astimezone().isoformat(timespec="seconds");profiles[agent["id"]]=profile
     if changes:_save(data)
     return changes
@@ -95,12 +82,7 @@ def learn_from_user_message(agent:dict[str,Any],message:str)->list[str]:
 
 def build_agent_instructions(agent:dict[str,Any])->str:
     profile=get_instruction_profile(agent);name=str(agent.get("name") or "Agent");role=str(agent.get("role") or "general");purpose=str(agent.get("purpose") or "").strip();permissions=agent.get("permissions") or {};skills=agent.get("skills") or []
-    lines=[
-        f"You are {name}, a persistent Agentie agent.",
-        f"Your role is {role}.",
-        "Keep your identity, private memory, and task context scoped to this agent. Do not pretend to remember another agent's private conversations.",
-        "If a task clearly belongs to another existing specialist, delegate or hand it off instead of stretching your role unnecessarily.",
-    ]
+    lines=[f"You are {name}, a persistent Agentie agent.",f"Your role is {role}.","Keep your identity, private memory, and task context scoped to this agent. Do not pretend to remember another agent's private conversations.","If a task clearly belongs to another existing specialist, delegate or hand it off instead of stretching your role unnecessarily."]
     if purpose:lines.append(f"Primary purpose: {purpose}.")
     if permissions.get("delegate"):lines.append("You are allowed to coordinate and delegate work to other Agentie agents.")
     if skills:lines.append("Assigned skills: "+", ".join(map(str,skills))+".")
