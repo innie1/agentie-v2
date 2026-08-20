@@ -20,8 +20,6 @@ class AgentUIRegressionTests(unittest.TestCase):
 
     def test_agent_ui_reuses_existing_delete_and_approval_flows(self):
         text = Path("frontend/agent_ui.js").read_text(encoding="utf-8")
-        # The enhancement may locate the existing delete button so it can place
-        # the edit control beside it, but it must not recreate delete/approval behavior.
         self.assertIn("querySelector('.agent-delete')", text)
         self.assertNotIn("Delete agent ${", text)
         self.assertNotIn("/approvals/", text)
@@ -37,8 +35,9 @@ class AgentUIRegressionTests(unittest.TestCase):
         registry = Path("agentie/core/agent_registry.py").read_text(encoding="utf-8")
         roles = Path("agentie/core/role_store.py").read_text(encoding="utf-8")
         self.assertIn("def update_agent_profile", registry)
-        self.assertIn("Rename agent", roles)
-        self.assertIn("role to", roles)
+        self.assertIn("update_agent_profile(rename.group(1)", roles)
+        self.assertIn("update_agent_profile(role_edit.group(1)", roles)
+        self.assertIn("(?:title|role)", roles)
 
 
 if __name__ == "__main__":
