@@ -1,5 +1,7 @@
 import subprocess
+import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 from agentie.core import wsl_desktop
@@ -74,6 +76,20 @@ class WSLDesktopRegressionTests(unittest.TestCase):
         self.assertEqual(result["bridge_host"], "172.21.18.153")
         self.assertTrue(result["running"])
 
+    def test_mirrored_networking_preserves_existing_wslconfig(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            config = home / ".wslconfig"
+            config.write_text("[wsl2]\nmemory=4GB\n\n[experimental]\nautoMemoryReclaim=gradual\n", encoding="utf-8")
+            with patch.object(wsl_desktop.os, "name", "nt"), patch.object(wsl_desktop.Path, "home", return_value=home):
+                changed = wsl_desktop._ensure_mirrored_networking()
+            text = config.read_text(encoding="utf-8")
+        self.assertTrue(changed)
+        self.assertIn("memory=4GB", text)
+        self.assertIn("autoMemoryReclaim=gradual", text)
+        self.assertIn("networkingMode=mirrored", text)
+        self.assertIn("localhostForwarding=true", text)
+
     def test_ready_desktop_does_not_restart(self):
         ready = {"supported": True, "running": True, "novnc_ready": True, "chrome_ready": True, "novnc_url": "http://127.0.0.1:6080/vnc_lite.html", "cdp_url": "http://127.0.0.1:9222", "distro": "Ubuntu", "wsl_ip": "172.21.18.153", "bridge_host": "127.0.0.1"}
         with patch.object(wsl_desktop, "status", return_value=ready), patch.object(wsl_desktop, "_run_wsl") as runner, patch.object(wsl_desktop, "_prepare_x11_runtime") as prepare:
@@ -81,6 +97,20 @@ class WSLDesktopRegressionTests(unittest.TestCase):
         runner.assert_not_called()
         prepare.assert_not_called()
         self.assertTrue(result["running"])
+
+    def test_unreachable_bridge_migrates_to_mirrored_and_retries_once(self):
+        not_ready = {"supported": True, "running": False, "novnc_ready": False, "chrome_ready": False, "novnc_url": None, "cdp_url": None, "distro": "Ubuntu", "wsl_ip": "172.21.18.153", "bridge_host": None}
+        ready = {"supported": True, "running": True, "novnc_ready": True, "chrome_ready": True, "novnc_url": "http://127.0.0.1:6080/vnc_lite.html", "cdp_url": "http://127.0.0.1:9222", "distro": "Ubuntu", "wsl_ip": "127.0.0.1", "bridge_host": "127.0.0.1"}
+        with patch.object(wsl_desktop, "status", return_value=not_ready), \
+             patch.object(wsl_desktop, "_start_once", side_effect=[not_ready, ready]) as start_once, \
+             patch.object(wsl_desktop, "_ensure_mirrored_networking", return_value=True) as migrate, \
+             patch.object(wsl_desktop, "_shutdown_wsl") as shutdown:
+            result = wsl_desktop.ensure_started()
+        self.assertEqual(start_once.call_count, 2)
+        migrate.assert_called_once()
+        shutdown.assert_called_once()
+        self.assertTrue(result["running"])
+        self.assertIn("mirrored networking", result["message"])
 
     def test_missing_bridge_packages_bootstrap_once(self):
         missing = subprocess.CompletedProcess([], 42, stdout="__MISSING__: Xtigervnc websockify novnc", stderr="")
