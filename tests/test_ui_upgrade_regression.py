@@ -30,11 +30,12 @@ class UIUpgradeRegressionTests(unittest.TestCase):
         self.assertIn("plus.title='Create agent'",self.ui)
         self.assertIn('Create an agent called ${name.trim()}',self.ui)
 
-    def test_top_bar_has_agent_chat_head_and_instruction_entry(self):
+    def test_top_agent_head_opens_existing_agent_menu_not_chat_instructions(self):
         self.assertIn('workspace-topbar',self.ui)
         self.assertIn('top-agent-orb',self.ui)
-        self.assertIn('Show ${a.name} instructions',self.ui)
-        self.assertIn('.agent-edit{display:none!important}',self.ui)
+        self.assertIn("row?.querySelector('.agent-edit')",self.ui)
+        self.assertIn('edit.click()',self.ui)
+        self.assertNotIn('dispatchChat(`Show ${a.name} instructions`)',self.ui)
 
     def test_composer_switches_from_microphone_to_send_arrow(self):
         self.assertIn(".composer button::before{content:'🎙'",self.ui)
