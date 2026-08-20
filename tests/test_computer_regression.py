@@ -1,12 +1,30 @@
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import AsyncMock, patch
+from unittest.mock import patch
 
 from agentie.core import desktop_runtime
 from agentie.core.browser_monitor import route_browser_request
 from agentie.core.mcp_catalog import preset_by_id, presets
 from agentie.core.mcp_client import _split_local_command
+
+
+READY = {
+    "running": True,
+    "novnc_ready": True,
+    "chrome_ready": True,
+    "novnc_url": "http://127.0.0.1:6080/vnc_lite.html?autoconnect=1",
+    "distro": "Ubuntu",
+    "message": "Agentie Computer started.",
+}
+STOPPED = {
+    "running": False,
+    "novnc_ready": False,
+    "chrome_ready": False,
+    "novnc_url": None,
+    "distro": "Ubuntu",
+    "message": "Agentie Computer stopped.",
+}
 
 
 class ComputerRoutingRegressionTests(unittest.IsolatedAsyncioTestCase):
@@ -32,16 +50,23 @@ class ComputerRoutingRegressionTests(unittest.IsolatedAsyncioTestCase):
         result = await route_browser_request("Show my tasks")
         self.assertIsNone(result)
 
-    async def test_terminal_routes_through_same_computer_route(self):
-        result = await route_browser_request("Open the terminal")
-        self.assertEqual(result["card"]["app"], "terminal")
+    async def test_show_desktop_routes_to_wsl_computer(self):
+        with patch.object(desktop_runtime, "ensure_wsl_desktop", return_value=READY):
+            result = await route_browser_request("Show desktop")
+        self.assertEqual(result["card"]["mode"], "wsl")
+        self.assertTrue(result["card"]["running"])
 
-    async def test_stop_routes_to_full_computer_shutdown(self):
-        fake = {"message": "Agentie Computer stopped.", "card": {"type": "desktop_view", "app": "stopped"}}
-        with patch("agentie.core.computer_session.shutdown_computer", new=AsyncMock(return_value=fake)) as shutdown:
+    async def test_terminal_routes_through_same_real_computer(self):
+        with patch.object(desktop_runtime, "ensure_wsl_desktop", return_value=READY):
+            result = await route_browser_request("Open the terminal")
+        self.assertEqual(result["card"]["mode"], "wsl")
+
+    async def test_stop_routes_to_wsl_shutdown(self):
+        with patch.object(desktop_runtime, "stop_wsl_desktop", return_value=STOPPED) as shutdown:
             result = await route_browser_request("Desktop control: stop")
-        shutdown.assert_awaited_once()
+        shutdown.assert_called_once()
         self.assertEqual(result["card"]["app"], "stopped")
+        self.assertFalse(result["card"]["running"])
 
 
 class ComputerMCPPresetRegressionTests(unittest.TestCase):
