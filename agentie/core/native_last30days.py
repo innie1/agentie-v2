@@ -56,40 +56,51 @@ def gather(topic: str, per_lane: int = 4) -> list[dict[str, Any]]:
     return results
 
 
+def _clean_output(value:str)->str:
+    text=str(value or "").replace("\r\n","\n").strip()
+    text=re.sub(r"(?m)^#{1,6}\s*","",text)
+    text=text.replace("**","").replace("__","").replace("`","")
+    text=re.sub(r"(?m)^\s*[-*]\s+","• ",text)
+    text=re.sub(r"\n{3,}","\n\n",text)
+    return text.strip()
+
+
 def _fallback_summary(topic: str, sources: list[dict[str, Any]]) -> str:
     counts={}
     for s in sources:counts[s["source"]]=counts.get(s["source"],0)+1
-    coverage=", ".join(f"{k} {v}" for k,v in counts.items()) or "no usable sources"
-    lines=[f"🌐 Agentie Last30Days Native · {date.today().isoformat()}","",f"What I learned about {topic}:",f"Coverage: {coverage}."]
-    for s in sources[:8]:
+    lines=["What I learned",""]
+    if not sources:return "\n".join(lines+["I could not retrieve enough recent public evidence to make a reliable summary."])
+    lines.append(f"Recent coverage: {sum(counts.values())} sources across {len(counts)} source types.");lines.append("")
+    for s in sources[:7]:
         snippet=re.sub(r"\s+"," ",s.get("snippet","")).strip()
-        if len(snippet)>220:snippet=snippet[:217]+"..."
-        lines.append(f"- [{s['id']}] {s['title']} ({s['source']})"+(f": {snippet}" if snippet else ""))
-    if not sources:lines.append("- I could not retrieve enough recent public evidence to make a reliable summary.")
+        if len(snippet)>190:snippet=snippet[:187]+"..."
+        lines.append(f"• [{s['id']}] {s['title']}"+(f" — {snippet}" if snippet else ""))
     return "\n".join(lines)
 
 
 async def _synthesize(topic: str, sources: list[dict[str, Any]]) -> str:
     pack="\n\n".join(f"[{s['id']}] SOURCE={s['source']}\nTITLE={s['title']}\nURL={s['url']}\nSNIPPET={s['snippet']}" for s in sources[:24])
     instructions=("You are Agentie's Last30Days Native synthesizer. Use only the supplied evidence from the last-30-days search lanes. "
-                  "Start with 'What I learned:' and give a compact, useful synthesis of recurring themes, disagreements, recent changes, and practical signals. "
-                  "Cite claims using only the supplied IDs such as [L1] or [L2][L5]. Do not invent facts, source IDs, dates, or URLs. "
-                  "Mention evidence gaps when a lane has little or no coverage. Do not append a separate Sources section because the UI renders sources.")
+                  "Write for a clean chat UI, not Markdown. Do not use # headings, asterisks, backticks, tables, or long blocks. "
+                  "Use this readable structure: first line 'What I learned'; blank line; 3 to 5 short sections with plain section names; "
+                  "under each section use short bullet lines beginning with the bullet character •. Keep paragraphs to at most 3 sentences. "
+                  "Focus on recurring themes, disagreements, recent changes, and practical signals. Cite claims using only supplied IDs like [L1] or [L2][L5]. "
+                  "Do not invent facts, source IDs, dates, or URLs. Mention evidence gaps when coverage is weak. Do not add a Sources section because the UI renders sources below.")
     prompt=f"TOPIC\n{topic}\n\nLAST-30-DAYS EVIDENCE\n{pack}"
-    agent=Agent(name="Agentie Last30Days Native",instructions=instructions,model=get_model(),model_settings=ModelSettings(max_tokens=1800),tools=[])
+    agent=Agent(name="Agentie Last30Days Native",instructions=instructions,model=get_model(),model_settings=ModelSettings(max_tokens=1600),tools=[])
     result=await Runner.run(agent,prompt)
-    return str(result.final_output or "").strip()
+    return _clean_output(str(result.final_output or ""))
 
 
 async def research(topic: str) -> dict[str, Any]:
-    sources=gather(topic)
-    if not sources:return {"message":_fallback_summary(topic,[]),"card":{"type":"last30days","engine":"native","topic":topic,"window_days":30,"sources":[],"source_counts":{},"provider_calls":0}}
+    sources=gather(topic);counts={}
+    for s in sources:counts[s["source"]]=counts.get(s["source"],0)+1
+    if not sources:
+        answer=_fallback_summary(topic,[]);return {"message":"","card":{"type":"last30days","engine":"native","topic":topic,"window_days":30,"answer":answer,"sources":[],"source_counts":{},"provider_calls":0}}
     try:answer=await _synthesize(topic,sources);provider_calls=1 if answer else 0
     except Exception:answer="";provider_calls=0
     if not answer:answer=_fallback_summary(topic,sources)
-    counts={}
-    for s in sources:counts[s["source"]]=counts.get(s["source"],0)+1
-    return {"message":answer,"card":{"type":"last30days","engine":"native","topic":topic,"window_days":30,"sources":sources,"source_counts":counts,"provider_calls":provider_calls}}
+    return {"message":"","card":{"type":"last30days","engine":"native","topic":topic,"window_days":30,"answer":_clean_output(answer),"sources":sources,"source_counts":counts,"provider_calls":provider_calls}}
 
 
 def run(topic: str) -> dict[str, Any]:
@@ -97,8 +108,7 @@ def run(topic: str) -> dict[str, Any]:
 
 
 def _topic(message: str) -> str | None:
-    text=str(message or "").strip()
-    m=re.match(r"^/?last30days(?:\s+(?:about|on|for))?\s+(.+)$",text,re.I)
+    text=str(message or "").strip();m=re.match(r"^/?last30days(?:\s+(?:about|on|for))?\s+(.+)$",text,re.I)
     if m:return m.group(1).strip()
     m=re.match(r"^(?:research|find|show me|tell me)\s+(?:what people (?:are saying|say)|the last 30 days)\s+(?:about|on|for)\s+(.+)$",text,re.I)
     return m.group(1).strip() if m else None
