@@ -8,12 +8,12 @@ class InlineComputerCardRegressionTests(unittest.TestCase):
         cls.text = Path("frontend/browser_screen.js").read_text(encoding="utf-8")
 
     def test_computer_is_mini_chat_card(self):
-        self.assertIn("width:min(540px,88vw)", self.text)
+        self.assertIn("width:min(500px,86vw)", self.text)
         self.assertIn("aspect-ratio:16/9", self.text)
 
     def test_use_computer_fallback_is_detected_before_response(self):
         self.assertIn("use\\s+computer\\s+for", self.text)
-        self.assertIn("setTimeout(()=>{place();setState('starting'", self.text)
+        self.assertIn("setTimeout(()=>{place();showStartingComputer()", self.text)
 
     def test_computer_is_anchored_after_latest_user_message(self):
         self.assertIn("messages.querySelectorAll('.user-row')", self.text)
@@ -23,6 +23,11 @@ class InlineComputerCardRegressionTests(unittest.TestCase):
         self.assertIn("const a=activeAgent()", self.text)
         self.assertIn("session_id:`${a.session_prefix}main`", self.text)
         self.assertIn("ownerKey=agentKey()", self.text)
+
+    def test_computer_title_uses_active_agent_name(self):
+        self.assertIn("${ownerName()} Computer", self.text)
+        self.assertIn("Starting computer", self.text)
+        self.assertNotIn("Waiting for Agentie computer route", self.text)
 
 
 if __name__ == "__main__":
