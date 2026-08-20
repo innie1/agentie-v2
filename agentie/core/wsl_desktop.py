@@ -67,21 +67,33 @@ def _urls(host: str | None) -> tuple[str | None, str | None]:
     )
 
 
+def _reachable_host(wsl_ip: str | None) -> str | None:
+    # WSL2 normally forwards Linux listeners to Windows localhost. Prefer that
+    # stable address because the WSL VM IP changes across restarts. Fall back
+    # to the VM IP for systems with localhostForwarding disabled.
+    for host in ("127.0.0.1", wsl_ip):
+        if not host:
+            continue
+        if _port_open(host, 6080) and _http_ready(f"http://{host}:9222/json/version"):
+            return host
+    return None
+
+
 def status() -> dict[str, Any]:
     supported = bool(_windows_wsl())
-    host = _wsl_ip() if supported else None
+    wsl_ip = _wsl_ip() if supported else None
+    host = _reachable_host(wsl_ip) if supported else None
     novnc_url, cdp_url = _urls(host)
-    novnc = bool(host and _port_open(host, 6080))
-    cdp = bool(cdp_url and _http_ready(cdp_url + "/json/version"))
     return {
         "supported": supported,
-        "running": novnc,
-        "novnc_ready": novnc,
-        "chrome_ready": cdp,
-        "novnc_url": novnc_url if novnc else None,
-        "cdp_url": cdp_url if cdp else None,
+        "running": bool(host),
+        "novnc_ready": bool(host),
+        "chrome_ready": bool(host),
+        "novnc_url": novnc_url,
+        "cdp_url": cdp_url,
         "distro": DISTRO,
-        "wsl_ip": host,
+        "wsl_ip": wsl_ip,
+        "bridge_host": host,
     }
 
 
@@ -119,9 +131,6 @@ command -v dbus-launch >/dev/null 2>&1 || missing="$missing dbus-x11"
 command -v google-chrome >/dev/null 2>&1 || missing="$missing google-chrome"
 if [ -n "$missing" ]; then echo "__MISSING__:$missing"; exit 42; fi
 
-WSL_IP="$(hostname -I | awk '{print $1}')"
-if [ -z "$WSL_IP" ]; then echo '__NO_WSL_IP__'; exit 57; fi
-
 pkill -f 'Xtigervnc.*:1' >/dev/null 2>&1 || true
 pkill -f 'websockify.*6080' >/dev/null 2>&1 || true
 pkill -f 'google-chrome.*\.agentie-chrome' >/dev/null 2>&1 || true
@@ -154,9 +163,9 @@ nohup env \
   dbus-launch --exit-with-session startxfce4 \
   >/tmp/agentie-xfce.log 2>&1 </dev/null &
 
-# Bind the bridge to the WSL VM interface so the Windows Agentie process and
-# browser can reach it. VNC itself remains localhost-only inside Linux.
-nohup websockify --web=/usr/share/novnc "$WSL_IP:6080" 127.0.0.1:5901 >/tmp/agentie-novnc.log 2>&1 </dev/null &
+# Bind bridge services on all WSL interfaces. Windows normally reaches these
+# through WSL localhost forwarding; direct WSL-IP access remains a fallback.
+nohup websockify --web=/usr/share/novnc 0.0.0.0:6080 127.0.0.1:5901 >/tmp/agentie-novnc.log 2>&1 </dev/null &
 
 nohup env \
   -u WAYLAND_DISPLAY -u WAYLAND_SOCKET \
@@ -173,9 +182,9 @@ nohup env \
 
 for i in $(seq 1 120); do
   novnc_ok=0; chrome_ok=0
-  (echo >/dev/tcp/"$WSL_IP"/6080) >/dev/null 2>&1 && novnc_ok=1
+  (echo >/dev/tcp/127.0.0.1/6080) >/dev/null 2>&1 && novnc_ok=1
   (echo >/dev/tcp/127.0.0.1/9222) >/dev/null 2>&1 && chrome_ok=1
-  if [ "$novnc_ok" = 1 ] && [ "$chrome_ok" = 1 ]; then echo "__READY__:$WSL_IP"; exit 0; fi
+  if [ "$novnc_ok" = 1 ] && [ "$chrome_ok" = 1 ]; then echo '__READY__'; exit 0; fi
   sleep 0.2
 done
 
@@ -200,9 +209,7 @@ def ensure_started() -> dict[str, Any]:
             raise RuntimeError("The Agentie Computer took too long to start.") from exc
         output = ((proc.stdout or "") + "\n" + (proc.stderr or "")).strip()
         if proc.returncode == 42 or "__MISSING__" in output:
-            _bootstrap_packages()
-            _prepare_x11_runtime()
-            proc = _run_wsl(_start_script(), timeout=45)
+            _bootstrap_packages(); _prepare_x11_runtime(); proc = _run_wsl(_start_script(), timeout=45)
             output = ((proc.stdout or "") + "\n" + (proc.stderr or "")).strip()
         if proc.returncode == 42 or "__MISSING__" in output:
             return {**status(), "setup_required": True, "message": "Google Chrome or a required desktop component is still missing inside Ubuntu.", "setup_command": "google-chrome --version", "details": output[-1000:]}
@@ -211,10 +218,10 @@ def ensure_started() -> dict[str, Any]:
         for _ in range(60):
             current = status()
             if current["novnc_ready"] and current["chrome_ready"]:
-                return {**current, "message": "Agentie Computer started."}
+                return {**current, "message": f"Agentie Computer started through {current.get('bridge_host')}."}
             time.sleep(0.25)
         current = status()
-        raise RuntimeError(f"The WSL desktop started at {current.get('wsl_ip') or 'unknown WSL IP'}, but Windows could not reach noVNC or Chrome.")
+        raise RuntimeError(f"The WSL desktop started at {current.get('wsl_ip') or 'unknown WSL IP'}, but Windows could not reach noVNC or Chrome through localhost forwarding or the WSL address.")
 
 
 def stop() -> dict[str, Any]:
@@ -227,8 +234,7 @@ pkill -f 'Xtigervnc.*:1' >/dev/null 2>&1 || true
 pkill -f 'AGENTIE_DESKTOP=1.*startxfce4' >/dev/null 2>&1 || true
 '''
     try:
-        _run_wsl(script, timeout=12)
-        _prepare_x11_runtime()
+        _run_wsl(script, timeout=12); _prepare_x11_runtime()
     except Exception:
         pass
     return {**status(), "running": False, "novnc_ready": False, "chrome_ready": False, "novnc_url": None, "cdp_url": None, "message": "Agentie Computer stopped."}
