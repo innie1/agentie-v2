@@ -15,7 +15,21 @@
   function renderReminders(el,c){addTitle(el,'🔔 Reminders');const list=listContainer(el);(c.items||[]).forEach(i=>list.appendChild(row(i.text||'Reminder',`${i.status||''} · ${i.due_at?new Date(i.due_at).toLocaleString():''}`)));if(!(c.items||[]).length)addMeta(el,'No reminders yet.')}
   function renderTasks(el,c){addTitle(el,'✅ Tasks');const list=listContainer(el);(c.items||[]).forEach(i=>{const done=(i.steps||[]).filter(s=>s.done).length;list.appendChild(row(i.title||i.id,`${i.status||'pending'} · ${done}/${(i.steps||[]).length} steps`))});if(!(c.items||[]).length)addMeta(el,'No tasks yet.')}
   function renderFiles(el,c){addTitle(el,'📄 Workspace files');const list=listContainer(el);(c.items||[]).forEach(i=>list.appendChild(row(i.name,`${Math.max(1,Math.round((i.size_bytes||0)/1024))} KB · ${i.suffix||'file'}`)));if(!(c.items||[]).length)addMeta(el,'Workspace is empty.')}
-  function renderApprovals(el,c){addTitle(el,'🛡 Approvals');const list=listContainer(el);(c.items||[]).forEach(i=>list.appendChild(row(i.action||i.id,i.reason||i.status)));if(!(c.items||[]).length)addMeta(el,'No approval requests.')}
+  function renderApprovals(el,c){
+    addTitle(el,'🛡 Approvals');const list=listContainer(el);
+    (c.items||[]).forEach(i=>{
+      const item=row(i.action||i.id,i.reason||i.status);
+      if(i.status==='pending'){
+        const actions=document.createElement('div');actions.className='actions';
+        const approve=document.createElement('button');approve.type='button';approve.textContent='Approve';approve.dataset.approvalId=i.id;
+        const deny=document.createElement('button');deny.type='button';deny.textContent='Deny';deny.dataset.denialId=i.id;
+        const resolve=async approved=>{approve.disabled=deny.disabled=true;try{const r=await fetch(`/approvals/${encodeURIComponent(i.id)}/resolve`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({approved})});if(!r.ok)throw new Error('Could not resolve approval');const label=item.querySelector('.metric-label');if(label)label.textContent=approved?'approved':'denied';actions.remove()}catch(_){approve.disabled=deny.disabled=false}};
+        approve.onclick=()=>resolve(true);deny.onclick=()=>resolve(false);actions.append(approve,deny);item.appendChild(actions);
+      }
+      list.appendChild(item)
+    });
+    if(!(c.items||[]).length)addMeta(el,'No approval requests.')
+  }
   function renderSystem(el,c){addTitle(el,'💻 System status');const g=document.createElement('div');g.className='grid';g.innerHTML=metric('CPU',`${c.cpu_percent??'—'}%`)+metric('Memory',`${c.memory_percent??'—'}%`)+metric('Disk',`${c.disk_free_gb??'—'} GB`);el.appendChild(g);addMeta(el,c.hostname||'Local runtime')}
   function renderNote(el,c){addTitle(el,`📝 ${c.title||'Note'}`);const b=document.createElement('div');b.style.marginTop='9px';b.style.whiteSpace='pre-wrap';b.style.fontSize='13px';b.textContent=c.content||'';el.appendChild(b)}
   function renderMemory(el,c){addTitle(el,`🧠 ${c.key||'Memory'}`);const b=document.createElement('div');b.style.marginTop='9px';b.style.whiteSpace='pre-wrap';b.style.fontSize='13px';b.textContent=c.value||'';el.appendChild(b);addMeta(el,c.scope||'persistent')}
