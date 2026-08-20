@@ -16,12 +16,16 @@ WORKSPACE=Path.cwd()/"workspace"
 SKILLS_DIR=WORKSPACE/"skills"
 STATE=WORKSPACE/"skills_state.json"
 DEFAULT_SKILLS={
-  "local-utils":{"name":"Local Utilities","description":"Timers, reminders, calculations, conversions, notes and system utilities.","agents":["general","manager","coding"],"enabled":True,"capabilities":["timer","alarm","reminder","calculator","conversion","notes","system"]},
-  "code-execution":{"name":"Code Execution","description":"Constrained local Python execution with captured output and downloadable artifacts.","agents":["general","coding","manager","research"],"enabled":True,"capabilities":["python","code_execution","local_analysis","artifacts"]},
-  "research":{"name":"Research","description":"Web search, page reading and deep research with citations.","agents":["general","research","manager"],"enabled":True,"capabilities":["web_search","browser_read","deep_research","citation_verify"]},
-  "files":{"name":"Files & Documents","description":"Upload, inspect, search, generate and download local artifacts including PDF, DOCX, XLSX and PPTX.","agents":["general","research","coding","manager"],"enabled":True,"capabilities":["files","pdf","docx","xlsx","pptx","zip","collections","rag"]},
-  "jobs":{"name":"Jobs & Delegation","description":"Durable background jobs, parallel agents, routines and dynamic roles.","agents":["general","manager","research","coding","github"],"enabled":True,"capabilities":["jobs","delegation","routines","roles"]},
-  "github":{"name":"GitHub","description":"Repository inspection and GitHub-specialist workflows.","agents":["github","coding","manager"],"enabled":True,"capabilities":["github_read"]},
+  "local-utils":{"name":"Local Utilities","description":"Timers, reminders, calculations, conversions, notes and system utilities.","agents":["general","manager","coding"],"enabled":True,"capabilities":["timer","alarm","reminder","calculator","conversion","notes","system"],"permissions":["read","write"]},
+  "code-execution":{"name":"Code Execution","description":"Constrained local Python execution with captured output and downloadable artifacts.","agents":["general","coding","manager","research"],"enabled":True,"capabilities":["python","code_execution","local_analysis","artifacts"],"permissions":["execute","files_write"]},
+  "research":{"name":"Research","description":"Web search, page reading and deep research with citations.","agents":["general","research","manager"],"enabled":True,"capabilities":["web_search","browser_read","deep_research","citation_verify"],"permissions":["web_read"]},
+  "files":{"name":"Files & Documents","description":"Upload, inspect, search, generate and download local artifacts including PDF, DOCX, XLSX and PPTX.","agents":["general","research","coding","manager"],"enabled":True,"capabilities":["files","pdf","docx","xlsx","pptx","zip","collections","rag"],"permissions":["files_read","files_write"]},
+  "jobs":{"name":"Jobs & Delegation","description":"Durable background jobs, parallel agents, routines and dynamic roles.","agents":["general","manager","research","coding","github"],"enabled":True,"capabilities":["jobs","delegation","routines","roles"],"permissions":["delegate","schedule"]},
+  "github":{"name":"GitHub","description":"Repository inspection, issues, pull requests, Actions and GitHub-specialist workflows.","agents":["github","coding","manager"],"enabled":True,"capabilities":["github_read","repositories","issues","pull_requests","actions"],"permissions":["github_read","github_write"]},
+  "browser-automation":{"name":"Browser Automation","description":"Navigate websites, interact with pages, capture screenshots and complete browser workflows through an approved MCP/browser provider.","agents":["general","research","manager"],"enabled":True,"capabilities":["browser","navigation","web_automation","screenshot"],"permissions":["web_read","web_interact"]},
+  "email":{"name":"Email","description":"Read, search, draft and send email when an approved email MCP or plugin is connected.","agents":["general","manager"],"enabled":True,"capabilities":["email","inboxes","messages","drafts","attachments"],"permissions":["email_read","email_write","send"]},
+  "knowledge-memory":{"name":"Knowledge Memory","description":"Persistent entities, observations, relations and useful long-term knowledge.","agents":["general","research","manager","coding","github"],"enabled":True,"capabilities":["knowledge_graph","entities","relations","memory"],"permissions":["memory_read","memory_write"]},
+  "planning":{"name":"Planning & Reasoning","description":"Structured planning, decomposition, verification and multi-step reasoning for complex work.","agents":["general","research","manager","coding"],"enabled":True,"capabilities":["reasoning","planning","verification","sequential_thinking"],"permissions":["read"]},
 }
 
 def _load_state()->dict[str,Any]:
@@ -51,7 +55,7 @@ def create_skill_manifest(skill_id:str,name:str,description:str,agents:list[str]
     path=SKILLS_DIR/sid/"skill.json";path.parent.mkdir(parents=True,exist_ok=True)
     if path.exists():raise ValueError("That skill already exists.")
     valid_agents={"general","research","coding","manager","github","*"};agents=[a for a in agents if a in valid_agents] or ["general"]
-    item={"id":sid,"name":name[:120],"description":description[:1000],"agents":sorted(set(agents)),"capabilities":sorted(set(capabilities)),"enabled":True,"version":"1.0","kind":"declarative"};path.write_text(json.dumps(item,indent=2,ensure_ascii=False),encoding="utf-8");return item
+    item={"id":sid,"name":name[:120],"description":description[:1000],"agents":sorted(set(agents)),"capabilities":sorted(set(capabilities)),"permissions":[],"enabled":True,"version":"1.0","kind":"declarative"};path.write_text(json.dumps(item,indent=2,ensure_ascii=False),encoding="utf-8");return item
 def skills_for_agent(agent_type:str)->list[dict[str,Any]]:return [s for s in list_skills() if s.get("enabled") and (agent_type in (s.get("agents") or []) or "*" in (s.get("agents") or []))]
 
 
