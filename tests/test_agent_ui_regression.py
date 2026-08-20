@@ -18,11 +18,14 @@ class AgentUIRegressionTests(unittest.TestCase):
         self.assertIn("Rename agent", text)
         self.assertIn("Change agent", text)
 
-    def test_existing_delete_and_approval_ui_are_not_reimplemented(self):
+    def test_agent_ui_reuses_existing_delete_and_approval_flows(self):
         text = Path("frontend/agent_ui.js").read_text(encoding="utf-8")
-        self.assertNotIn("resolve_approval", text)
-        self.assertNotIn("approval-card", text)
-        self.assertNotIn("agent-delete", text)
+        # The enhancement may locate the existing delete button so it can place
+        # the edit control beside it, but it must not recreate delete/approval behavior.
+        self.assertIn("querySelector('.agent-delete')", text)
+        self.assertNotIn("Delete agent ${", text)
+        self.assertNotIn("/approvals/", text)
+        self.assertNotIn("browser_approval", text)
 
     def test_existing_desktop_and_browser_ui_files_remain_present(self):
         self.assertTrue(Path("frontend/browser_screen.js").exists())
