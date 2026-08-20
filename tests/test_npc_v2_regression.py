@@ -1,16 +1,24 @@
-import tempfile,unittest
+import gc,tempfile,time,unittest
 from pathlib import Path
 from unittest.mock import patch
 from agentie.core import agent_prompt,memory_store,npc_brain
 
 class NPCV2RegressionTests(unittest.TestCase):
     def setUp(self):
-        self.temp=tempfile.TemporaryDirectory();root=Path(self.temp.name)
+        # SQLite connections created during the test can remain alive until GC on
+        # Windows. Ignore cleanup races here; DB_PATH already isolates every test.
+        self.temp=tempfile.TemporaryDirectory(ignore_cleanup_errors=True);root=Path(self.temp.name)
         self.agent={"id":"agt_npcv2","name":"Alex","role":"CTO","purpose":"Lead engineering","permissions":{"delegate":True},"skills":[]}
         self.p1=patch.object(agent_prompt,"PROMPTS_FILE",root/"prompts.json");self.p1.start()
         self.p2=patch.object(memory_store,"DB_PATH",root/"memory.sqlite3");self.p2.start()
         self.session="agent:agt_npcv2:chat"
-    def tearDown(self):self.p2.stop();self.p1.stop();self.temp.cleanup()
+    def tearDown(self):
+        self.p2.stop();self.p1.stop();gc.collect()
+        # Retry briefly because sqlite/WAL handles can be released a moment after
+        # the final connection object becomes unreachable on Windows.
+        for _ in range(10):
+            try:self.temp.cleanup();break
+            except (PermissionError,NotADirectoryError,OSError):time.sleep(.05);gc.collect()
     def test_normal_conversation_is_local(self):
         r=npc_brain.try_npc_response(self.agent,"how are you",self.session);self.assertEqual(r["routed_by"],"npc_brain");self.assertGreaterEqual(r["confidence"],.9)
     def test_make_it_shorter_uses_previous_assistant_context_locally(self):
