@@ -1,7 +1,6 @@
 import unittest
 from pathlib import Path
 
-
 class UIUpgradeRegressionTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -13,20 +12,42 @@ class UIUpgradeRegressionTests(unittest.TestCase):
         self.assertIn('<script src="/ui-upgrade.js?v=202"></script>',self.main)
         self.assertIn('@app.get("/ui-upgrade.js")',self.main)
 
-    def test_sidebar_is_fixed_and_chat_scrolls_independently(self):
+    def test_sidebar_is_fixed_wider_and_chat_scrolls_independently(self):
         self.assertIn('html,body{height:100%;overflow:hidden}',self.ui)
+        self.assertIn('grid-template-columns:248px minmax(0,1fr) 0',self.ui)
         self.assertIn('.sidebar{height:100vh',self.ui)
         self.assertIn('.chat-shell{height:100vh;min-width:0;overflow-y:auto',self.ui)
 
-    def test_collapsed_sidebar_keeps_agent_orbs(self):
-        self.assertIn('.app-shell.sidebar-collapsed{grid-template-columns:64px 1fr}',self.ui)
-        self.assertIn('.sidebar.collapsed .agent-copy',self.ui)
+    def test_collapsed_sidebar_keeps_agent_orbs_without_brand_a(self):
+        self.assertIn('.app-shell.sidebar-collapsed{grid-template-columns:64px minmax(0,1fr) 0}',self.ui)
+        self.assertIn('.sidebar.collapsed .brand{display:none}',self.ui)
         self.assertIn('.sidebar.collapsed .agent-orb{width:38px;height:38px}',self.ui)
+        self.assertNotIn(".brand:after{content:'A'",self.ui)
 
-    def test_search_and_removed_subtitle_are_wired(self):
+    def test_search_plus_create_agent_and_removed_subtitle_are_wired(self):
         self.assertIn("document.querySelector('.subtle')?.remove()",self.ui)
         self.assertIn("search.placeholder='Search agents'",self.ui)
-        self.assertIn("search.addEventListener('input'",self.ui)
+        self.assertIn("plus.title='Create agent'",self.ui)
+        self.assertIn('Create an agent called ${name.trim()}',self.ui)
+
+    def test_top_bar_has_agent_chat_head_and_instruction_entry(self):
+        self.assertIn('workspace-topbar',self.ui)
+        self.assertIn('top-agent-orb',self.ui)
+        self.assertIn('Show ${a.name} instructions',self.ui)
+        self.assertIn('.agent-edit{display:none!important}',self.ui)
+
+    def test_composer_switches_from_microphone_to_send_arrow(self):
+        self.assertIn(".composer button::before{content:'🎙'",self.ui)
+        self.assertIn(".composer.has-text button::before{content:'➤'",self.ui)
+        self.assertIn("classList.toggle('has-text'",self.ui)
+        self.assertIn('background:#0b84ff!important',self.ui)
+
+    def test_right_routines_panel_matches_sidebar_and_resizes_composer(self):
+        self.assertIn('.app-shell.right-open{grid-template-columns:248px minmax(0,1fr) 248px}',self.ui)
+        self.assertIn('.app-shell.right-open .composer-wrap{right:248px!important}',self.ui)
+        self.assertIn("right.className='right-panel'",self.ui)
+        self.assertIn("message:'Show routines'",self.ui)
+        self.assertIn('Create routine',self.ui)
 
     def test_jobs_render_as_native_cards_not_json(self):
         self.assertIn("if(c?.type==='jobs')return renderJobs(c)",self.ui)
@@ -38,6 +59,5 @@ class UIUpgradeRegressionTests(unittest.TestCase):
         self.assertIn("if(c?.type==='agent_instructions')return renderInstructions(c)",self.ui)
         self.assertIn('View generated system prompt',self.ui)
         self.assertIn('Learned preferences',self.ui)
-
 
 if __name__=='__main__':unittest.main()
