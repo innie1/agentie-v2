@@ -163,16 +163,13 @@ def _bootstrap_packages() -> None:
 set -eu
 export DEBIAN_FRONTEND=noninteractive
 apt-get update
-apt-get install -y ca-certificates curl xfce4 xfce4-terminal thunar dbus-x11 socat
+apt-get install -y ca-certificates curl ssl-cert xfce4 xfce4-terminal thunar dbus-x11 socat
 if ! command -v vncserver >/dev/null 2>&1 || ! command -v Xkasmvnc >/dev/null 2>&1; then
   . /etc/os-release
   codename="${{VERSION_CODENAME:-${{UBUNTU_CODENAME:-}}}}"
   case "$codename" in
     focal|jammy|noble) package_codename="$codename" ;;
     oracular|plucky|questing|resolute)
-      # KasmVNC does not yet publish packages for these newer Ubuntu releases.
-      # The Noble package is built against an older userspace and is compatible
-      # with these newer Ubuntu releases in Agentie's WSL desktop runtime.
       package_codename="noble"
       echo "Using KasmVNC Noble compatibility package on Ubuntu $codename"
       ;;
@@ -185,6 +182,13 @@ if ! command -v vncserver >/dev/null 2>&1 || ! command -v Xkasmvnc >/dev/null 2>
   curl -fL --retry 3 "$url" -o "/tmp/$deb"
   apt-get install -y "/tmp/$deb"
   rm -f "/tmp/$deb"
+fi
+# KasmVNC's Debian/Ubuntu package expects the ssl-cert key and group. WSL starts
+# a fresh process for later Agentie calls, so the supplementary group is picked
+# up automatically without asking the user to log out of Windows.
+agentie_user="$(awk -F: '$3 >= 1000 && $3 < 65534 {{print $1; exit}}' /etc/passwd)"
+if [ -n "$agentie_user" ]; then
+  adduser "$agentie_user" ssl-cert >/dev/null 2>&1 || true
 fi
 '''
     try:
@@ -220,6 +224,15 @@ network:
 command_line:
   prompt: false
 EOF
+# KasmVNC refuses to start with prompting disabled until a password-file user
+# exists, even though Agentie runs the local desktop with VNC auth disabled.
+# Create a random local-only bootstrap credential once; it is never exposed to
+# the browser or user and only satisfies KasmVNC's startup requirement.
+if command -v vncpasswd >/dev/null 2>&1 && [ ! -s "$HOME/.kasmpasswd" ]; then
+  kasm_bootstrap_password="$(tr -d '-' </proc/sys/kernel/random/uuid 2>/dev/null | cut -c1-24)"
+  [ -n "$kasm_bootstrap_password" ] || kasm_bootstrap_password="AgentieLocal$(date +%s)"
+  printf '%s\n%s\n' "$kasm_bootstrap_password" "$kasm_bootstrap_password" | vncpasswd -u agentie-local >/dev/null 2>&1
+fi
 cat > "$HOME/.config/autostart/xfce4-notifyd.desktop" <<'EOF'
 [Desktop Entry]
 Type=Application
