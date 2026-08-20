@@ -77,6 +77,25 @@ def _bootstrap_packages() -> None:
         raise RuntimeError("Could not install the Agentie desktop bridge packages: " + (output[-1400:] or f"exit {proc.returncode}"))
 
 
+def _prepare_x11_runtime() -> None:
+    """Repair the shared X11 socket directory and stale display :1 state.
+
+    /tmp/.X11-unix is a system-owned shared directory and must be mode 1777.
+    VNC itself still runs as the normal Ubuntu user; root is used only for this
+    filesystem preparation so a previous X server cannot poison future starts.
+    """
+    script = r'''
+mkdir -p /tmp/.X11-unix
+chown root:root /tmp/.X11-unix
+chmod 1777 /tmp/.X11-unix
+rm -f /tmp/.X1-lock /tmp/.X11-unix/X1
+'''
+    proc = _run_wsl(script, timeout=12, root=True)
+    if proc.returncode != 0:
+        output = ((proc.stdout or "") + "\n" + (proc.stderr or "")).strip()
+        raise RuntimeError("Could not prepare the WSL X11 runtime: " + (output[-1000:] or f"exit {proc.returncode}"))
+
+
 def _start_script() -> str:
     return r'''
 set -u
@@ -92,7 +111,7 @@ if [ -n "$missing" ]; then
   exit 42
 fi
 
-mkdir -p "$HOME/.vnc" "$HOME/.config/tigervnc"
+mkdir -p "$HOME/.config/tigervnc"
 cat > "$HOME/.config/tigervnc/xstartup" <<'EOF'
 #!/bin/sh
 unset SESSION_MANAGER
@@ -100,17 +119,16 @@ unset DBUS_SESSION_BUS_ADDRESS
 exec dbus-launch --exit-with-session startxfce4
 EOF
 chmod +x "$HOME/.config/tigervnc/xstartup"
-cp "$HOME/.config/tigervnc/xstartup" "$HOME/.vnc/xstartup"
-chmod +x "$HOME/.vnc/xstartup"
+
+# Stop only Agentie's own display before starting a fresh one. The root-only
+# stale socket cleanup happens outside this script in _prepare_x11_runtime().
+tigervncserver -kill :1 >/dev/null 2>&1 || true
+tigervncserver -list -cleanstale >/dev/null 2>&1 || true
 
 if ! pgrep -f 'Xtigervnc.*:1' >/dev/null 2>&1; then
-  tigervncserver -kill :1 >/dev/null 2>&1 || true
-  tigervncserver -list -cleanstale >/dev/null 2>&1 || true
-  rm -f /tmp/.X1-lock /tmp/.X11-unix/X1
   if ! tigervncserver :1 -geometry 1440x900 -depth 24 -localhost yes -SecurityTypes None -xstartup "$HOME/.config/tigervnc/xstartup" >/tmp/agentie-vnc-start.log 2>&1; then
     echo '__VNC_ERROR__'
     cat /tmp/agentie-vnc-start.log 2>/dev/null || true
-    tail -n 80 "$HOME"/.vnc/*.log 2>/dev/null || true
     tail -n 80 "$HOME"/.config/tigervnc/*.log 2>/dev/null || true
     exit 55
   fi
@@ -126,6 +144,7 @@ if ! pgrep -f 'google-chrome.*\.agentie-chrome' >/dev/null 2>&1; then
     --remote-debugging-port=9222 \
     --remote-debugging-address=127.0.0.1 \
     --no-first-run --no-default-browser-check \
+    --disable-gpu \
     about:blank >/tmp/agentie-chrome.log 2>&1 </dev/null &
 fi
 
@@ -158,6 +177,7 @@ def ensure_started() -> dict[str, Any]:
         if current["novnc_ready"] and current["chrome_ready"]:
             return {**current, "message": "Agentie Computer is ready."}
 
+        _prepare_x11_runtime()
         try:
             proc = _run_wsl(_start_script(), timeout=45)
         except subprocess.TimeoutExpired as exc:
@@ -166,6 +186,7 @@ def ensure_started() -> dict[str, Any]:
         output = ((proc.stdout or "") + "\n" + (proc.stderr or "")).strip()
         if proc.returncode == 42 or "__MISSING__" in output:
             _bootstrap_packages()
+            _prepare_x11_runtime()
             proc = _run_wsl(_start_script(), timeout=45)
             output = ((proc.stdout or "") + "\n" + (proc.stderr or "")).strip()
 
@@ -199,6 +220,7 @@ tigervncserver -kill :1 >/dev/null 2>&1 || true
 '''
     try:
         _run_wsl(script, timeout=12)
+        _prepare_x11_runtime()
     except Exception:
         pass
     return {**status(), "running": False, "novnc_ready": False, "chrome_ready": False, "novnc_url": None, "cdp_url": None, "message": "Agentie Computer stopped."}
