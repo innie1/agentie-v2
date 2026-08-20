@@ -6,8 +6,8 @@ class AgentSidebarRegressionTests(unittest.TestCase):
     def test_sidebar_renders_persistent_agent_orbs(self):
         text=Path("frontend/index.html").read_text(encoding="utf-8")
         self.assertIn('id="persistentAgentList"',text)
-        self.assertIn('className="agent-orb"',text)
-        self.assertIn('className="agent-row"',text)
+        self.assertIn("orb.className='agent-orb'",text)
+        self.assertIn("row.className='agent-row'",text)
         self.assertIn('AGENT_COLORS',text)
 
     def test_selected_agent_uses_private_session_prefix_and_base(self):
