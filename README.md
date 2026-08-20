@@ -57,12 +57,16 @@ Agentie includes local tools and routing for capabilities such as:
 - Code execution and workspace operations
 
 ### Skills, plugins and MCP
-- Skill registry and role/skill routing infrastructure.
-- Plugin/MCP architecture for external capabilities.
-- Capability preflight and approval infrastructure.
-- Direction includes integrations such as GitHub, Gmail, Google Calendar, Slack, Notion and browser/web tools.
+- Real skill registry and role/skill routing infrastructure.
+- Real MCP registration, discovery and tool execution through the MCP client.
+- Global capability grants: approving a skill/MCP for all agents makes it available to existing and future agents by default.
+- Per-agent overrides: an individual agent can still be explicitly blocked from a globally allowed capability.
+- Consequential actions remain separately approval-gated even when the underlying skill/MCP is globally allowed.
+- Connected MCP examples include Filesystem, Playwright, GitHub, Memory, Fetch, Time and Git when their real runtimes/dependencies are available.
+- `Last30Days` is integrated as a real external research skill from `mvanhorn/last30days-skill`, with upstream Git installation, runtime health reporting and execution of its actual `last30days.py` engine.
+- Last30Days currently requires Git, Node.js and Python 3.12+; Agentie reports the skill as not ready rather than pretending it can execute when these requirements are missing.
 
-Some integrations still require additional connection, permission and end-user UI work before they should be considered complete product integrations.
+Some service integrations still require credentials, provider setup or additional reliability work before they should be considered complete product integrations.
 
 ### Browser and research
 - Browser automation infrastructure.
@@ -99,6 +103,7 @@ The current UI includes:
 - Computer window/card
 - Collapsible workspace panels
 - Routines panel
+- Skills/MCP catalog with global defaults and per-agent restrictions
 
 ## Architecture
 
@@ -117,7 +122,7 @@ agentie-v2/
 └── README.md
 ```
 
-Important core modules include `agent_registry.py`, `agent_prompt.py`, `npc_brain.py`, `job_engine.py`, `team_orchestrator.py`, `memory_store.py`, `advanced_local_router.py`, `capability_router.py`, `browser_automation.py`, and `computer_session.py`.
+Important core modules include `agent_registry.py`, `agent_prompt.py`, `npc_brain.py`, `job_engine.py`, `team_orchestrator.py`, `memory_store.py`, `advanced_local_router.py`, `agent_access.py`, `skill_registry.py`, `external_skill_runtime.py`, `capability_router.py`, `browser_automation.py`, and `computer_session.py`.
 
 ## Local-first execution philosophy
 
@@ -133,9 +138,34 @@ The intended routing order is broadly:
 
 Provider failure should therefore affect only work that genuinely requires that provider, not timers, local conversation, job controls, memory commands, or other supported local operations.
 
+## Capability permission model
+
+Agentie uses a layered permission model:
+
+1. Global capability policy - the normal default after a user chooses **Always allow for all agents**.
+2. Per-agent override - an agent can be explicitly allowed or blocked regardless of the global default.
+3. Action-level approval - destructive, sending, posting or otherwise consequential tool actions can still require approval.
+
+This means users do not need to approve the same safe tool separately for every agent, while sensitive agents can still be restricted.
+
+## Last30Days
+
+Agentie can install the upstream Last30Days skill into `workspace/external_skills/last30days-skill`.
+
+Useful commands:
+
+```text
+Install Last30Days skill
+Last30Days status
+Last30Days AI coding agents
+Update Last30Days skill
+```
+
+The integration runs the actual upstream `skills/last30days/scripts/last30days.py` engine with `--emit=compact`. Current upstream Last30Days v3 requires Python 3.12+. If Agentie is running under Python 3.11, install Python 3.12 separately (for example with `py -3.12` available on Windows); the main Agentie runtime does not need to be migrated immediately.
+
 ## Run locally
 
-Python 3.10+ is required. Python 3.11 is currently used during development.
+Python 3.10+ is required. Python 3.11 is currently used during development. Some optional external skills may require newer runtimes independently.
 
 ```powershell
 cd C:\Users\user\agentie-v2
@@ -176,31 +206,26 @@ When extending Agentie:
 
 ## Current development roadmap
 
-The next major capability work is intentionally focused on the underlying agent intelligence before final UI polish.
+### 1. Skills and plugin permissions - active
+Continue hardening real external skill/MCP discovery, credentials, health checks and permission UX. Global defaults + per-agent restrictions are now implemented.
 
-### 1. Expand local NPC intelligence — next
-Build a broader lightweight local reasoning layer so agents can understand more everyday conversation, contextual follow-ups, role-specific requests and deterministic workflows without unnecessarily calling a paid model. This must remain compatible with evolving agent instructions and learned user preferences.
-
-### 2. Computer autonomy and automatic fallback
-Allow Agentie to choose Browser/Computer execution when an API/plugin cannot complete a task, then observe, interact and verify the result reliably.
-
-### 3. Skills and plugin permissions
-Build a complete user-facing skills/plugins system with per-agent capability permissions, connection state and safe approvals.
-
-### 4. Background/routine reliability
+### 2. Background/routine reliability - next
 Harden scheduled work, restart recovery, missed-run behavior, job continuation and failure recovery.
 
-### 5. Voice
+### 3. Voice
 Turn the microphone UI into a complete speech-input workflow and later support richer voice interaction.
 
-### 6. Integration hardening
+### 4. Integration hardening
 Finish end-user connection and reliability flows for services such as GitHub, Gmail, Calendar, Slack and Notion.
 
-### 7. Authentication/accounts
+### 5. Authentication/accounts
 Add production user/account isolation if Agentie moves from a local personal workspace into a multi-user product.
 
-### 8. Final UI/UX polish
+### 6. Final UI/UX polish
 Once the underlying capabilities are stable, finish the cohesive desktop/web experience around those stable contracts.
+
+### 7. Computer reliability and autonomy - later
+Return to WSL/KasmVNC reliability, Browser/Computer fallback, observe-act-verify autonomy and visual task execution after the other core systems are stable.
 
 ## Status
 
