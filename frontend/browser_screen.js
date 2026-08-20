@@ -13,24 +13,24 @@
   const computerIntent=t=>/https?:\/\//i.test(t)&&/\b(open|visit|check|inspect|view|screenshot|capture|monitor|watch|click|type|fill|search|scroll|press|browse|navigate)\b/i.test(t)||/^\s*(click|type|fill|scroll|press|go back|back|forward|new tab|close tab|search for)\b/i.test(t)||/\b(show desktop|start (?:the )?computer|open (?:the )?terminal|file manager|computer files|computer tasks|computer notes)\b/i.test(t);
   let row=null,root=null,starting=null,stopped=false;
 
-  function makeComputer(){const r=document.createElement('div');r.className='assistant-row agentie-real-row';r.innerHTML=`<div class="agentie-real-computer"><div class="arc-head"><span class="arc-dot"></span><span class="arc-title">Agentie Computer</span><span class="arc-status">Ready</span><button class="arc-stop" type="button">Stop</button></div><div class="arc-screen"><iframe class="arc-frame" title="Agentie Linux desktop" allow="clipboard-read; clipboard-write" tabindex="0"></iframe><div class="arc-overlay"><div><div class="arc-spinner"></div><strong>Agentie Computer</strong><p>Waiting for Agentie to start the real Linux desktop…</p></div></div></div><div class="arc-foot"><span class="arc-detail">Persistent WSL desktop · direct mouse and keyboard</span></div></div>`;return r}
+  function makeComputer(){const r=document.createElement('div');r.className='assistant-row agentie-real-row';r.innerHTML=`<div class="agentie-real-computer"><div class="arc-head"><span class="arc-dot"></span><span class="arc-title">Agentie Computer</span><span class="arc-status">Ready</span><button class="arc-fullscreen" type="button">Fullscreen</button><button class="arc-stop" type="button">Stop</button></div><div class="arc-screen"><iframe class="arc-frame" title="Agentie Linux desktop" allow="clipboard-read; clipboard-write; fullscreen" allowfullscreen tabindex="0"></iframe><div class="arc-overlay"><div><div class="arc-spinner"></div><strong>Agentie Computer</strong><p>Waiting for Agentie to start the real Linux desktop…</p></div></div></div><div class="arc-foot"><span class="arc-detail">Persistent Linux desktop · click inside and use your mouse and keyboard</span></div></div>`;return r}
   function place(){if(!row){row=makeComputer();root=row.querySelector('.agentie-real-computer');wire()}if(!row.isConnected)messages.appendChild(row);return root}
   async function agentCall(message){const r=await fetch('/agent/run',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({message,agent_type:agentType?.value||'general'})});const d=await r.json();if(!r.ok)throw new Error(d.detail||'Computer request failed');return d}
   function setState(state,detail){place();const dot=root.querySelector('.arc-dot'),status=root.querySelector('.arc-status');dot.classList.toggle('on',state==='on');dot.classList.toggle('error',state==='error');status.textContent=state==='on'?'Running':state==='starting'?'Starting':state==='stopped'?'Stopped':state==='error'?'Error':'Ready';if(detail)root.querySelector('.arc-detail').textContent=detail}
   function showOverlay(title,text,setup,withStart=false){place();const o=root.querySelector('.arc-overlay');o.classList.remove('hidden');o.innerHTML=`<div>${title==='Starting'?'<div class="arc-spinner"></div>':'<div style="font-size:30px;margin-bottom:8px">'+(title==='Stopped'?'⏻':'⚠')+'</div>'}<strong>${esc(title)}</strong><p>${esc(text||'')}</p>${setup?`<div class="arc-setup">${esc(setup)}</div>`:''}${withStart?'<button class="arc-start" type="button">Start computer</button>':''}</div>`;const b=o.querySelector('.arc-start');if(b)b.onclick=()=>ensureComputer(true)}
-  function connect(url){place();const frame=root.querySelector('.arc-frame');frame.src=url+(url.includes('?')?'&':'?')+'t='+Date.now();root.querySelector('.arc-overlay').classList.add('hidden');stopped=false;setState('on','Real Linux desktop · click inside to use keyboard and mouse')}
+  function connect(url){place();const frame=root.querySelector('.arc-frame');frame.onload=()=>{try{frame.focus()}catch(_){}};frame.src=url+(url.includes('?')?'&':'?')+'t='+Date.now();root.querySelector('.arc-overlay').classList.add('hidden');stopped=false;setState('on','KasmVNC Linux desktop · mouse and keyboard control enabled')}
   async function ensureComputer(force=false){
     place();if(starting)return starting;if(!force&&!stopped&&root.querySelector('.arc-frame').src&&root.querySelector('.arc-overlay').classList.contains('hidden'))return;
-    setState('starting','Starting Ubuntu, XFCE, noVNC and Chrome');showOverlay('Starting','Agentie is turning on its persistent Linux computer.');
-    starting=(async()=>{try{const d=await agentCall('Desktop control: start');const c=d.card||{};if(c.setup_required){stopped=true;setState('error','One-time desktop package setup required');showOverlay('One-time setup required','Run this once in your Ubuntu terminal, then click Start computer.',c.setup_command,true);return}if(c.mode==='wsl'&&c.novnc_url){connect(c.novnc_url);return}throw new Error(d.message||'The WSL desktop did not start.')}catch(e){stopped=true;setState('error',e.message);showOverlay('Computer could not start',e.message,null,true)}finally{starting=null}})();return starting
+    setState('starting','Starting Ubuntu, XFCE, KasmVNC and Chrome');showOverlay('Starting','Agentie is turning on its persistent Linux computer.');
+    starting=(async()=>{try{const d=await agentCall('Desktop control: start');const c=d.card||{};if(c.setup_required){stopped=true;setState('error','One-time desktop package setup required');showOverlay('One-time setup required','Agentie could not finish the automatic desktop setup.',c.details||c.setup_command,true);return}const desktopUrl=c.kasmvnc_url||c.novnc_url;if(c.mode==='wsl'&&desktopUrl){connect(desktopUrl);return}throw new Error(d.message||'The WSL desktop did not start.')}catch(e){stopped=true;setState('error',e.message);showOverlay('Computer could not start',e.message,null,true)}finally{starting=null}})();return starting
   }
   async function stopComputer(){place();setState('starting','Stopping the Linux computer');try{await agentCall('Desktop control: stop')}catch(_){}root.querySelector('.arc-frame').src='about:blank';stopped=true;setState('stopped','Agentie Computer is powered down');showOverlay('Stopped','The Linux desktop and Agentie Chrome session are stopped.',null,true)}
-  function wire(){root.querySelector('.arc-stop').onclick=stopComputer}
+  function wire(){root.querySelector('.arc-stop').onclick=stopComputer;root.querySelector('.arc-fullscreen').onclick=()=>{const screen=root.querySelector('.arc-screen');if(screen.requestFullscreen)screen.requestFullscreen().catch(()=>{})}}
   function esc(s){const d=document.createElement('div');d.textContent=String(s??'');return d.innerHTML}
 
   // Important: this function only prepares the UI. It never starts WSL.
-  // The normal /agent/run request owns computer startup, preventing two VNC
-  // processes from racing for the same display.
+  // The normal /agent/run request owns Computer startup, preventing two
+  // KasmVNC processes from racing for the same display.
   function prepare(text){if(!computerIntent(text))return;place();setState('starting','Waiting for Agentie computer route');showOverlay('Starting','Agentie is preparing the real Linux computer.');setTimeout(()=>window.scrollTo({top:document.body.scrollHeight,behavior:'smooth'}),0)}
   send.addEventListener('click',()=>{const t=input.value.trim();if(t)prepare(t)},true);input.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){const t=input.value.trim();if(t)prepare(t)}},true);
 
@@ -38,10 +38,10 @@
   const previousRender=window.renderCard;if(typeof previousRender==='function')window.renderCard=function(card,message){
     if(card?.type==='desktop_view'){
       place();if(card.mode==='wsl'){
-        if(card.setup_required){stopped=true;setState('error','One-time setup required');showOverlay('One-time setup required','Run this once in Ubuntu, then click Start computer.',card.setup_command,true)}
-        else if(card.running&&card.novnc_url)connect(card.novnc_url);
+        if(card.setup_required){stopped=true;setState('error','One-time setup required');showOverlay('One-time setup required','Agentie could not finish the automatic desktop setup.',card.details||card.setup_command,true)}
+        else {const desktopUrl=card.kasmvnc_url||card.novnc_url;if(card.running&&desktopUrl)connect(desktopUrl);
         else if(card.app==='stopped'){stopped=true;root.querySelector('.arc-frame').src='about:blank';setState('stopped','Agentie Computer stopped');showOverlay('Stopped','The Linux desktop is powered down.',null,true)}
-        else if(card.error){stopped=true;setState('error',card.error);showOverlay('Computer could not start',card.error,null,true)}
+        else if(card.error){stopped=true;setState('error',card.error);showOverlay('Computer could not start',card.error,null,true)}}
       }
       const hidden=document.createElement('span');hidden.style.display='none';return hidden
     }
