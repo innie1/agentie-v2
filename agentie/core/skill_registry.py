@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from agentie.core.code_execution import route_code_command
+from agentie.core.external_skill_runtime import last30days_status, route_last30days
 from agentie.core.observability import current_trace_id, set_current_trace
 from agentie.core.web_research_service import answer_web_search, search_sources, source_card, sources_only_requested
 
@@ -19,6 +20,7 @@ DEFAULT_SKILLS={
   "local-utils":{"name":"Local Utilities","description":"Timers, reminders, calculations, conversions, notes and system utilities.","agents":["general","manager","coding"],"enabled":True,"capabilities":["timer","alarm","reminder","calculator","conversion","notes","system"],"permissions":["read","write"]},
   "code-execution":{"name":"Code Execution","description":"Constrained local Python execution with captured output and downloadable artifacts.","agents":["general","coding","manager","research"],"enabled":True,"capabilities":["python","code_execution","local_analysis","artifacts"],"permissions":["execute","files_write"]},
   "research":{"name":"Research","description":"Web search, page reading and deep research with citations.","agents":["general","research","manager"],"enabled":True,"capabilities":["web_search","browser_read","deep_research","citation_verify"],"permissions":["web_read"]},
+  "last30days":{"name":"Last30Days","description":"Real upstream multi-source recent-research skill from mvanhorn/last30days-skill. Searches recent community and web signals using its installed engine.","agents":["general","research","manager"],"enabled":True,"capabilities":["recent_research","reddit","x","youtube","hackernews","github","web_search","trends"],"permissions":["web_read","execute","files_write"],"kind":"external","repository":"https://github.com/mvanhorn/last30days-skill.git","runtime_status":last30days_status},
   "files":{"name":"Files & Documents","description":"Upload, inspect, search, generate and download local artifacts including PDF, DOCX, XLSX and PPTX.","agents":["general","research","coding","manager"],"enabled":True,"capabilities":["files","pdf","docx","xlsx","pptx","zip","collections","rag"],"permissions":["files_read","files_write"]},
   "jobs":{"name":"Jobs & Delegation","description":"Durable background jobs, parallel agents, routines and dynamic roles.","agents":["general","manager","research","coding","github"],"enabled":True,"capabilities":["jobs","delegation","routines","roles"],"permissions":["delegate","schedule"]},
   "github":{"name":"GitHub","description":"Repository inspection, issues, pull requests, Actions and GitHub-specialist workflows.","agents":["github","coding","manager"],"enabled":True,"capabilities":["github_read","repositories","issues","pull_requests","actions"],"permissions":["github_read","github_write"]},
@@ -42,6 +44,9 @@ def all_skills()->dict[str,dict[str,Any]]:
     state=_load_state();skills={k:{"id":k,**v} for k,v in DEFAULT_SKILLS.items()};skills.update(_load_custom())
     for sid,override in state.get("overrides",{}).items():
         if sid in skills:skills[sid].update(override)
+    for item in skills.values():
+        status_fn=item.get("runtime_status")
+        if callable(status_fn):item["runtime"]=status_fn();item.pop("runtime_status",None)
     return skills
 def list_skills()->list[dict[str,Any]]:return sorted(all_skills().values(),key=lambda x:str(x.get("name",x["id"])).lower())
 def skill_enabled(skill_id:str)->bool:return bool(all_skills().get(skill_id,{}).get("enabled",False))
@@ -64,28 +69,25 @@ def _run_web_synthesis(query:str)->dict[str,Any]:
     def worker():
         if trace_id:set_current_trace(trace_id)
         return asyncio.run(answer_web_search(query,8))
-    with ThreadPoolExecutor(max_workers=1,thread_name_prefix="agentie-web") as pool:
-        return pool.submit(worker).result()
-
+    with ThreadPoolExecutor(max_workers=1,thread_name_prefix="agentie-web") as pool:return pool.submit(worker).result()
 
 def _friendly_synthesis_failure(exc:Exception)->str:
     text=str(exc).lower()
-    if "429" in text or "quota" in text or "resource_exhausted" in text or "rate limit" in text:
-        return "I found the web sources, but the AI summary is temporarily unavailable because the model quota was reached. You can still open the sources below."
+    if "429" in text or "quota" in text or "resource_exhausted" in text or "rate limit" in text:return "I found the web sources, but the AI summary is temporarily unavailable because the model quota was reached. You can still open the sources below."
     return "I found the web sources, but I couldn't generate the AI summary right now. You can still open the sources below."
 
-
 def route_skill_command(message:str)->dict[str,Any]|None:
+    external=route_last30days(message)
+    if external is not None:return external
     if skill_enabled("code-execution"):
         code_result=route_code_command(message)
         if code_result is not None:return code_result
-
     text=" ".join(message.strip().split());lower=text.lower().strip(" .?!")
     web=re.match(r"^(?:please\s+)?(?:search(?:\s+the)?\s+web|web search|search online|look up online|find online|look on the web)\s+(?:for|about|on)?\s*(.+)$",text,re.I)
     if web and skill_enabled("research"):
         query=web.group(1).strip(" .?!")
         if sources_only_requested(text):
-            query=re.sub(r"\b(?:sources only|links only|results only|just (?:the )?(?:sources|links|results)|do not summarize|don't summarize|no summary)\b", "", query, flags=re.I).strip(" ,.-")
+            query=re.sub(r"\b(?:sources only|links only|results only|just (?:the )?(?:sources|links|results)|do not summarize|don't summarize|no summary)\b","",query,flags=re.I).strip(" ,.-")
             try:sources=search_sources(query,8)
             except Exception as exc:return {"message":f"Web search failed: {exc}","card":None}
             return {"message":"","card":source_card(query,sources,"",0)}
@@ -93,9 +95,7 @@ def route_skill_command(message:str)->dict[str,Any]|None:
         except Exception as exc:
             try:sources=search_sources(query,8)
             except Exception:return {"message":"Web search is temporarily unavailable.","card":None}
-            card=source_card(query,sources,"",0);card["synthesis_unavailable"]=True
-            return {"message":_friendly_synthesis_failure(exc),"card":card}
-
+            card=source_card(query,sources,"",0);card["synthesis_unavailable"]=True;return {"message":_friendly_synthesis_failure(exc),"card":card}
     if lower in {"skills","show skills","list skills","my skills"}:
         items=list_skills();return {"message":f"Agentie has {len(items)} registered skill(s).","card":{"type":"skills","items":items}}
     m=re.match(r"^(?:create|make|add)\s+(?:a\s+)?skill(?:\s+called|\s+named)?\s+(.+?)\s+(?:for|usable by)\s+([a-z*, ]+?)\s+(?:with|using|that has)\s+(?:capabilities?\s+)?(.+)$",text,re.I)
