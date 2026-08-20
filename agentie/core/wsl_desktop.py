@@ -93,36 +93,53 @@ command -v dbus-launch >/dev/null 2>&1 || missing="$missing dbus-x11"
 command -v google-chrome >/dev/null 2>&1 || missing="$missing google-chrome"
 if [ -n "$missing" ]; then echo "__MISSING__:$missing"; exit 42; fi
 
-# WSLg owns /tmp/.X11-unix as a read-only mount on current WSL releases.
-# Agentie's X server therefore uses localhost TCP only and never attempts to
-# create /tmp/.X11-unix/X1. -nolisten unix disables the conflicting transport;
-# -listen tcp allows XFCE/Chrome to connect through DISPLAY=127.0.0.1:1.
 pkill -f 'Xtigervnc.*:1' >/dev/null 2>&1 || true
 pkill -f 'websockify.*6080' >/dev/null 2>&1 || true
 pkill -f 'google-chrome.*\\.agentie-chrome' >/dev/null 2>&1 || true
+pkill -f 'AGENTIE_DESKTOP=1.*startxfce4' >/dev/null 2>&1 || true
 sleep 0.3
 
+# WSLg owns /tmp/.X11-unix. Agentie's X server therefore uses TCP X11 only.
+# -noreset is essential: a health-check/noVNC client disconnect must never
+# terminate the X server. We keep the VNC listener localhost-only.
 nohup Xtigervnc :1 \
   -geometry 1440x900 -depth 24 \
   -localhost yes -SecurityTypes None \
-  -nolisten unix -listen tcp \
+  -nolisten unix -listen tcp -noreset \
   >/tmp/agentie-vnc.log 2>&1 </dev/null &
+vnc_pid=$!
 
+# Never probe the VNC protocol by opening/closing port 5901. That was causing
+# Xtigervnc to reset/terminate. Instead, wait for the process and listener.
 for i in $(seq 1 50); do
-  (echo >/dev/tcp/127.0.0.1/5901) >/dev/null 2>&1 && break
+  if ! kill -0 "$vnc_pid" 2>/dev/null; then
+    echo '__VNC_ERROR__'; cat /tmp/agentie-vnc.log 2>/dev/null || true; exit 55
+  fi
+  if command -v ss >/dev/null 2>&1 && ss -ltn 2>/dev/null | grep -q ':5901 '; then break; fi
   sleep 0.1
 done
-if ! (echo >/dev/tcp/127.0.0.1/5901) >/dev/null 2>&1; then
+if ! kill -0 "$vnc_pid" 2>/dev/null; then
   echo '__VNC_ERROR__'; cat /tmp/agentie-vnc.log 2>/dev/null || true; exit 55
 fi
 
-if ! pgrep -f 'xfce4-session.*agentie' >/dev/null 2>&1; then
-  nohup env DISPLAY=127.0.0.1:1 AGENTIE_DESKTOP=1 dbus-launch --exit-with-session startxfce4 >/tmp/agentie-xfce.log 2>&1 </dev/null &
-fi
+# Strip WSLg/Wayland variables so XFCE is unambiguously an X11 session.
+nohup env \
+  -u WAYLAND_DISPLAY -u WAYLAND_SOCKET \
+  DISPLAY=127.0.0.1:1 \
+  XDG_SESSION_TYPE=x11 GDK_BACKEND=x11 QT_QPA_PLATFORM=xcb \
+  AGENTIE_DESKTOP=1 \
+  dbus-launch --exit-with-session startxfce4 \
+  >/tmp/agentie-xfce.log 2>&1 </dev/null &
 
 nohup websockify --web=/usr/share/novnc 127.0.0.1:6080 127.0.0.1:5901 >/tmp/agentie-novnc.log 2>&1 </dev/null &
 
-nohup env DISPLAY=127.0.0.1:1 google-chrome \
+# Chrome must use the same visible X11 desktop rather than WSLg/Wayland.
+nohup env \
+  -u WAYLAND_DISPLAY -u WAYLAND_SOCKET \
+  DISPLAY=127.0.0.1:1 \
+  XDG_SESSION_TYPE=x11 GDK_BACKEND=x11 \
+  google-chrome \
+  --ozone-platform=x11 \
   --user-data-dir="$HOME/.agentie-chrome" \
   --remote-debugging-port=9222 \
   --remote-debugging-address=127.0.0.1 \
@@ -179,7 +196,7 @@ def stop() -> dict[str, Any]:
 pkill -f 'websockify.*6080' >/dev/null 2>&1 || true
 pkill -f 'google-chrome.*\\.agentie-chrome' >/dev/null 2>&1 || true
 pkill -f 'Xtigervnc.*:1' >/dev/null 2>&1 || true
-pkill -f 'xfce4-session.*agentie' >/dev/null 2>&1 || true
+pkill -f 'AGENTIE_DESKTOP=1.*startxfce4' >/dev/null 2>&1 || true
 '''
     try:
         _run_wsl(script, timeout=12); _prepare_x11_runtime()
