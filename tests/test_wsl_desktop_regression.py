@@ -10,6 +10,21 @@ class WSLDesktopRegressionTests(unittest.TestCase):
         self.assertTrue(wsl_desktop.NOVNC_URL.startswith("http://127.0.0.1:6080/"))
         self.assertEqual(wsl_desktop.CDP_URL, "http://127.0.0.1:9222")
 
+    def test_wsl_script_is_base64_marshaled(self):
+        captured = {}
+
+        def fake_run(args, **kwargs):
+            captured["args"] = args
+            return subprocess.CompletedProcess(args, 0, stdout="ok", stderr="")
+
+        with patch.object(wsl_desktop, "_windows_wsl", return_value="wsl.exe"), patch.object(subprocess, "run", side_effect=fake_run):
+            wsl_desktop._run_wsl("echo hello >/tmp/x 2>&1")
+
+        launcher = captured["args"][-1]
+        self.assertIn("base64 -d | bash", launcher)
+        self.assertNotIn("2>&1", launcher)
+        self.assertNotIn(">/tmp/x", launcher)
+
     def test_ready_desktop_does_not_restart(self):
         ready = {"supported": True, "running": True, "novnc_ready": True, "chrome_ready": True, "novnc_url": wsl_desktop.NOVNC_URL, "cdp_url": wsl_desktop.CDP_URL, "distro": "Ubuntu"}
         with patch.object(wsl_desktop, "status", return_value=ready), patch.object(wsl_desktop, "_run_wsl") as runner:
