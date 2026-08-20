@@ -278,6 +278,19 @@ async def route_browser_request(message: str) -> dict[str, Any] | None:
     text = " ".join(str(message or "").strip().split())
     if not text or _scheduled_request(text):
         return None
+
+    low = text.lower().strip(" .!?")
+    if low in {"desktop control: stop", "desktop control: shutdown", "stop computer", "stop the computer", "shut down computer", "shutdown computer"}:
+        from agentie.core.computer_session import shutdown_computer
+        return await shutdown_computer()
+
+    # The desktop runtime is part of the same local computer route. Keeping it
+    # here means existing main.py routing does not need a second competing path.
+    from agentie.core.desktop_runtime import route_desktop_request
+    desktop = route_desktop_request(text)
+    if desktop is not None:
+        return desktop
+
     # Interactive commands use a persistent session. Import lazily to avoid a
     # circular import because browser_automation publishes through this module.
     from agentie.core.browser_automation import browser_session_command
