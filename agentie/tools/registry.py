@@ -29,6 +29,10 @@ from agentie.tools.task_tools import (
     create_task, delete_task, find_duplicate_tasks, list_tasks, request_task_delete_approval, update_task,
 )
 from agentie.tools.web_tools import search_web
+from agentie.tools.work_tools import (
+    create_calendar_event, create_website_monitor, find_contacts, list_calendar_events,
+    list_website_monitors, plan_task, save_contact,
+)
 
 TASK_TOOLS=[create_task,list_tasks,update_task,find_duplicate_tasks,request_task_delete_approval,delete_task]
 DOCUMENT_TOOLS=[read_pdf,read_csv]
@@ -41,13 +45,14 @@ ADVANCED_LOCAL_TOOLS=[local_datetime,date_difference,countdown_to,create_recurri
 FREE_KNOWLEDGE_TOOLS=[rss_read,wikipedia_lookup]
 FILE_TOOLS=[read_text_file,write_text_file,list_workspace_files,edit_text_file,*DOCUMENT_TOOLS,*COLLECTION_TOOLS,*ARTIFACT_TOOLS]
 RESEARCH_TOOLS=[search_web,browser_read_page,http_get,*FREE_KNOWLEDGE_TOOLS]
+WORK_TOOLS=[plan_task,save_contact,find_contacts,create_calendar_event,list_calendar_events,create_website_monitor,list_website_monitors]
 
 BASE_TOOLSETS={
- "general":[get_current_utc_time,*LOCAL_UTILITY_TOOLS,*PRODUCTIVITY_TOOLS,*ADVANCED_LOCAL_TOOLS,*RESEARCH_TOOLS,*FILE_TOOLS,run_python,*MEMORY_TOOLS,*TASK_TOOLS,supabase_select,supabase_insert,request_approval,list_approvals],
- "research":[get_current_utc_time,local_datetime,weather_lookup,calculate,convert_unit,save_note,list_notes,read_note,scratchpad_set,scratchpad_get,scratchpad_list,*RESEARCH_TOOLS,*FILE_TOOLS,*MEMORY_TOOLS,*TASK_TOOLS],
- "coding":[get_current_utc_time,local_datetime,set_timer,list_timers,stopwatch_start,stopwatch_pause,stopwatch_reset,stopwatch_status,calculate,convert_unit,detailed_system_status,scratchpad_set,scratchpad_get,scratchpad_list,zip_workspace_files,unzip_workspace_archive,format_json_text,format_yaml_text,compare_json_text,file_checksum,image_metadata,*FILE_TOOLS,run_python,github_repo_info,github_read_file,*MEMORY_TOOLS,*TASK_TOOLS,request_approval,list_approvals],
- "manager":[get_current_utc_time,*LOCAL_UTILITY_TOOLS,*PRODUCTIVITY_TOOLS,local_datetime,date_difference,countdown_to,create_recurring_schedule,list_recurring_schedules,cancel_recurring_schedule,scratchpad_set,scratchpad_get,scratchpad_list,detailed_system_status,*COLLECTION_TOOLS,*ARTIFACT_TOOLS,*MEMORY_TOOLS,*TASK_TOOLS,supabase_select,supabase_insert,request_approval,list_approvals],
- "github":[github_repo_info,github_read_file,read_text_file,write_text_file,list_workspace_files,detailed_system_status,file_checksum,zip_workspace_files,unzip_workspace_archive,*MEMORY_TOOLS,*TASK_TOOLS,request_approval,list_approvals],
+ "general":[get_current_utc_time,*LOCAL_UTILITY_TOOLS,*PRODUCTIVITY_TOOLS,*ADVANCED_LOCAL_TOOLS,*RESEARCH_TOOLS,*FILE_TOOLS,*WORK_TOOLS,run_python,*MEMORY_TOOLS,*TASK_TOOLS,supabase_select,supabase_insert,request_approval,list_approvals],
+ "research":[get_current_utc_time,local_datetime,weather_lookup,calculate,convert_unit,save_note,list_notes,read_note,scratchpad_set,scratchpad_get,scratchpad_list,*RESEARCH_TOOLS,*FILE_TOOLS,plan_task,find_contacts,*MEMORY_TOOLS,*TASK_TOOLS],
+ "coding":[get_current_utc_time,local_datetime,set_timer,list_timers,stopwatch_start,stopwatch_pause,stopwatch_reset,stopwatch_status,calculate,convert_unit,detailed_system_status,scratchpad_set,scratchpad_get,scratchpad_list,zip_workspace_files,unzip_workspace_archive,format_json_text,format_yaml_text,compare_json_text,file_checksum,image_metadata,*FILE_TOOLS,run_python,github_repo_info,github_read_file,plan_task,*MEMORY_TOOLS,*TASK_TOOLS,request_approval,list_approvals],
+ "manager":[get_current_utc_time,*LOCAL_UTILITY_TOOLS,*PRODUCTIVITY_TOOLS,local_datetime,date_difference,countdown_to,create_recurring_schedule,list_recurring_schedules,cancel_recurring_schedule,scratchpad_set,scratchpad_get,scratchpad_list,detailed_system_status,*COLLECTION_TOOLS,*ARTIFACT_TOOLS,*WORK_TOOLS,*MEMORY_TOOLS,*TASK_TOOLS,supabase_select,supabase_insert,request_approval,list_approvals],
+ "github":[github_repo_info,github_read_file,read_text_file,write_text_file,list_workspace_files,detailed_system_status,file_checksum,zip_workspace_files,unzip_workspace_archive,plan_task,*MEMORY_TOOLS,*TASK_TOOLS,request_approval,list_approvals],
 }
 
 
