@@ -29,7 +29,7 @@ def _role_local_response(agent,message):
     if kind=="coding" and ("checklist" in words or re.search(r"\b(?:how should|how do we) (?:test|debug|deploy)\b",norm)):return _result(agent,"Engineering checklist: reproduce the issue, inspect the existing implementation first, make the smallest safe change, run targeted tests, then run the full regression suite before deployment.",kind)
     if kind=="research" and ("checklist" in words or re.search(r"\bhow should (?:i|we) research\b",norm)):return _result(agent,"Research checklist: define the question, gather multiple credible sources, compare claims and dates, note disagreements, then summarize findings with evidence and uncertainty.",kind)
     if kind=="writing" and re.search(r"\b(?:writing|content|post) checklist\b",norm):return _result(agent,"Content checklist: define the audience and goal, lead with one clear idea, keep the wording on-brand, remove filler, then finish with the intended action or takeaway.",kind)
-    if kind=="planning" and ("checklist" in words or re.search(r"\b(?:how should|how do we) plan\b",norm)):return _result(agent,"Planning checklist: define the outcome, identify constraints, break work into owners and milestones, order the dependencies, then track risks and next actions.",kind)
+    if kind=="planning" and ("checklist" in words or re.search(r"\b(?:how should (?:i|we)|how do (?:i|we)) plan\b",norm)):return _result(agent,"Planning checklist: define the outcome, identify constraints, break work into owners and milestones, order the dependencies, then track risks and next actions.",kind)
     return None
 def try_npc_response(agent,message):
     learned=learn_from_user_message(agent,message)
