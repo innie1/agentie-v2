@@ -8,6 +8,8 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
+from agentie.core.wsl_desktop import ensure_started as ensure_wsl_desktop, status as wsl_status, stop as stop_wsl_desktop
+
 WORKSPACE = Path.cwd() / "workspace"
 
 
@@ -88,7 +90,7 @@ def _terminal(command: str) -> dict[str, Any]:
     elif cmd in {"pip", "pip3"} and len(parts) >= 2 and parts[1].lower() in {"list", "show", "freeze"}:
         allowed = [parts[0], *parts[1:]]
     if allowed is None:
-        raise ValueError("That command is not enabled in the Agentie desktop terminal yet. Use Files/Browser apps or Agentie's existing Python/code tools for broader execution.")
+        raise ValueError("That command is not enabled in the Agentie desktop terminal yet. Use the real WSL Terminal app for full Linux commands.")
     try:
         proc = subprocess.run(allowed, cwd=str(Path.cwd()), capture_output=True, text=True, timeout=12, shell=False)
     except FileNotFoundError:
@@ -105,25 +107,41 @@ def desktop_card(app: str = "home", **data: Any) -> dict[str, Any]:
 
 def _natural_command(text: str) -> str | None:
     low = " ".join(text.lower().split()).strip(" .?!")
-    if low in {"show desktop", "open desktop", "desktop", "go home", "show home", "computer home", "open home"}:
-        return "home"
-    if low in {"file manager", "open file manager", "open the file manager", "show computer files", "open computer files"}:
+    if low in {"show desktop", "open desktop", "desktop", "go home", "show home", "computer home", "open home", "show computer", "open computer"}:
+        return "start"
+    if low in {"start computer", "start the computer", "turn on computer", "turn on the computer"}:
+        return "start"
+    if low in {"stop computer", "stop the computer", "shutdown computer", "shut down computer", "shut down the computer"}:
+        return "stop"
+    if low in {"computer status", "desktop status"}:
+        return "status"
+    if re.fullmatch(r"(?:open|show|view|look at) (?:the )?(?:workspace )?files", low) or low in {"files", "file manager", "open file manager", "open computer files"}:
         return "files"
-    if low in {"open computer notes", "show computer notes"}:
+    if re.fullmatch(r"(?:open|show|view) computer notes", low):
         return "notes"
-    if low in {"open computer tasks", "show computer tasks"}:
+    if re.fullmatch(r"(?:open|show|view) computer tasks", low):
         return "tasks"
-    if low in {"open computer plugins", "show computer plugins"}:
+    if re.fullmatch(r"(?:open|show|view) computer plugins", low):
         return "plugins"
-    if low in {"open terminal", "show terminal", "terminal", "open the terminal"}:
+    if low in {"open terminal", "show terminal", "terminal", "open the terminal", "open computer terminal"}:
         return "terminal"
     m = re.match(r"^(?:run|execute)\s+(.+?)\s+(?:in|using)\s+(?:the\s+)?terminal$", text, re.I)
     if m:
         return "terminal " + m.group(1).strip()
-    m = re.match(r"^(?:in\s+(?:the\s+)?terminal\s+)?run\s+(.+)$", text, re.I)
-    if m and not re.search(r"\bpython\b", low):
-        return "terminal " + m.group(1).strip()
     return None
+
+
+def _real_desktop_card(info: dict[str, Any], app: str = "desktop") -> dict[str, Any]:
+    return desktop_card(
+        app,
+        mode="wsl",
+        running=bool(info.get("running")),
+        novnc_url=info.get("novnc_url"),
+        chrome_ready=bool(info.get("chrome_ready")),
+        setup_required=bool(info.get("setup_required")),
+        setup_command=info.get("setup_command"),
+        distro=info.get("distro"),
+    )
 
 
 def route_desktop_request(message: str) -> dict[str, Any] | None:
@@ -136,10 +154,20 @@ def route_desktop_request(message: str) -> dict[str, Any] | None:
         command = _natural_command(text)
         if command is None:
             return None
-    low = command.lower()
+    low = command.lower().strip()
     try:
-        if low in {"home", "desktop", "show home"}:
-            return {"message": "Desktop home.", "card": desktop_card("home")}
+        if low in {"start", "start real desktop", "home", "desktop", "show home"}:
+            info = ensure_wsl_desktop()
+            message = str(info.get("message") or "Agentie Computer ready.")
+            if info.get("setup_required"):
+                message += " Run the one-time setup command shown in the Computer card."
+            return {"message": message, "card": _real_desktop_card(info)}
+        if low in {"status", "real desktop status"}:
+            info = wsl_status()
+            return {"message": "Agentie Computer is running." if info.get("running") else "Agentie Computer is stopped.", "card": _real_desktop_card(info)}
+        if low in {"stop", "shutdown", "power off"}:
+            info = stop_wsl_desktop()
+            return {"message": str(info.get("message") or "Agentie Computer stopped."), "card": _real_desktop_card(info, "stopped")}
         if low in {"files", "open files", "show files"}:
             return {"message": "Workspace files.", "card": desktop_card("files", items=_file_items())}
         if low.startswith("open file "):
@@ -152,10 +180,13 @@ def route_desktop_request(message: str) -> dict[str, Any] | None:
         if low in {"plugins", "open plugins"}:
             return {"message": "Plugins.", "card": desktop_card("plugins", items=_read_json("mcp_servers.json", []))}
         if low == "terminal":
-            return {"message": "Terminal ready.", "card": desktop_card("terminal", terminal={"command": "", "output": "Agentie Desktop Terminal\nWorkspace: " + str(WORKSPACE.resolve()), "exit_code": 0})}
+            # Starting the computer here means the user can immediately click the
+            # real XFCE terminal rather than being trapped in a fake terminal.
+            info = ensure_wsl_desktop()
+            return {"message": "Agentie Computer terminal is available on the desktop.", "card": _real_desktop_card(info)}
         if low.startswith("terminal "):
             result = _terminal(command[9:])
             return {"message": "Terminal command completed.", "card": desktop_card("terminal", terminal=result)}
-    except ValueError as exc:
+    except (ValueError, RuntimeError) as exc:
         return {"message": str(exc), "card": desktop_card("error", error=str(exc))}
     return {"message": "Unknown desktop command.", "card": desktop_card("error", error="Unknown desktop command")}
