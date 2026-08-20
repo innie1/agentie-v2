@@ -75,7 +75,7 @@ def route_role_command(message:str)->dict[str,Any]|None:
     text=" ".join(message.strip().split());lower=text.lower().strip(" .?!")
     created=_agent_creation_command(text)
     if created is not None:return created
-    delete_match=re.match(r"^(?:please\s+)?(?:delete|remove)\s+(?:agent\s+)?(.+?)[.!?]?$",text,re.I)
+    delete_match=re.match(r"^(?:please\s+)?(?:delete|remove)\s+agent\s+(.+?)[.!?]?$",text,re.I)
     if delete_match:
         target=get_agent(delete_match.group(1).strip(' .?!\"“”'))
         if not target:return {"message":"Agent was not found.","card":None}
