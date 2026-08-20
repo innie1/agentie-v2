@@ -24,6 +24,8 @@ def init_db():
     CREATE INDEX IF NOT EXISTS idx_trace_session ON traces(session_id,started_at DESC);CREATE INDEX IF NOT EXISTS idx_trace_events ON trace_events(trace_id,id);
     """)
 def start_trace(session_id,agent_type,user_message):
+    from agentie.core.memory_store import set_active_memory_scope_from_session
+    set_active_memory_scope_from_session(session_id)
     init_db();tid=uuid.uuid4().hex[:12];now=_now()
     with _connect() as c:c.execute("INSERT INTO traces(id,session_id,agent_type,user_message,status,started_at) VALUES(?,?,?,?,?,?)",(tid,session_id,agent_type,user_message[:20000],"running",now))
     _CURRENT_TRACE.set(tid);return tid
@@ -58,7 +60,6 @@ def _usage_tuple(usage):
     return inp,out,total,cost
 def _result_accounting(result,configured_model):
     raw=list(getattr(result,"raw_responses",[]) or []);calls=max(1,len(raw))
-    # Prefer the SDK aggregate usage if available; summing aggregate + raw responses double-counts tokens.
     aggregate=getattr(result,"usage",None);ctx=getattr(result,"context_wrapper",None)
     if aggregate is None and ctx is not None:aggregate=getattr(ctx,"usage",None)
     if aggregate is not None:
