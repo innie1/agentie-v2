@@ -1,3 +1,4 @@
+import contextvars
 import json
 import sqlite3
 import threading
@@ -11,6 +12,32 @@ DB_PATH = WORKSPACE / "agentie_memory.sqlite3"
 _LOCK = threading.Lock()
 _SEMANTIC_BOOTSTRAPPED = False
 _SEMANTIC_POOL = ThreadPoolExecutor(max_workers=1, thread_name_prefix="agentie-semantic")
+_ACTIVE_MEMORY_SCOPE = contextvars.ContextVar("agentie_memory_scope", default="user")
+
+
+def set_active_memory_scope(scope: str | None) -> None:
+    _ACTIVE_MEMORY_SCOPE.set(str(scope or "user"))
+
+
+def set_active_memory_scope_from_session(session_id: str | None) -> str:
+    value = str(session_id or "")
+    if value.startswith("agent:agt_"):
+        parts = value.split(":", 2)
+        scope = ":".join(parts[:2]) if len(parts) >= 2 else "user"
+    else:
+        scope = "user"
+    set_active_memory_scope(scope)
+    return scope
+
+
+def active_memory_scope() -> str:
+    return str(_ACTIVE_MEMORY_SCOPE.get() or "user")
+
+
+def _resolved_scope(scope: str | None) -> str | None:
+    if scope == "user":
+        return active_memory_scope()
+    return scope
 
 
 def _connect() -> sqlite3.Connection:
@@ -46,7 +73,6 @@ def _run_semantic_safely(func_name: str, kwargs: dict[str, Any]) -> None:
         from agentie.core import semantic_memory
         getattr(semantic_memory, func_name)(**kwargs)
     except Exception:
-        # Semantic memory is an enhancement. It must never block/break core local utilities.
         pass
 
 
@@ -62,7 +88,6 @@ def _bootstrap_semantic() -> None:
     if _SEMANTIC_BOOTSTRAPPED:
         return
     _SEMANTIC_BOOTSTRAPPED = True
-    # Backfill can initialize/download a local embedding model, so never do it on the request path.
     _semantic_async("backfill_from_memory_db", memory_db=DB_PATH)
 
 
@@ -70,7 +95,6 @@ def add_message(session_id: str, role: str, content: str, metadata: dict[str, An
     init_db(); now=datetime.now(timezone.utc).isoformat(timespec="seconds")
     with _LOCK, _connect() as conn:
         cur=conn.execute("INSERT INTO messages(session_id,role,content,metadata_json,created_at) VALUES(?,?,?,?,?)",(session_id,role,content,json.dumps(metadata or {},ensure_ascii=False),now)); source_id=str(cur.lastrowid)
-    # Critical: local actions (time, timer, calculator, etc.) return immediately. Embedding happens later.
     _semantic_async("upsert_item", kind="message", source_id=source_id, text=content, session_id=session_id, role=role, metadata=metadata)
 
 
@@ -94,6 +118,7 @@ def latest_assistant_text(session_id: str, max_chars: int = 12000) -> str | None
 
 
 def set_memory(scope: str, key: str, value: str, metadata: dict[str, Any] | None = None) -> None:
+    scope = str(_resolved_scope(scope) or "user")
     init_db(); now=datetime.now(timezone.utc).isoformat(timespec="seconds")
     with _LOCK, _connect() as conn:
         conn.execute("""INSERT INTO memories(scope,key,value,metadata_json,updated_at) VALUES(?,?,?,?,?)
@@ -103,6 +128,7 @@ def set_memory(scope: str, key: str, value: str, metadata: dict[str, Any] | None
 
 
 def get_memory(scope: str, key: str) -> str | None:
+    scope = str(_resolved_scope(scope) or "user")
     init_db()
     with _LOCK, _connect() as conn:
         row=conn.execute("SELECT value FROM memories WHERE scope=? AND key=?",(scope,key)).fetchone()
@@ -110,6 +136,7 @@ def get_memory(scope: str, key: str) -> str | None:
 
 
 def list_memories(scope: str | None = None, limit: int = 100) -> list[dict[str, Any]]:
+    scope = _resolved_scope(scope)
     init_db()
     with _LOCK, _connect() as conn:
         rows=conn.execute("SELECT * FROM memories WHERE scope=? ORDER BY updated_at DESC LIMIT ?",(scope,limit)).fetchall() if scope else conn.execute("SELECT * FROM memories ORDER BY updated_at DESC LIMIT ?",(limit,)).fetchall()
@@ -119,7 +146,34 @@ def list_memories(scope: str | None = None, limit: int = 100) -> list[dict[str, 
 def search_memories(query: str, session_id: str | None = None, scope: str | None = None, limit: int = 6) -> dict[str, Any]:
     _bootstrap_semantic()
     from agentie.core.semantic_memory import search_memory
-    return search_memory(query,session_id=session_id,scope=scope,limit=limit)
+    return search_memory(query,session_id=session_id,scope=_resolved_scope(scope),limit=limit)
+
+
+def purge_agent_memory(memory_scope: str, session_prefix: str) -> dict[str, int]:
+    """Permanently remove one agent's memories, chats, working context and semantic shards."""
+    init_db(); memory_scope=str(memory_scope); session_prefix=str(session_prefix)
+    memory_ids=[]; message_ids=[]
+    with _LOCK, _connect() as conn:
+        memory_ids=[str(r["id"]) for r in conn.execute("SELECT id FROM memories WHERE scope=?",(memory_scope,)).fetchall()]
+        message_ids=[str(r["id"]) for r in conn.execute("SELECT id FROM messages WHERE session_id LIKE ?",(session_prefix+"%",)).fetchall()]
+        conn.execute("DELETE FROM memories WHERE scope=?",(memory_scope,))
+        conn.execute("DELETE FROM messages WHERE session_id LIKE ?",(session_prefix+"%",))
+        conn.execute("DELETE FROM working_context WHERE session_id LIKE ?",(session_prefix+"%",))
+    semantic_deleted=0
+    try:
+        from agentie.core import semantic_memory
+        semantic_memory.init_db()
+        with semantic_memory._connect() as conn:
+            rows=conn.execute("SELECT id FROM semantic_items WHERE scope=? OR session_id LIKE ?",(memory_scope,session_prefix+"%" )).fetchall()
+            ids=[str(r["id"]) for r in rows]
+            for item_id in ids:
+                try:conn.execute("DELETE FROM semantic_fts WHERE item_id=?",(item_id,))
+                except sqlite3.OperationalError:pass
+            conn.execute("DELETE FROM semantic_items WHERE scope=? OR session_id LIKE ?",(memory_scope,session_prefix+"%"))
+            semantic_deleted=len(ids)
+    except Exception:
+        pass
+    return {"memories":len(memory_ids),"messages":len(message_ids),"semantic_items":semantic_deleted}
 
 
 def set_context(session_id: str, key: str, value: Any) -> None:
@@ -139,6 +193,7 @@ def get_context(session_id: str, key: str, default: Any = None) -> Any:
 
 
 def build_context_prompt(session_id: str, current_message: str) -> str:
+    set_active_memory_scope_from_session(session_id)
     _bootstrap_semantic(); history=recent_messages(session_id,limit=10,max_chars=10000)
     transcript=[];recent_text=set()
     for item in history:
@@ -146,7 +201,7 @@ def build_context_prompt(session_id: str, current_message: str) -> str:
     semantic_block=""
     try:
         from agentie.core.semantic_memory import search_memory
-        semantic=search_memory(current_message,session_id=session_id,scope="user",limit=6)
+        semantic=search_memory(current_message,session_id=session_id,scope=active_memory_scope(),limit=6)
         older=[]
         for hit in semantic.get("hits",[]):
             text=str(hit.get("text","")).strip()
