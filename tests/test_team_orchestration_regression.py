@@ -55,10 +55,33 @@ class TeamOrchestrationRegressionTests(unittest.TestCase):
         self.assertEqual(finished["status"],"completed")
         self.assertTrue(all(h["status"]=="completed" for h in finished["handoffs"]))
 
-    def test_missing_agent_does_not_create_phantom_worker(self):
+    def test_partial_status_when_one_worker_fails(self):
+        job=team_orchestrator.create_team_job("Mixed result",[self.alex,self.writer])
+        async def fake_worker(job_id,handoff):
+            if handoff["to_agent_name"]=="Writer":return handoff["id"],None,"usage limit"
+            return handoff["id"],"Alex result",None
+        with patch.object(team_orchestrator,"_worker",side_effect=fake_worker):asyncio.run(team_orchestrator._execute(job["id"]))
+        finished=team_orchestrator.get_team_job(job["id"])
+        self.assertEqual(finished["status"],"partial")
+        self.assertIn("Alex result",finished["final_output"])
+
+    def test_failed_worker_can_retry_without_restarting_successful_worker(self):
+        job=team_orchestrator.create_team_job("Retry test",[self.alex,self.writer])
+        ids={h["to_agent_name"]:h["id"] for h in job["handoffs"]}
+        team_orchestrator._finish_job(job["id"],[(ids["Alex"],"done",None),(ids["Writer"],None,"limit")])
+        with patch.object(team_orchestrator,"start_team_job") as start:
+            retried=team_orchestrator.retry_team_worker(job["id"],"Writer")
+        self.assertEqual(next(h for h in retried["handoffs"] if h["to_agent_name"]=="Alex")["status"],"completed")
+        self.assertEqual(next(h for h in retried["handoffs"] if h["to_agent_name"]=="Writer")["status"],"queued")
+        start.assert_called_once_with(job["id"],{ids["Writer"]})
+
+    def test_missing_agent_offers_create_or_similar_agent_instead_of_phantom(self):
         before=len(agent_registry.list_agents())
-        result=route_role_command("Delegate inspect the report to Nobody")
-        self.assertIn("was not found",result["message"])
+        result=route_role_command("Delegate write the launch post to Content Writer")
+        self.assertEqual(result["card"]["type"],"agent_choice")
+        self.assertEqual(result["card"]["missing_agent"],"Content Writer")
+        actions=[x["action"] for x in result["card"]["options"]]
+        self.assertIn("create_agent",actions);self.assertIn("use_agent",actions)
         self.assertEqual(len(agent_registry.list_agents()),before)
 
 
