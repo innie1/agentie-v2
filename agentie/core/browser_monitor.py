@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import ipaddress
 import json
@@ -135,7 +136,10 @@ async def route_browser_request(message: str)->dict[str,Any]|None:
     text=" ".join(str(message or "").strip().split())
     if not text or _scheduled_request(text):return None
     from agentie.core.desktop_runtime import route_desktop_request
-    desktop=route_desktop_request(text)
+    # WSL startup/shutdown is intentionally synchronous because it shells out to
+    # wsl.exe. Run desktop routing in a worker thread so FastAPI's event loop
+    # remains free for Plugins/MCP/Skills, uploads, health, and other requests.
+    desktop=await asyncio.to_thread(route_desktop_request,text)
     if desktop is not None:return desktop
     from agentie.core.browser_automation import browser_session_command
     interactive=await browser_session_command(text)
