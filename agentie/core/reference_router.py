@@ -1,5 +1,6 @@
 import json,re,uuid
 from datetime import datetime,timedelta
+from difflib import get_close_matches
 from typing import Any
 from agentie.core.memory_store import get_context,set_context
 from agentie.tools import local_utility_tools as local_utils
@@ -8,6 +9,32 @@ from agentie.tools import productivity_tools as productivity
 _DURATION_RE=re.compile(r"\b(\d+(?:\.\d+)?)\s*(?:-|\s)?\s*(seconds?|secs?|sec|s|minutes?|mins?|min|m|hours?|hrs?|hr|h)\b",re.I)
 _JOB_SIGNAL_RE=re.compile(r"\b(delegate|research|investigate|compare|analy[sz]e|build|implement|debug|refactor|github|repository|report|deep search|multi[- ]?step|parallel)\b",re.I)
 _JOBS_RESUMED=False
+
+_SMALLTALK={
+    'hi':'Hi. What would you like me to do?',
+    'hello':'Hello. What can I help with?',
+    'hey':'Hey. What can I help with?',
+    'good morning':'Good morning. What would you like to work on?',
+    'good afternoon':'Good afternoon. What would you like to work on?',
+    'good evening':'Good evening. What would you like to work on?',
+    'how are you':'I’m doing well and ready to help.',
+    'how is it going':'I’m ready to help. What are we working on?',
+    'what is up':'I’m here and ready. What do you need?',
+    'thanks':'You’re welcome.',
+    'thank you':'You’re welcome.',
+    'okay':'Okay.',
+    'ok':'Okay.',
+    'alright':'Alright.',
+    'cool':'Glad that works.',
+    'nice':'Glad that works.',
+    'yes':'Got it.',
+    'no':'Okay.',
+    'bye':'See you later.',
+    'goodbye':'See you later.',
+    'good night':'Good night.',
+    'who are you':'I’m Agentie, your local-first agent workspace assistant.',
+    'what can you do':'I can use local tools, work with your agents, manage tasks and timers, and route work to specialists when needed.',
+}
 
 def _seconds(m):
     v=float(m.group(1));u=m.group(2).lower();return v*3600 if u.startswith('h') else v*60 if u.startswith('m') else v
@@ -28,6 +55,31 @@ def _ensure_jobs_resumed():
         resume_unfinished(_job_step_runner);start_routine_worker()
     except RuntimeError:_JOBS_RESUMED=False
     except Exception:pass
+
+def _normalize_smalltalk(text):
+    value=text.lower().strip();value=value.replace("what's","what is").replace("whats","what is").replace("how's","how is")
+    value=re.sub(r"[^a-z0-9 ]+"," ",value);value=re.sub(r"\s+"," ",value).strip()
+    aliases={'hiya':'hi','helo':'hello','helllo':'hello','hii':'hi','thx':'thanks','thanx':'thanks','ty':'thank you','k':'ok','kk':'ok','alrighty':'alright','wassup':'what is up','sup':'what is up','goodnight':'good night'}
+    if value in aliases:return aliases[value]
+    return value
+
+def _local_smalltalk(message):
+    normalized=_normalize_smalltalk(message)
+    if not normalized or len(normalized.split())>8:return None
+    if normalized in _SMALLTALK:return {'message':_SMALLTALK[normalized],'card':None,'routed_by':'local_conversation'}
+    # Fuzzy matching is intentionally conservative so real work is never mistaken for chit-chat.
+    hit=get_close_matches(normalized,list(_SMALLTALK),n=1,cutoff=.84)
+    if hit:return {'message':_SMALLTALK[hit[0]],'card':None,'routed_by':'local_conversation'}
+    if re.fullmatch(r"(?:hey|hi|hello)[ ,]*(?:there|agentie|again)?",normalized):return {'message':'Hi. What would you like me to do?','card':None,'routed_by':'local_conversation'}
+    if re.fullmatch(r"(?:i am|im) (?:good|fine|okay|ok|alright)",normalized):return {'message':'Good to hear. What would you like to do next?','card':None,'routed_by':'local_conversation'}
+    return None
+
+def _remaining_timer_seconds(card):
+    try:
+        due=datetime.fromisoformat(str(card.get('due_at') or ''))
+        now=datetime.now(due.tzinfo) if due.tzinfo else datetime.now()
+        return max(0.0,(due-now).total_seconds())
+    except Exception:return max(0.0,float(card.get('duration_seconds') or 0))
 
 def _direct_role_command(message):
     try:
@@ -109,8 +161,6 @@ def _direct_reminder_create(message):
 def _looks_like_background_job(message):
     text=re.sub(r"\s+"," ",message.strip());low=text.lower();local_hits=len(re.findall(r"\b(timer|alarm|remind|reminder|time|weather|calculate|convert|note|system status|stopwatch|routine)\b",low));complex_hits=len(_JOB_SIGNAL_RE.findall(low))
     if re.search(r"\b(delegate|deep search|run (?:this )?as a job|background job|parallel agents?)\b",low):return True
-    # A compound utility request is never auto-promoted to a background job merely because
-    # one local clause contains words such as "build" or "report".
     if local_hits>=2:return False
     return complex_hits>=2 or (complex_hits>=1 and len(text)>=180)
 
@@ -146,7 +196,6 @@ def _job_command(session_id,message):
 def remember_active_from_card(session_id,card):
     if not isinstance(card,dict):return
     if card.get('type')=='multi':
-        # Last meaningful action becomes the conversational referent.
         for item in reversed(card.get('items') or []):
             child=item.get('card') if isinstance(item,dict) else None
             if isinstance(child,dict):remember_active_from_card(session_id,child);return
@@ -158,13 +207,7 @@ def remember_active_from_card(session_id,card):
 
 def try_active_reference(session_id,message):
     _ensure_jobs_resumed();text_raw=' '.join(message.strip().split());low_raw=text_raw.lower().strip(' .?!')
-    # Internal attachment prompts contain already-resolved file context and must go
-    # straight through normal provider routing. Letting conversational reference
-    # logic inspect document content can accidentally trigger an old role/timer/etc.
-    # simply because the document itself contains words like "research" or "role".
-    if low_raw.startswith('attached workspace file context prepared locally'):
-        return None
-    # Explicit new objects always outrank stale conversational context.
+    if low_raw.startswith('attached workspace file context prepared locally'):return None
     timer=_direct_timer_create(text_raw)
     if timer is not None:return timer
     role=_direct_role_command(text_raw)
@@ -173,22 +216,23 @@ def try_active_reference(session_id,message):
     if reminder is not None:return reminder
     memory=_direct_memory_query(text_raw)
     if memory is not None:return memory
-    # Explicit job commands/status commands may run before reference resolution; heuristic jobs wait.
+    smalltalk=_local_smalltalk(text_raw)
+    if smalltalk is not None:return smalltalk
     if re.match(r"^(?:delegate|start (?:a )?(?:background )?job|run (?:this )?as a job|(?:show|check )?(?:job )?(?:status|progress)|(?:cancel|stop)\s+(?:the\s+)?job|(?:show )?(?:job )?trace)\b",low_raw,re.I):
         job=_job_command(session_id,text_raw)
         if job is not None:return job
     active=get_context(session_id,'active_object')
     if isinstance(active,dict):
         card=active.get('card') if isinstance(active.get('card'),dict) else {};typ=str(active.get('type') or card.get('type') or '');text=low_raw;duration=_DURATION_RE.search(text);change=bool(re.search(r"\b(?:make|change|set|restart|reset|instead|again)\b",text));add=bool(re.search(r"\b(?:add|plus|increase|extend)\b",text));ref=bool(re.search(r"\b(?:it|that|this|timer|alarm|reminder|routine)\b",text))
-        # Reference mutation is intentionally limited to short follow-ups. Long compound commands
-        # must go through the normal local router instead of mutating whichever card happened to be active.
         followup_like=len(text.split())<=14 and not re.search(r"\b(?:set|start|create|make)\s+(?:a\s+)?(?:timer|alarm|reminder|routine)\b|\bremind\s+me\b",text)
         if followup_like and typ in {'timer','alarm'}:
             tid=str(card.get('id') or '')
-            if tid and duration and ref and (change or add):
-                requested=_seconds(duration)+(float(card.get('duration_seconds') or 0) if add else 0);r=local_utils._restart_timer(tid,requested)
+            if tid and duration and ((add) or (ref and change)):
+                delta=_seconds(duration)
+                requested=_remaining_timer_seconds(card)+delta if add else delta
+                r=local_utils._restart_timer(tid,requested)
                 if r:
-                    nc=dict(card);nc.update({'type':typ,'id':tid,'status':r.get('status','running'),'duration_seconds':requested,'due_at':r.get('due_at')});set_context(session_id,'active_object',{'type':typ,'card':nc});p=int(requested) if float(requested).is_integer() else round(requested,1);return {'message':f"{'Timer' if typ=='timer' else 'Alarm'} updated to {p} seconds.",'card':nc,'routed_by':'active_reference'}
+                    nc=dict(card);nc.update({'type':typ,'id':tid,'status':r.get('status','running'),'duration_seconds':requested,'due_at':r.get('due_at')});set_context(session_id,'active_object',{'type':typ,'card':nc});p=int(requested) if float(requested).is_integer() else round(requested,1);verb='extended' if add else 'updated';return {'message':f"{'Timer' if typ=='timer' else 'Alarm'} {verb}. {p} seconds remaining.",'card':nc,'routed_by':'active_reference'}
             if tid and ref and re.search(r"\b(?:cancel|stop|dismiss)\b",text):
                 with local_utils._TIMER_LOCK:
                     item=local_utils._TIMERS.get(tid)
@@ -221,8 +265,6 @@ def try_active_reference(session_id,message):
                         item=update_routine(rid,trigger=parsed[0])
                 except (KeyError,ValueError) as exc:return {'message':str(exc),'card':None,'routed_by':'active_reference'}
                 nc={'type':'routine',**item};set_context(session_id,'active_object',{'type':'routine','card':nc});return {'message':f"Updated routine “{item['name']}”.",'card':nc,'routed_by':'active_reference'}
-    # Heuristic background delegation is deliberately last. This gives explicit/local parsing
-    # a chance to win and prevents mixed utility requests from becoming coding jobs.
     job=_job_command(session_id,text_raw)
     if job is not None:return job
     return None
