@@ -6,6 +6,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from agentie.core.agent_registry import create_agent, get_agent, hierarchy, list_agents, update_agent_manager
+
 WORKSPACE=Path.cwd()/"workspace"
 ROLES=WORKSPACE/"agent_roles.json"
 BASE_AGENTS={"general","research","coding","manager","github"}
@@ -44,8 +46,49 @@ def clear_role(agent_name:str)->dict[str,str]:
     data=_load();data.setdefault("assignments",{}).pop(agent_name.lower().strip(),None);_save(data);return resolve_role(agent_name)
 def list_roles()->dict[str,Any]:
     data=_load();return {"assignments":data.get("assignments",{}),"available":sorted(set(ROLE_PRESETS)|set(data.get("custom_roles",{})))}
+
+def _base_for_role(role_name:str)->str:
+    role=role_name.lower().strip();data=_load();roles={**ROLE_PRESETS,**data.get("custom_roles",{})}
+    if role in roles:return str(roles[role].get("base") or "general")
+    if any(x in role for x in ("cto","chief technology","engineering manager","tech lead","manager","chief of staff","ceo","director","lead")):return "manager"
+    if any(x in role for x in ("research","analyst","critic","verifier")):return "research"
+    if any(x in role for x in ("coder","developer","engineer","programmer","data")):return "coding"
+    if "github" in role:return "github"
+    return "general"
+
+def _agent_creation_command(text:str)->dict[str,Any]|None:
+    named=re.match(r"^(?:please\s+)?(?:create|make|add)\s+(?:an?\s+)?agent\s+(?:called|named)\s+(.+?)\s+(?:who\s+is|as|to\s+be)\s+(?:my\s+|the\s+)?(.+?)[.!?]?$",text,re.I)
+    if named:
+        name=named.group(1).strip(' \"“”');role=named.group(2).strip(' \"“”');result=create_agent(name,role,_base_for_role(role));agent=result["agent"]
+        return {"message":f"{'Created' if result['created'] else 'Found existing'} agent {agent['name']} as {agent['role']}.","card":{"type":"agent_profile",**agent}}
+    simple=re.match(r"^(?:please\s+)?(?:create|make|add)\s+(?:an?\s+)?agent\s+(?:called|named)\s+(.+?)[.!?]?$",text,re.I)
+    if simple:
+        name=simple.group(1).strip(' \"“”');result=create_agent(name,"general","general");agent=result["agent"]
+        return {"message":f"{'Created' if result['created'] else 'Found existing'} agent {agent['name']}.","card":{"type":"agent_profile",**agent}}
+    role_only=re.match(r"^(?:please\s+)?(?:create|make|add)\s+(?:me\s+)?(?:an?\s+)?(.+?)\s+agent(?:\s+for\s+(.+?))?[.!?]?$",text,re.I)
+    if role_only:
+        role=role_only.group(1).strip(' \"“”');purpose=(role_only.group(2) or "").strip(' \"“”');name=role.title();result=create_agent(name,role,_base_for_role(role),purpose=purpose);agent=result["agent"]
+        return {"message":f"{'Created' if result['created'] else 'Found existing'} {agent['name']} agent.","card":{"type":"agent_profile",**agent}}
+    return None
+
 def route_role_command(message:str)->dict[str,Any]|None:
     text=" ".join(message.strip().split());lower=text.lower().strip(" .?!")
+    created=_agent_creation_command(text)
+    if created is not None:return created
+    if lower in {"agents","show agents","list agents","show my agents","list my agents","agent directory","show agent directory"}:
+        items=list_agents();return {"message":f"You have {len(items)} persistent agent(s).","card":{"type":"agents","items":items}}
+    m=re.match(r"^(?:show|inspect|open)\s+(?:agent\s+)?(.+)$",text,re.I)
+    if m and "roles" not in lower:
+        agent=get_agent(m.group(1).strip(' .?!\"“”'))
+        if agent:return {"message":f"Here is {agent['name']}.","card":{"type":"agent_profile",**agent}}
+    if lower in {"show agent hierarchy","agent hierarchy","show company hierarchy","company hierarchy","org chart","show org chart"}:
+        return {"message":"Here is the current agent hierarchy.","card":{"type":"agent_hierarchy","items":hierarchy()}}
+    manager=re.match(r"^(?:set|make|assign)\s+(.+?)['’]?s\s+manager\s+(?:to|as)\s+(.+?)[.!?]?$",text,re.I)
+    if not manager:manager=re.match(r"^(?:make|set)\s+(.+?)\s+report\s+to\s+(.+?)[.!?]?$",text,re.I)
+    if manager:
+        try:agent=update_agent_manager(manager.group(1).strip(),manager.group(2).strip())
+        except ValueError as exc:return {"message":str(exc),"card":None}
+        return {"message":f"{agent['name']} now reports to {manager.group(2).strip()}.","card":{"type":"agent_profile",**agent}}
     if re.search(r"\b(show|list|what are)\b.*\b(agent )?roles?\b",lower):
         state=list_roles();return {"message":"Here are the current agent role assignments.","card":{"type":"agent_roles",**state}}
     patterns=[
