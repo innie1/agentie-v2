@@ -1,6 +1,5 @@
 import asyncio
 import tempfile
-import time
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -45,13 +44,19 @@ class TeamOrchestrationRegressionTests(unittest.TestCase):
 
     def test_team_workers_are_scheduled_concurrently(self):
         job=team_orchestrator.create_team_job("Parallel test",[self.alex,self.writer])
-        async def fake_worker(job_id,handoff):
-            await asyncio.sleep(.12);return handoff["id"],handoff["to_agent_name"]+" done",None
-        started=time.perf_counter()
-        with patch.object(team_orchestrator,"_worker",side_effect=fake_worker):asyncio.run(team_orchestrator._execute(job["id"]))
-        elapsed=time.perf_counter()-started
+        async def scenario():
+            both_started=asyncio.Event();started=[]
+            async def fake_worker(job_id,handoff):
+                started.append(handoff["id"])
+                if len(started)>=2:both_started.set()
+                await asyncio.wait_for(both_started.wait(),timeout=.25)
+                return handoff["id"],handoff["to_agent_name"]+" done",None
+            with patch.object(team_orchestrator,"_worker",side_effect=fake_worker):
+                await team_orchestrator._execute(job["id"])
+            return started
+        started=asyncio.run(scenario())
         finished=team_orchestrator.get_team_job(job["id"])
-        self.assertLess(elapsed,.22)
+        self.assertEqual(len(started),2)
         self.assertEqual(finished["status"],"completed")
         self.assertTrue(all(h["status"]=="completed" for h in finished["handoffs"]))
 
