@@ -1,4 +1,26 @@
+if(typeof ServiceWorkerGlobalScope!=='undefined'&&self instanceof ServiceWorkerGlobalScope){
+  self.addEventListener('install',()=>self.skipWaiting());
+  self.addEventListener('activate',event=>event.waitUntil(self.clients.claim()));
+  self.addEventListener('fetch',event=>{
+    if(event.request.mode!=='navigate')return;
+    event.respondWith(fetch(event.request).then(response=>{
+      const headers=new Headers(response.headers);
+      headers.set('Cross-Origin-Opener-Policy','same-origin');
+      headers.set('Cross-Origin-Embedder-Policy','credentialless');
+      headers.set('Permissions-Policy','cross-origin-isolated=*');
+      return new Response(response.body,{status:response.status,statusText:response.statusText,headers});
+    }));
+  });
+}else{
 (()=>{
+  if('serviceWorker' in navigator&&!window.crossOriginIsolated&&!sessionStorage.getItem('agentie-coi-reload')){
+    navigator.serviceWorker.register('/browser-screen.js',{scope:'/'}).then(()=>{
+      sessionStorage.setItem('agentie-coi-reload','1');
+      if(navigator.serviceWorker.controller)location.reload();
+      else navigator.serviceWorker.addEventListener('controllerchange',()=>location.reload(),{once:true});
+    }).catch(()=>{});
+  }else if(window.crossOriginIsolated){sessionStorage.removeItem('agentie-coi-reload')}
+
   const messages=document.getElementById('messages'),input=document.getElementById('messageInput'),send=document.getElementById('sendButton'),agentType=document.getElementById('agentType');
   if(!messages||!input||!send||window.__agentieRealComputer)return;window.__agentieRealComputer=true;
 
@@ -13,7 +35,7 @@
   const computerIntent=t=>/https?:\/\//i.test(t)&&/\b(open|visit|check|inspect|view|screenshot|capture|monitor|watch|click|type|fill|search|scroll|press|browse|navigate)\b/i.test(t)||/^\s*(click|type|fill|scroll|press|go back|back|forward|new tab|close tab|search for)\b/i.test(t)||/\b(show desktop|start (?:the )?computer|open (?:the )?terminal|file manager|computer files|computer tasks|computer notes)\b/i.test(t);
   let row=null,root=null,starting=null,stopped=false;
 
-  function makeComputer(){const r=document.createElement('div');r.className='assistant-row agentie-real-row';r.innerHTML=`<div class="agentie-real-computer"><div class="arc-head"><span class="arc-dot"></span><span class="arc-title">Agentie Computer</span><span class="arc-status">Ready</span><button class="arc-fullscreen" type="button">Fullscreen</button><button class="arc-stop" type="button">Stop</button></div><div class="arc-screen"><iframe class="arc-frame" title="Agentie Linux desktop" allow="clipboard-read; clipboard-write; fullscreen" allowfullscreen tabindex="0"></iframe><div class="arc-overlay"><div><div class="arc-spinner"></div><strong>Agentie Computer</strong><p>Waiting for Agentie to start the real Linux desktop…</p></div></div></div><div class="arc-foot"><span class="arc-detail">Persistent Linux desktop · click inside and use your mouse and keyboard</span></div></div>`;return r}
+  function makeComputer(){const r=document.createElement('div');r.className='assistant-row agentie-real-row';r.innerHTML=`<div class="agentie-real-computer"><div class="arc-head"><span class="arc-dot"></span><span class="arc-title">Agentie Computer</span><span class="arc-status">Ready</span><button class="arc-fullscreen" type="button">Fullscreen</button><button class="arc-stop" type="button">Stop</button></div><div class="arc-screen"><iframe class="arc-frame" title="Agentie Linux desktop" allow="clipboard-read; clipboard-write; fullscreen; cross-origin-isolated" allowfullscreen credentialless tabindex="0"></iframe><div class="arc-overlay"><div><div class="arc-spinner"></div><strong>Agentie Computer</strong><p>Waiting for Agentie to start the real Linux desktop…</p></div></div></div><div class="arc-foot"><span class="arc-detail">Persistent Linux desktop · click inside and use your mouse and keyboard</span></div></div>`;return r}
   function place(){if(!row){row=makeComputer();root=row.querySelector('.agentie-real-computer');wire()}if(!row.isConnected)messages.appendChild(row);return root}
   async function agentCall(message){const r=await fetch('/agent/run',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({message,agent_type:agentType?.value||'general'})});const d=await r.json();if(!r.ok)throw new Error(d.detail||'Computer request failed');return d}
   function setState(state,detail){place();const dot=root.querySelector('.arc-dot'),status=root.querySelector('.arc-status');dot.classList.toggle('on',state==='on');dot.classList.toggle('error',state==='error');status.textContent=state==='on'?'Running':state==='starting'?'Starting':state==='stopped'?'Stopped':state==='error'?'Error':'Ready';if(detail)root.querySelector('.arc-detail').textContent=detail}
@@ -28,9 +50,6 @@
   function wire(){root.querySelector('.arc-stop').onclick=stopComputer;root.querySelector('.arc-fullscreen').onclick=()=>{const screen=root.querySelector('.arc-screen');if(screen.requestFullscreen)screen.requestFullscreen().catch(()=>{})}}
   function esc(s){const d=document.createElement('div');d.textContent=String(s??'');return d.innerHTML}
 
-  // Important: this function only prepares the UI. It never starts WSL.
-  // The normal /agent/run request owns Computer startup, preventing two
-  // KasmVNC processes from racing for the same display.
   function prepare(text){if(!computerIntent(text))return;place();setState('starting','Waiting for Agentie computer route');showOverlay('Starting','Agentie is preparing the real Linux computer.');setTimeout(()=>window.scrollTo({top:document.body.scrollHeight,behavior:'smooth'}),0)}
   send.addEventListener('click',()=>{const t=input.value.trim();if(t)prepare(t)},true);input.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){const t=input.value.trim();if(t)prepare(t)}},true);
 
@@ -55,3 +74,4 @@
     const wrap=document.createElement('div');wrap.className='card-wrap web-snapshot-card';const el=document.createElement('div');el.className='result-card';wrap.appendChild(el);if(message){const top=document.createElement('div');top.className='card-topline';top.textContent=message;el.appendChild(top)}const title=document.createElement('div');title.className='card-title';title.textContent=`🌐 ${card.title||'Website snapshot'}`;el.appendChild(title);const img=document.createElement('img');img.src=card.image_url;img.alt='Website screenshot';el.appendChild(img);const u=document.createElement('div');u.className='web-snapshot-url';u.textContent=card.url||'';el.appendChild(u);if(card.excerpt){const ex=document.createElement('div');ex.className='web-snapshot-excerpt';ex.textContent=card.excerpt;el.appendChild(ex)}return wrap
   };
 })();
+}
