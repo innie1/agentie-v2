@@ -1,4 +1,6 @@
+import gc
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -19,12 +21,34 @@ class AgentIsolationRegressionTests(unittest.TestCase):
             patch.object(semantic_memory, "DB_PATH", root / "semantic.sqlite3"),
             patch.object(approval_tools, "STORE", root / "approvals.json"),
         ]
-        for item in self.patches:item.start()
+        for item in self.patches:
+            item.start()
 
     def tearDown(self):
         memory_store.set_active_memory_scope("user")
-        for item in reversed(self.patches):item.stop()
-        self.temp.cleanup()
+        # Ensure all background semantic-memory writes that may reference the
+        # temporary SQLite files have completed before restoring paths.
+        try:
+            memory_store._SEMANTIC_POOL.submit(lambda: None).result(timeout=10)
+        except Exception:
+            pass
+        for item in reversed(self.patches):
+            item.stop()
+        # sqlite3.Connection's context manager commits/rolls back but Windows
+        # can keep the underlying file handle alive until objects are collected.
+        # Collect and briefly retry cleanup rather than masking real test errors.
+        gc.collect()
+        last_error = None
+        for _ in range(10):
+            try:
+                self.temp.cleanup()
+                return
+            except (PermissionError, NotADirectoryError) as exc:
+                last_error = exc
+                gc.collect()
+                time.sleep(0.05)
+        if last_error:
+            raise last_error
 
     def test_agent_sessions_map_user_memory_to_private_scope(self):
         alex=agent_registry.create_agent("Alex","CTO","manager")["agent"]
