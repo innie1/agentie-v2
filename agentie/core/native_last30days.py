@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import re
+from concurrent.futures import ThreadPoolExecutor
 from datetime import date, timedelta
 from typing import Any
 from urllib.parse import urlparse
@@ -27,6 +28,7 @@ def status() -> dict[str, Any]:
         "installed": True,
         "python": "3.11+",
         "engine": "Agentie native",
+        "window_days": 30,
         "sources": [x[0] for x in SOURCE_LANES],
         "requires": ["ddgs"],
         "optional": ["AI provider for richer synthesis"],
@@ -39,25 +41,17 @@ def _domain(url: str) -> str:
 
 
 def _search_lane(topic: str, lane: str, qualifier: str, max_results: int = 4) -> list[dict[str, Any]]:
-    since = (date.today() - timedelta(days=30)).isoformat()
-    q = f"{topic} {qualifier} after:{since}".strip()
-    try:
-        rows = DDGS(timeout=12).text(q, safesearch="moderate", timelimit="m", max_results=max_results, backend="auto")
+    since=(date.today()-timedelta(days=30)).isoformat();q=f"{topic} {qualifier} after:{since}".strip()
+    try:rows=DDGS(timeout=12).text(q,safesearch="moderate",timelimit="m",max_results=max_results,backend="auto")
     except TypeError:
-        rows = DDGS(timeout=12).text(q, safesearch="moderate", max_results=max_results, backend="auto")
-    except Exception:
-        return []
+        try:rows=DDGS(timeout=12).text(q,safesearch="moderate",max_results=max_results,backend="auto")
+        except Exception:return []
+    except Exception:return []
     out=[]
     for item in rows or []:
         url=str(item.get("href") or item.get("url") or "").strip()
         if not url:continue
-        out.append({
-            "source":lane,
-            "title":str(item.get("title") or url).strip(),
-            "url":url,
-            "domain":_domain(url),
-            "snippet":str(item.get("body") or item.get("snippet") or "").strip(),
-        })
+        out.append({"source":lane,"title":str(item.get("title") or url).strip(),"url":url,"domain":_domain(url),"snippet":str(item.get("body") or item.get("snippet") or "").strip()})
     return out
 
 
@@ -86,15 +80,11 @@ def _fallback_summary(topic: str, sources: list[dict[str, Any]]) -> str:
 
 async def research(topic: str) -> dict[str, Any]:
     sources=gather(topic)
-    if not sources:
-        return {"message":_fallback_summary(topic,[]),"card":{"type":"last30days","engine":"native","topic":topic,"sources":[],"source_counts":{},"provider_calls":0}}
-    query = f"What are people saying about {topic} in the last 30 days? Focus on recent community reaction, recurring themes, disagreements, and practical signals."
+    if not sources:return {"message":_fallback_summary(topic,[]),"card":{"type":"last30days","engine":"native","topic":topic,"window_days":30,"sources":[],"source_counts":{},"provider_calls":0}}
+    query=f"What are people saying about {topic} in the last 30 days? Focus on recent community reaction, recurring themes, disagreements, practical signals, and what changed recently."
     try:
-        synthesized=await answer_web_search(query,8)
-        answer=((synthesized.get("card") or {}).get("answer") or "").strip()
-        provider_calls=int((synthesized.get("card") or {}).get("provider_calls") or 0)
-    except Exception:
-        answer="";provider_calls=0
+        synthesized=await answer_web_search(query,8);answer=((synthesized.get("card") or {}).get("answer") or "").strip();provider_calls=int((synthesized.get("card") or {}).get("provider_calls") or 0)
+    except Exception:answer="";provider_calls=0
     if not answer:answer=_fallback_summary(topic,sources)
     counts={}
     for s in sources:counts[s["source"]]=counts.get(s["source"],0)+1
@@ -102,4 +92,22 @@ async def research(topic: str) -> dict[str, Any]:
 
 
 def run(topic: str) -> dict[str, Any]:
-    return asyncio.run(research(topic))
+    with ThreadPoolExecutor(max_workers=1,thread_name_prefix="agentie-last30days") as pool:return pool.submit(lambda:asyncio.run(research(topic))).result()
+
+
+def _topic(message: str) -> str | None:
+    text=str(message or "").strip()
+    m=re.match(r"^/?last30days(?:\s+(?:about|on|for))?\s+(.+)$",text,re.I)
+    if m:return m.group(1).strip()
+    m=re.match(r"^(?:research|find|show me|tell me)\s+(?:what people (?:are saying|say)|the last 30 days)\s+(?:about|on|for)\s+(.+)$",text,re.I)
+    return m.group(1).strip() if m else None
+
+
+def route(message: str) -> dict[str, Any] | None:
+    low=str(message or "").lower().strip(" .?!")
+    if low in {"last30days status","show last30days status","check last30days","native last30days status"}:
+        return {"message":"Agentie Last30Days Native is ready on Python 3.11+.","card":{"type":"skill_runtime","skill":"last30days","status":status()}}
+    if low.startswith(("install last30days","update last30days","upstream last30days")):return None
+    topic=_topic(message)
+    if not topic:return None
+    return run(topic)
