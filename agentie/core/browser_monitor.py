@@ -19,6 +19,18 @@ LIVE_DIR = WORKSPACE / "browser_live"
 LIVE_STATE_FILE = LIVE_DIR / "state.json"
 LIVE_FRAME_FILE = LIVE_DIR / "frame.png"
 
+_SERVICE_TARGETS = {
+    "x": {"aliases": ("x", "twitter"), "url": "https://x.com", "plugins": ("x", "twitter")},
+    "gmail": {"aliases": ("gmail", "google mail", "email"), "url": "https://mail.google.com", "plugins": ("gmail", "google mail")},
+    "calendar": {"aliases": ("google calendar", "calendar"), "url": "https://calendar.google.com", "plugins": ("google calendar", "calendar")},
+    "slack": {"aliases": ("slack",), "url": "https://app.slack.com", "plugins": ("slack",)},
+    "notion": {"aliases": ("notion",), "url": "https://www.notion.so", "plugins": ("notion",)},
+    "github": {"aliases": ("github",), "url": "https://github.com", "plugins": ("github", "git")},
+}
+_EXTERNAL_ACTION = re.compile(r"\b(?:open|check|read|search|find|post|publish|send|reply|message|create|edit|update|upload|download|schedule|comment|review)\b", re.I)
+_CONSEQUENTIAL_EXTERNAL = re.compile(r"\b(?:post|publish|send|reply|message|create|edit|update|upload|schedule|comment)\b", re.I)
+_COMPUTER_PREFIX = "use computer for:"
+
 
 def _load_state() -> dict[str, dict[str, Any]]:
     try: return json.loads(STATE_FILE.read_text(encoding="utf-8")) if STATE_FILE.exists() else {}
@@ -110,6 +122,80 @@ def _card(url: str,title: str,filename: str,changed: bool,similarity: float|None
     return {"type":"web_snapshot","url":url,"title":title or url,"image_url":f"/web-snapshots/{filename}","filename":filename,"changed":changed,"similarity":similarity,"excerpt":excerpt[:900],"captured_at":datetime.now().astimezone().isoformat(timespec="seconds")}
 
 
+def _connected_plugin_names() -> set[str]:
+    try:
+        from agentie.core.mcp_client import list_servers
+        return {str(item.get("name") or "").casefold() for item in list_servers()}
+    except Exception:
+        return set()
+
+
+def _service_for_task(text: str, *, ignore_plugins: bool = False) -> dict[str, Any] | None:
+    low=" ".join(str(text or "").casefold().split())
+    if not low or not _EXTERNAL_ACTION.search(low):return None
+    connected=_connected_plugin_names() if not ignore_plugins else set()
+    for service,meta in _SERVICE_TARGETS.items():
+        aliases=meta["aliases"]
+        matched=False
+        for alias in aliases:
+            if alias=="x":
+                if re.search(r"(?:^|\s|@)x(?:\s|$)",low):matched=True;break
+            elif alias=="email":
+                if re.search(r"\bemail\b",low):matched=True;break
+            elif re.search(rf"\b{re.escape(alias)}\b",low):matched=True;break
+        if not matched:continue
+        if connected and any(any(p in name or name in p for p in meta["plugins"]) for name in connected):return None
+        return {"service":service,"url":meta["url"],"consequential":bool(_CONSEQUENTIAL_EXTERNAL.search(low)),"task":str(text).strip()}
+    return None
+
+
+def _fallback_proposal(text: str, candidate: dict[str, Any]) -> dict[str, Any]:
+    service=str(candidate["service"])
+    task=str(candidate["task"])
+    return {
+        "message":f"I don’t see a connected {service} capability for this task. Agentie can use its Computer instead.",
+        "card":{
+            "type":"computer_fallback_proposal",
+            "service":service,
+            "url":candidate["url"],
+            "task":task,
+            "consequential":candidate["consequential"],
+            "actions":[
+                {"action":"use_computer","label":"Use Computer","command":f"Use Computer for: {task}"},
+                {"action":"keep_in_chat","label":"Keep in chat"},
+            ],
+        },
+    }
+
+
+async def _launch_computer_fallback(task: str) -> dict[str, Any]:
+    candidate=_service_for_task(task,ignore_plugins=True)
+    if not candidate:
+        return {"message":"I couldn’t determine which website the Computer should use for that task.","card":None}
+    from agentie.core.browser_automation import _ensure_page
+    try:
+        page=await _ensure_page(str(candidate["url"]))
+        title=await page.title()
+        await _publish_frame(page,status="ready",url=page.url,detail=f"Computer ready for: {task[:160]}")
+        _set_live_state(active=True,status="ready",url=page.url,detail=f"Computer fallback ready for {candidate['service']}")
+        return {
+            "message":f"Agentie Computer is open on {candidate['service']}. I’ve staged the task there. Continue with a browser instruction such as click, type, search, or submit; consequential actions still require approval.",
+            "card":{
+                "type":"computer_fallback",
+                "service":candidate["service"],
+                "url":page.url,
+                "title":title or candidate["service"],
+                "task":task,
+                "status":"ready",
+                "computer_mode":"wsl",
+                "consequential":candidate["consequential"],
+            },
+        }
+    except Exception as exc:
+        _set_live_state(active=False,status="error",url=str(candidate["url"]),detail="Computer fallback failed",error=str(exc)[:500])
+        return {"message":f"I couldn’t start the Computer fallback: {str(exc)[:500]}","card":None}
+
+
 async def capture_website(url: str, *, track_change: bool=False)->dict[str,Any]:
     url=_validate_url(url);SNAPSHOT_DIR.mkdir(parents=True,exist_ok=True);filename=_safe_slug(url);path=SNAPSHOT_DIR/filename;_set_live_state(active=True,status="starting",url=url,detail="Starting Agentie Computer")
     try:
@@ -135,6 +221,8 @@ async def capture_website(url: str, *, track_change: bool=False)->dict[str,Any]:
 async def route_browser_request(message: str)->dict[str,Any]|None:
     text=" ".join(str(message or "").strip().split())
     if not text or _scheduled_request(text):return None
+    if text.casefold().startswith(_COMPUTER_PREFIX):
+        return await _launch_computer_fallback(text[len(_COMPUTER_PREFIX):].strip())
     from agentie.core.desktop_runtime import route_desktop_request
     # WSL startup/shutdown is intentionally synchronous because it shells out to
     # wsl.exe. Run desktop routing in a worker thread so FastAPI's event loop
@@ -144,6 +232,8 @@ async def route_browser_request(message: str)->dict[str,Any]|None:
     from agentie.core.browser_automation import browser_session_command
     interactive=await browser_session_command(text)
     if interactive is not None:return interactive
+    candidate=_service_for_task(text)
+    if candidate is not None:return _fallback_proposal(text,candidate)
     if not _looks_browser_request(text):return None
     target=_url(text)
     if not target:return None
