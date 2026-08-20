@@ -13,9 +13,11 @@ class WorkToolsRegressionTests(unittest.TestCase):
         root = Path(self.temp.name)
         self.contacts = root / "contacts.json"
         self.monitors = root / "website_monitors.json"
+        self.calendar = root / "calendar_events.json"
         self.patches = [
             patch.object(work_tools, "CONTACTS_FILE", self.contacts),
             patch.object(work_tools, "MONITORS_FILE", self.monitors),
+            patch.object(work_tools, "CALENDAR_FILE", self.calendar),
         ]
         for item in self.patches:
             item.start()
@@ -32,20 +34,26 @@ class WorkToolsRegressionTests(unittest.TestCase):
 
     def test_new_tools_are_additive(self):
         names = {getattr(tool, "name", "") for tool in registry.tools_for("general")}
-        for expected in ("plan_task", "save_contact", "find_contacts", "create_website_monitor", "list_website_monitors"):
+        for expected in (
+            "plan_task", "save_contact", "find_contacts", "create_calendar_event",
+            "list_calendar_events", "create_website_monitor", "list_website_monitors",
+        ):
             self.assertIn(expected, names)
 
     def test_plan_marks_write_actions_for_approval(self):
         raw = work_tools.plan_task.on_invoke_tool(None, json.dumps({"goal": "Research a supplier then email them and schedule a meeting"}))
-        # The SDK wrapper may return an awaitable in newer versions; validate the underlying implementation separately below.
         self.assertIsNotNone(raw)
 
     def test_contact_store_round_trip_helpers(self):
-        # Exercise storage helpers without depending on the Agents SDK invocation wrapper.
         work_tools._save(self.contacts, [{"id": "1", "name": "Ada", "email": "ada@example.com", "phone": "", "company": "INNIE", "notes": "supplier"}])
         rows = work_tools._load(self.contacts, [])
         self.assertEqual(rows[0]["name"], "Ada")
         self.assertEqual(rows[0]["company"], "INNIE")
+
+    def test_calendar_store_is_isolated_and_persistent(self):
+        event = {"id": "evt", "title": "Build review", "start": "2026-08-21T09:00:00", "status": "scheduled"}
+        work_tools._save(self.calendar, [event])
+        self.assertEqual(work_tools._load(self.calendar, [])[0]["title"], "Build review")
 
     def test_monitor_store_is_isolated_and_persistent(self):
         item = {"id": "abc", "url": "https://example.com", "label": "Example", "check_for": "changes", "status": "active"}
