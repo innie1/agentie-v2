@@ -4,6 +4,7 @@ import re
 from typing import Any
 
 from agentie.core.agent_registry import get_agent, list_agents
+from agentie.core.memory_store import set_context
 from agentie.core.team_orchestrator import create_team_job, start_team_job, team_job_card
 
 # Local deterministic specialty routing: no external model call is needed to decide a handoff.
@@ -59,4 +60,7 @@ def maybe_auto_delegate(message:str,session_id:str|None)->dict[str,Any]|None:
     specialist=best_specialist(message,current.get("id"))
     if not specialist:return None
     job=create_team_job(message,[specialist],requested_by=str(current["id"]));start_team_job(job["id"])
+    if session_id:
+        set_context(session_id,"active_team_job_id",job["id"])
+        set_context(session_id,"active_team_job_task",job["task"])
     return {"message":f"This is better suited to {specialist['name']} ({specialist['role']}). I’m handing it over and will keep the work tracked as {job['id']}.","card":{"type":"agent_handoff","from_agent":{"id":current["id"],"name":current["name"],"role":current["role"]},"to_agent":{"id":specialist["id"],"name":specialist["name"],"role":specialist["role"]},"reason":f"Matched {task_specialty} specialty","team_job":team_job_card(job)}}
