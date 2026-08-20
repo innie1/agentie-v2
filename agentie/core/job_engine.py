@@ -7,12 +7,7 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Awaitable, Callable
-
-WORKSPACE=Path.cwd()/"workspace"
-DB_PATH=WORKSPACE/"agentie_jobs.sqlite3"
-_LOCK=threading.Lock();_RUNNING:dict[str,asyncio.Task]={}
-StepRunner=Callable[[str,str,str],Awaitable[str]]
-
+WORKSPACE=Path.cwd()/"workspace";DB_PATH=WORKSPACE/"agentie_jobs.sqlite3";_LOCK=threading.Lock();_RUNNING:dict[str,asyncio.Task]={};StepRunner=Callable[[str,str,str],Awaitable[str]]
 def _now():return datetime.now(timezone.utc).isoformat(timespec="seconds")
 def _connect():
     WORKSPACE.mkdir(parents=True,exist_ok=True);c=sqlite3.connect(DB_PATH,timeout=10);c.row_factory=sqlite3.Row;c.execute("PRAGMA journal_mode=WAL");return c
@@ -40,8 +35,7 @@ def make_plan(goal):
         parts=re.split(r"\s*,\s*(?:and\s+)?|\s+and\s+",clean,flags=re.I);action=re.compile(r"^(?:research|search|find|compare|analyze|analyse|write|create|build|fix|test|inspect|read|summarize|summarise|check|look|calculate|convert|show)\b",re.I)
         if len(parts)>1 and sum(bool(action.search(p.strip())) for p in parts)>=2:clauses=[p.strip(" .") for p in parts if p.strip(" .")]
     out=[];prev=None
-    for i,clause in enumerate(clauses[:8],1):
-        sid=f"s{i}";out.append({"id":sid,"title":clause[:64],"instruction":clause,"specialist":_specialist(clause),"depends_on":[prev] if sequential and prev else []});prev=sid
+    for i,clause in enumerate(clauses[:8],1):sid=f"s{i}";out.append({"id":sid,"title":clause[:64],"instruction":clause,"specialist":_specialist(clause),"depends_on":[prev] if sequential and prev else []});prev=sid
     return out or [{"id":"s1","title":"Complete goal","instruction":clean,"specialist":_specialist(clean),"depends_on":[]}]
 def create_job(session_id,goal,budget_provider_calls=8,preferred_role=None):
     init_db();jid=uuid.uuid4().hex[:10];now=_now();plan=make_plan(goal);budget=max(0,min(int(budget_provider_calls),50));preferred=str(preferred_role or "").strip().lower()
@@ -63,6 +57,7 @@ def list_jobs(session_id=None,limit=30):
     init_db()
     with _LOCK,_connect() as c:rows=c.execute("SELECT id FROM jobs WHERE session_id=? ORDER BY created_at DESC LIMIT ?",(session_id,limit)).fetchall() if session_id else c.execute("SELECT id FROM jobs ORDER BY created_at DESC LIMIT ?",(limit,)).fetchall()
     return [get_job(str(r["id"])) for r in rows]
+def jobs_for_agent(agent_id,limit=30):return list_jobs(f"agent:{agent_id}:",limit)+[j for j in list_jobs(None,limit*3) if str(j.get("session_id","")).startswith(f"agent:{agent_id}:") and j not in list_jobs(f"agent:{agent_id}:",limit)]
 def job_events(jid,limit=100):
     init_db()
     with _LOCK,_connect() as c:rows=c.execute("SELECT * FROM job_events WHERE job_id=? ORDER BY id DESC LIMIT ?",(jid,limit)).fetchall()
@@ -83,6 +78,18 @@ def _reserve(jid):
         r=c.execute("SELECT provider_calls,budget_provider_calls FROM jobs WHERE id=?",(jid,)).fetchone()
         if not r or int(r["provider_calls"])>=int(r["budget_provider_calls"]):return False
         c.execute("UPDATE jobs SET provider_calls=provider_calls+1,updated_at=? WHERE id=?",(_now(),jid));return True
+def pause_job(jid):
+    j=get_job(jid)
+    if j["status"] in {"completed","failed","cancelled","paused"}:return j
+    _set_job(jid,status="paused");t=_RUNNING.get(jid)
+    if t and not t.done():t.cancel()
+    with _LOCK,_connect() as c:c.execute("UPDATE job_steps SET status='queued',started_at=NULL WHERE job_id=? AND status='running'",(jid,))
+    _event(jid,"pause","Job paused by user.");return get_job(jid)
+def resume_job(jid,runner):
+    j=get_job(jid)
+    if j["status"] not in {"paused","failed","queued"}:return j
+    with _LOCK,_connect() as c:c.execute("UPDATE job_steps SET status='queued',error=NULL,started_at=NULL,finished_at=NULL WHERE job_id=? AND status='failed'",(jid,))
+    _set_job(jid,status="queued",error=None);_event(jid,"resume","Job resumed.");start_job(jid,runner);return get_job(jid)
 def cancel_job(jid):
     j=get_job(jid)
     if j["status"] in {"completed","failed","cancelled"}:return j
@@ -99,18 +106,20 @@ async def _run_one(jid,step,runner):
         if step["specialist"]=="deep_research":
             from agentie.core.deep_research import run_deep_research
             result=await run_deep_research(instruction,runner,job["session_id"]);output=result["report"]
-            _event(jid,"research_sources",f"Deep research collected {len(result['sources'])} sources.",{"queries":result["queries"],"sources":result["sources"]})
-            _event(jid,"citation_verification","Citation verification completed.",result.get("verification") or {})
+            _event(jid,"research_sources",f"Deep research collected {len(result['sources'])} sources.",{"queries":result["queries"],"sources":result["sources"]});_event(jid,"citation_verification","Citation verification completed.",result.get("verification") or {})
         else:output=await runner(instruction,step["specialist"],job["session_id"])
         _set_step(jid,step["id"],status="completed",output=output,error=None,finished_at=_now());_event(jid,"step_completed",f"Completed: {step['title']}",{"step_id":step["id"]})
-    except asyncio.CancelledError:_set_step(jid,step["id"],status="cancelled",finished_at=_now());raise
+    except asyncio.CancelledError:
+        if get_job(jid)["status"]=="paused":_set_step(jid,step["id"],status="queued",started_at=None)
+        else:_set_step(jid,step["id"],status="cancelled",finished_at=_now())
+        raise
     except Exception as exc:_set_step(jid,step["id"],status="failed",error=str(exc),finished_at=_now());_event(jid,"step_failed",f"Failed: {step['title']}: {exc}")
 async def execute_job(jid,runner):
     try:
         _set_job(jid,status="running",error=None);_event(jid,"job_started","Job execution started.")
         while True:
             job=get_job(jid)
-            if job["status"]=="cancelled":return
+            if job["status"] in {"cancelled","paused"}:return
             steps=job["steps"];pending=[s for s in steps if s["status"]=="queued"]
             if not pending:break
             completed={s["id"] for s in steps if s["status"]=="completed"};failed={s["id"] for s in steps if s["status"] in {"failed","cancelled"}};run=[s for s in pending if set(s.get("depends_on",[]))<=completed];blocked=[s for s in pending if set(s.get("depends_on",[]))&failed]
@@ -122,7 +131,8 @@ async def execute_job(jid,runner):
         job=get_job(jid);bad=[s for s in job["steps"] if s["status"]=="failed"];outs=[s["output"] for s in job["steps"] if s.get("output")]
         if bad:_set_job(jid,status="failed",final_output="\n\n".join(outs),error=f"{len(bad)} step(s) failed")
         else:_set_job(jid,status="completed",final_output=(outs[-1] if len(outs)==1 else "\n\n---\n\n".join(outs)),error=None);_event(jid,"job_completed","Job completed successfully.")
-    except asyncio.CancelledError:_set_job(jid,status="cancelled")
+    except asyncio.CancelledError:
+        if get_job(jid)["status"]!="paused":_set_job(jid,status="cancelled")
     except Exception as exc:_set_job(jid,status="failed",error=str(exc));_event(jid,"job_failed",str(exc))
     finally:_RUNNING.pop(jid,None)
 def start_job(jid,runner):
@@ -134,5 +144,4 @@ def resume_unfinished(runner):
     with _LOCK,_connect() as c:rows=c.execute("SELECT id FROM jobs WHERE status IN ('queued','running') ORDER BY created_at").fetchall();c.execute("UPDATE job_steps SET status='queued',started_at=NULL WHERE status='running'")
     for r in rows:start_job(str(r["id"]),runner)
     return len(rows)
-def job_card(job):
-    return {"type":"job_progress","id":job["id"],"goal":job["goal"],"status":job["status"],"completed_steps":job.get("completed_steps",0),"total_steps":job.get("total_steps",0),"provider_calls":job.get("provider_calls",0),"budget_provider_calls":job.get("budget_provider_calls",0),"final_output":job.get("final_output"),"error":job.get("error"),"steps":[{"id":s["id"],"title":s["title"],"specialist":s["specialist"],"status":s["status"],"attempts":s["attempts"],"error":s.get("error")} for s in job.get("steps",[])]}
+def job_card(job):return {"type":"job_progress","id":job["id"],"goal":job["goal"],"status":job["status"],"completed_steps":job.get("completed_steps",0),"total_steps":job.get("total_steps",0),"provider_calls":job.get("provider_calls",0),"budget_provider_calls":job.get("budget_provider_calls",0),"final_output":job.get("final_output"),"error":job.get("error"),"steps":[{"id":s["id"],"title":s["title"],"specialist":s["specialist"],"status":s["status"],"attempts":s["attempts"],"error":s.get("error")} for s in job.get("steps",[])]}
