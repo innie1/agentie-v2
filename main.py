@@ -32,7 +32,7 @@ from agentie.tools.advanced_utility_tools import SCHEDULES
 from agentie.tools.productivity_tools import REMINDERS
 
 app=FastAPI(title="Agentie API",version="1.10.1",description="Local-first Agentie runtime with observability, cost tracking, memory, routines, jobs, RAG, browser monitoring, MCP, plugins, skills and local artifact generation")
-FRONTEND_DIR=Path(__file__).parent/"frontend";FRONTEND_FILE=FRONTEND_DIR/"index.html";CARDS_JS=FRONTEND_DIR/"cards.js";EVENTS_JS=FRONTEND_DIR/"events.js";UPLOAD_JS=FRONTEND_DIR/"upload.js";PLUGINS_JS=FRONTEND_DIR/"plugins.js";BROWSER_SCREEN_JS=FRONTEND_DIR/"browser_screen.js"
+FRONTEND_DIR=Path(__file__).parent/"frontend";FRONTEND_FILE=FRONTEND_DIR/"index.html";CARDS_JS=FRONTEND_DIR/"cards.js";EVENTS_JS=FRONTEND_DIR/"events.js";UPLOAD_JS=FRONTEND_DIR/"upload.js";PLUGINS_JS=FRONTEND_DIR/"plugins.js";BROWSER_SCREEN_JS=FRONTEND_DIR/"browser_screen.js";UI_UPGRADE_JS=FRONTEND_DIR/"ui_upgrade.js"
 class AgentRequest(BaseModel):
     message:str=Field(min_length=1,max_length=20_000);agent_type:str=Field(default="general",pattern="^(general|research|coding|manager|github)$");session_id:str|None=Field(default=None,max_length=200)
 class AgentResponse(BaseModel):
@@ -108,7 +108,7 @@ async def startup_event():start_routine_worker()
 @app.get("/")
 async def chat_ui():
     if not FRONTEND_FILE.exists():raise HTTPException(404,"Frontend not found.")
-    html=FRONTEND_FILE.read_text(encoding="utf-8")+'\n<script src="/cards.js?v=201"></script>\n<script src="/events.js?v=201"></script>\n<script src="/upload.js?v=201"></script>\n<script src="/plugins.js?v=201"></script>\n<script src="/browser-screen.js?v=201"></script>\n';return HTMLResponse(html,headers={"Cache-Control":"no-store, no-cache, must-revalidate, max-age=0"})
+    html=FRONTEND_FILE.read_text(encoding="utf-8")+'\n<script src="/cards.js?v=201"></script>\n<script src="/events.js?v=201"></script>\n<script src="/upload.js?v=201"></script>\n<script src="/plugins.js?v=201"></script>\n<script src="/browser-screen.js?v=201"></script>\n<script src="/ui-upgrade.js?v=202"></script>\n';return HTMLResponse(html,headers={"Cache-Control":"no-store, no-cache, must-revalidate, max-age=0"})
 @app.get("/cards.js")
 async def cards_js():return Response(CARDS_JS.read_text(encoding="utf-8"),media_type="application/javascript",headers={"Cache-Control":"no-store"})
 @app.get("/events.js")
@@ -119,6 +119,8 @@ async def upload_js():return Response(UPLOAD_JS.read_text(encoding="utf-8"),medi
 async def plugins_js():return Response(PLUGINS_JS.read_text(encoding="utf-8"),media_type="application/javascript",headers={"Cache-Control":"no-store"})
 @app.get("/browser-screen.js")
 async def browser_screen_js():return Response(BROWSER_SCREEN_JS.read_text(encoding="utf-8"),media_type="application/javascript",headers={"Cache-Control":"no-store"})
+@app.get("/ui-upgrade.js")
+async def ui_upgrade_js():return Response(UI_UPGRADE_JS.read_text(encoding="utf-8"),media_type="application/javascript",headers={"Cache-Control":"no-store"})
 @app.get("/plugins/state")
 async def plugins_state():
     state=plugin_state();state["plugins"]=list_skills();registered={str(x.get("name") or "").lower() for x in state.get("mcp_servers",[])};state["mcp_presets"]=[{**item,"installed":item["id"].lower() in registered} for item in mcp_presets()];return state
@@ -221,7 +223,6 @@ async def agent_run(request:AgentRequest,http_request:Request):
         if preflight is not None:
             message=str(preflight.get("message",""));card=preflight.get("card");_record_local(session_key,request.message,message,card,request.agent_type,"capability");return AgentResponse(message=message,result=message,card=card,agent_type=request.agent_type,routed_by="capability")
         routed=_route_request_actions(effective);local_results=routed.get("results",[]);unresolved=routed.get("unresolved",[])
-        # Persistent-agent specialty handoff is local/deterministic and only applies to unresolved work.
         if not local_results and unresolved:
             handoff=maybe_auto_delegate(effective,session_key)
             if handoff is not None:
