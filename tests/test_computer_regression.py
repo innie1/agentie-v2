@@ -72,7 +72,7 @@ class ComputerRoutingRegressionTests(unittest.IsolatedAsyncioTestCase):
 class ComputerMCPPresetRegressionTests(unittest.TestCase):
     def test_required_computer_mcp_presets_exist(self):
         ids = {item["id"] for item in presets()}
-        self.assertTrue({"filesystem", "playwright", "github", "memory", "sequential-thinking", "fetch", "time-mcp", "git"}.issubset(ids))
+        self.assertTrue({"filesystem", "playwright", "github", "agentmail", "memory", "sequential-thinking", "fetch", "time-mcp", "git"}.issubset(ids))
 
     def test_filesystem_is_workspace_scoped(self):
         item = preset_by_id("filesystem")
@@ -85,6 +85,13 @@ class ComputerMCPPresetRegressionTests(unittest.TestCase):
         command, args = _split_local_command(item["command"])
         self.assertIn(Path(command).name.lower(), {"python", "python.exe", "py", "py.exe"})
         self.assertEqual(args[-2:], ["-m", "agentie.mcp_github_wrapper"])
+
+    def test_agentmail_uses_official_stdio_bridge_and_requires_key(self):
+        item = preset_by_id("agentmail")
+        self.assertIsNotNone(item)
+        self.assertIn("agentmail-mcp", item["command"])
+        self.assertIn("AGENTMAIL_API_KEY", item["requires"])
+        self.assertIn("send_message", item["sensitive_tools"])
 
 
 if __name__ == "__main__":
