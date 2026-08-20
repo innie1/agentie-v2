@@ -49,6 +49,11 @@ def _agent_creation_command(text):
     if role_only:
         role=role_only.group(1).strip(' \"“”');purpose=(role_only.group(2) or "").strip(' \"“”');name=role.title();result=create_agent(name,role,_base_for_role(role),purpose=purpose);agent=result["agent"];return {"message":f"{'Created' if result['created'] else 'Found existing'} {agent['name']} agent.","card":{"type":"agent_profile",**agent}}
     return None
+def _manual_instruction_payload(agent_name,payload):
+    """Store only the instruction body, even if a UI/client accidentally nests the command itself."""
+    value=str(payload or "").strip()
+    nested=re.match(rf"^(?:set|update|change|edit)\s+(?:agent\s+)?{re.escape(str(agent_name))}(?:['’]s)?\s+(?:system\s+prompt|instructions|prompt)\s+(?:to|as)\s+(.+)$",value,re.I)
+    return (nested.group(1) if nested else value).strip()
 def route_role_command(message):
     text=" ".join(message.strip().split());lower=text.lower().strip(" .?!");team=route_team_command(text)
     if team is not None:return team
@@ -68,7 +73,7 @@ def route_role_command(message):
     if edit:
         agent=get_agent(edit.group(1).strip())
         if not agent:return {"message":"Agent was not found.","card":None}
-        set_manual_instructions(agent,edit.group(2).strip());return {"message":f"Updated {agent['name']}'s user instructions.","card":instruction_card(agent)}
+        payload=_manual_instruction_payload(agent['name'],edit.group(2));set_manual_instructions(agent,payload);return {"message":f"Updated {agent['name']}'s user instructions.","card":instruction_card(agent)}
     rename=re.match(r"^(?:rename|change (?:the )?name of)\s+(?:agent\s+)?(.+?)\s+(?:to|as)\s+(.+?)[.!?]?$",text,re.I)
     if rename:
         try:agent=update_agent_profile(rename.group(1).strip(),name=rename.group(2).strip())
