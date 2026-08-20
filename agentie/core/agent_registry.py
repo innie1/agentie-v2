@@ -68,7 +68,7 @@ def update_agent_manager(agent_id_or_name: str, manager_id_or_name: str | None) 
     target["manager_id"]=manager_id;target["updated_at"]=datetime.now().astimezone().isoformat(timespec="seconds");_save(data);return _public(target)
 
 def delete_agent(agent_id_or_name: str) -> dict[str, Any]:
-    """Permanently delete an agent plus its private memories, chats, context and semantic shards."""
+    """Permanently delete an agent plus its private memories, chats, context, semantic shards and learned instructions."""
     data=_load();agents=data.setdefault("agents",[]);key=_clean(agent_id_or_name).casefold();target=next((x for x in agents if str(x.get("id","")).casefold()==key or str(x.get("name","")).casefold()==key),None)
     if not target:raise ValueError("Agent was not found.")
     public=_public(target);agent_id=str(target["id"]);now=datetime.now().astimezone().isoformat(timespec="seconds")
@@ -76,11 +76,12 @@ def delete_agent(agent_id_or_name: str) -> dict[str, Any]:
         if item.get("manager_id")==agent_id:item["manager_id"]=None;item["updated_at"]=now
     data["agents"]=[x for x in agents if x is not target];data["updated_at"]=now;_save(data)
     from agentie.core.memory_store import purge_agent_memory
-    purged=purge_agent_memory(str(target.get("memory_scope") or f"agent:{agent_id}"),str(target.get("session_prefix") or f"agent:{agent_id}:"))
+    from agentie.core.agent_prompt import purge_instruction_profile
+    purged=purge_agent_memory(str(target.get("memory_scope") or f"agent:{agent_id}"),str(target.get("session_prefix") or f"agent:{agent_id}:"));instruction_profiles=purge_instruction_profile(agent_id)
     removed=0
     for path in (WORKSPACE/"agents"/agent_id,WORKSPACE/"agent_data"/agent_id):
         if path.exists():shutil.rmtree(path,ignore_errors=True);removed+=1
-    return {"deleted":True,"agent":public,"purged":{**purged,"directories":removed}}
+    return {"deleted":True,"agent":public,"purged":{**purged,"instruction_profiles":instruction_profiles,"directories":removed}}
 def hierarchy() -> list[dict[str, Any]]:
     items=list_agents();by_manager:dict[str|None,list[dict[str,Any]]]={}
     for item in items:by_manager.setdefault(item.get("manager_id"),[]).append(item)
