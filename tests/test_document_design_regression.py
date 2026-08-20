@@ -3,7 +3,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
-from agentie.core import office_artifacts, pdf_service
+from agentie.core import file_service, office_artifacts, pdf_service
 from agentie.core.document_design import choose_style, parse_blocks, first_numeric_series
 
 
@@ -40,24 +40,19 @@ class DocumentDesignRegressionTests(unittest.TestCase):
         self.assertIsNotNone(first_numeric_series(SAMPLE))
 
     def test_docx_uses_professional_layout_and_chart_pipeline(self):
-        with TemporaryDirectory() as tmp, patch.object(office_artifacts,'UPLOADS',Path(tmp)):
+        with TemporaryDirectory() as tmp, patch.object(file_service,'UPLOADS',Path(tmp)), patch.object(office_artifacts,'UPLOADS',Path(tmp)):
             card=office_artifacts.create_docx(SAMPLE,'launch.docx','Alex','executive')
-            self.assertEqual(card['document_style'],'executive')
-            self.assertEqual(card['creator'],'Alex')
-            self.assertTrue(Path(tmp,card['name']).exists())
+            self.assertEqual(card['document_style'],'executive');self.assertEqual(card['creator'],'Alex');self.assertTrue(Path(tmp,card['name']).exists())
 
     def test_xlsx_adds_style_and_chart_when_numeric_data_exists(self):
-        with TemporaryDirectory() as tmp, patch.object(office_artifacts,'UPLOADS',Path(tmp)):
+        with TemporaryDirectory() as tmp, patch.object(file_service,'UPLOADS',Path(tmp)), patch.object(office_artifacts,'UPLOADS',Path(tmp)):
             card=office_artifacts.create_xlsx(SAMPLE,'metrics.xlsx','Mira','modern')
-            self.assertEqual(card['creator'],'Mira')
-            self.assertTrue(Path(tmp,card['name']).exists())
+            self.assertEqual(card['creator'],'Mira');self.assertTrue(Path(tmp,card['name']).exists())
 
     def test_pdf_uses_style_pack_and_professional_metadata(self):
-        with TemporaryDirectory() as tmp, patch.object(pdf_service,'UPLOADS',Path(tmp)):
+        with TemporaryDirectory() as tmp, patch.object(file_service,'UPLOADS',Path(tmp)), patch.object(pdf_service,'UPLOADS',Path(tmp)):
             card=pdf_service.create_pdf(SAMPLE,'launch.pdf','Vera','research')
-            self.assertEqual(card['document_style'],'research')
-            self.assertEqual(card['creator'],'Vera')
-            self.assertTrue(Path(tmp,card['name']).exists())
+            self.assertEqual(card['document_style'],'research');self.assertEqual(card['creator'],'Vera');self.assertTrue(Path(tmp,card['name']).exists())
 
 
 if __name__=='__main__':unittest.main()
