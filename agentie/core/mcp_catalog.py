@@ -56,6 +56,17 @@ def presets() -> list[dict[str, Any]]:
             "auto_route": True,
         },
         {
+            "id": "agentmail",
+            "name": "AgentMail",
+            "description": "AgentMail email MCP for agent inboxes, messages, threads, drafts and attachments.",
+            "transport": "stdio",
+            "command": _npx("-y", "agentmail-mcp"),
+            "requires": "Node.js / npx · AGENTMAIL_API_KEY",
+            "capabilities": ["email", "inboxes", "messages", "threads", "drafts", "attachments"],
+            "auto_route": True,
+            "sensitive_tools": ["send_message", "reply_to_message", "forward_message", "send_draft", "delete_message", "delete_thread", "delete_draft", "delete_inbox"],
+        },
+        {
             "id": "memory",
             "name": "Memory",
             "description": "Knowledge-graph memory for entities, observations and relations.",
