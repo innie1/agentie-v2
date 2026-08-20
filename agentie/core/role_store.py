@@ -6,7 +6,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from agentie.core.agent_registry import create_agent, get_agent, hierarchy, list_agents, update_agent_manager
+from agentie.core.agent_registry import create_agent, delete_agent, get_agent, hierarchy, list_agents, update_agent_manager
+from agentie.tools.approval_tools import approval_is_granted, create_approval
 
 WORKSPACE=Path.cwd()/"workspace"
 ROLES=WORKSPACE/"agent_roles.json"
@@ -27,8 +28,7 @@ ROLE_PRESETS={
 def _load()->dict[str,Any]:
     try:return json.loads(ROLES.read_text(encoding="utf-8")) if ROLES.exists() else {"assignments":{},"custom_roles":{}}
     except Exception:return {"assignments":{},"custom_roles":{}}
-def _save(data:dict[str,Any])->None:
-    ROLES.parent.mkdir(parents=True,exist_ok=True);ROLES.write_text(json.dumps(data,indent=2,ensure_ascii=False),encoding="utf-8")
+def _save(data:dict[str,Any])->None:ROLES.parent.mkdir(parents=True,exist_ok=True);ROLES.write_text(json.dumps(data,indent=2,ensure_ascii=False),encoding="utf-8")
 def resolve_role(agent_name:str)->dict[str,str]:
     key=agent_name.lower().strip();data=_load();roles={**ROLE_PRESETS,**data.get("custom_roles",{})};assigned=str(data.get("assignments",{}).get(key,"")).strip().lower()
     if assigned and assigned in roles:return {"name":assigned,**roles[assigned]}
@@ -75,6 +75,16 @@ def route_role_command(message:str)->dict[str,Any]|None:
     text=" ".join(message.strip().split());lower=text.lower().strip(" .?!")
     created=_agent_creation_command(text)
     if created is not None:return created
+    delete_match=re.match(r"^(?:please\s+)?(?:delete|remove)\s+(?:agent\s+)?(.+?)[.!?]?$",text,re.I)
+    if delete_match:
+        target=get_agent(delete_match.group(1).strip(' .?!\"“”'))
+        if not target:return {"message":"Agent was not found.","card":None}
+        action=f"delete_agent:{target['id']}"
+        if not approval_is_granted(action):
+            approval=create_approval(action,f"Permanently delete {target['name']} and all of this agent's private memories, chats, semantic shards and agent-owned data.",{"kind":"agent_delete","agent_id":target["id"],"agent_name":target["name"]})
+            return {"message":f"Deleting {target['name']} is permanent. Approve the deletion, then send “Delete agent {target['name']}” again.","card":{"type":"approvals","items":[approval]}}
+        result=delete_agent(target["id"]);p=result["purged"]
+        return {"message":f"Deleted {target['name']} permanently, including {p.get('memories',0)} memories, {p.get('messages',0)} chat messages and {p.get('semantic_items',0)} semantic memory items.","card":{"type":"agent_deleted","id":target["id"],"name":target["name"],"purged":p}}
     if lower in {"agents","show agents","list agents","show my agents","list my agents","agent directory","show agent directory"}:
         items=list_agents();return {"message":f"You have {len(items)} persistent agent(s).","card":{"type":"agents","items":items}}
     m=re.match(r"^(?:show|inspect|open)\s+(?:agent\s+)?(.+)$",text,re.I)
