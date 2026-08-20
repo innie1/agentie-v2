@@ -167,10 +167,20 @@ apt-get install -y ca-certificates curl xfce4 xfce4-terminal thunar dbus-x11 soc
 if ! command -v vncserver >/dev/null 2>&1 || ! command -v Xkasmvnc >/dev/null 2>&1; then
   . /etc/os-release
   codename="${{VERSION_CODENAME:-${{UBUNTU_CODENAME:-}}}}"
-  case "$codename" in focal|jammy|noble) ;; *) echo "Unsupported Ubuntu release for KasmVNC: $codename"; exit 44 ;; esac
+  case "$codename" in
+    focal|jammy|noble) package_codename="$codename" ;;
+    oracular|plucky|questing|resolute)
+      # KasmVNC does not yet publish packages for these newer Ubuntu releases.
+      # The Noble package is built against an older userspace and is compatible
+      # with these newer Ubuntu releases in Agentie's WSL desktop runtime.
+      package_codename="noble"
+      echo "Using KasmVNC Noble compatibility package on Ubuntu $codename"
+      ;;
+    *) echo "Unsupported Ubuntu release for KasmVNC: $codename"; exit 44 ;;
+  esac
   case "$(uname -m)" in x86_64) arch=amd64 ;; aarch64|arm64) arch=arm64 ;; *) echo "Unsupported architecture: $(uname -m)"; exit 45 ;; esac
   version="{KASMVNC_VERSION}"
-  deb="kasmvncserver_${{codename}}_${{version}}_${{arch}}.deb"
+  deb="kasmvncserver_${{package_codename}}_${{version}}_${{arch}}.deb"
   url="https://github.com/kasmtech/KasmVNC/releases/download/v${{version}}/${{deb}}"
   curl -fL --retry 3 "$url" -o "/tmp/$deb"
   apt-get install -y "/tmp/$deb"
