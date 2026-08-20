@@ -154,7 +154,7 @@ def _shutdown_wsl() -> None:
 
 
 def _bootstrap_packages() -> None:
-    script = "DEBIAN_FRONTEND=noninteractive apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y tigervnc-standalone-server tigervnc-tools novnc websockify xfce4 dbus-x11 socat"
+    script = "DEBIAN_FRONTEND=noninteractive apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y tigervnc-standalone-server tigervnc-tools novnc websockify xfce4 xfce4-terminal thunar dbus-x11 socat"
     try:
         proc = _run_wsl(script, timeout=300, root=True)
     except subprocess.TimeoutExpired as exc:
@@ -168,11 +168,72 @@ def _prepare_x11_runtime() -> None:
     script = r'''
 rm -f /tmp/.X1-lock 2>/dev/null || true
 rm -f "$HOME/.config/tigervnc"/*:1.pid "$HOME/.config/tigervnc"/*:1.log 2>/dev/null || true
+
+# Keep the Agentie desktop clean under WSL. xfce4-notifyd currently detects
+# WSLg's Wayland environment and can show an irrelevant layer-shell warning.
+mkdir -p "$HOME/.config/autostart" "$HOME/Desktop"
+cat > "$HOME/.config/autostart/xfce4-notifyd.desktop" <<'EOF'
+[Desktop Entry]
+Type=Application
+Name=XFCE Notify Daemon
+Hidden=true
+X-GNOME-Autostart-enabled=false
+EOF
+
+cat > "$HOME/Desktop/Chrome.desktop" <<'EOF'
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Chrome
+Comment=Browse the web
+Exec=google-chrome --user-data-dir=%h/.agentie-chrome --no-first-run --no-default-browser-check
+Icon=google-chrome
+Terminal=false
+Categories=Network;WebBrowser;
+EOF
+cat > "$HOME/Desktop/Terminal.desktop" <<'EOF'
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Terminal
+Comment=Open a Linux terminal
+Exec=xfce4-terminal
+Icon=utilities-terminal
+Terminal=false
+Categories=System;TerminalEmulator;
+EOF
+cat > "$HOME/Desktop/Files.desktop" <<'EOF'
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Files
+Comment=Browse files
+Exec=thunar
+Icon=system-file-manager
+Terminal=false
+Categories=System;FileManager;
+EOF
+cat > "$HOME/Desktop/Home.desktop" <<'EOF'
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Home
+Comment=Open your home folder
+Exec=thunar %h
+Icon=user-home
+Terminal=false
+Categories=System;FileManager;
+EOF
+chmod +x "$HOME/Desktop"/*.desktop
+gio set "$HOME/Desktop/Chrome.desktop" metadata::trusted true >/dev/null 2>&1 || true
+gio set "$HOME/Desktop/Terminal.desktop" metadata::trusted true >/dev/null 2>&1 || true
+gio set "$HOME/Desktop/Files.desktop" metadata::trusted true >/dev/null 2>&1 || true
+gio set "$HOME/Desktop/Home.desktop" metadata::trusted true >/dev/null 2>&1 || true
 '''
     proc = _run_wsl(script, timeout=12)
     if proc.returncode != 0:
         output = ((proc.stdout or "") + "\n" + (proc.stderr or "")).strip()
-        raise RuntimeError("Could not clear stale Agentie display state: " + (output[-1000:] or f"exit {proc.returncode}"))
+        raise RuntimeError("Could not prepare the Agentie desktop: " + (output[-1000:] or f"exit {proc.returncode}"))
 
 
 def _start_script() -> str:
@@ -184,12 +245,11 @@ command -v websockify >/dev/null 2>&1 || missing="$missing websockify"
 [ -d /usr/share/novnc ] || missing="$missing novnc"
 command -v startxfce4 >/dev/null 2>&1 || missing="$missing xfce4"
 command -v dbus-launch >/dev/null 2>&1 || missing="$missing dbus-x11"
-command -v google-chrome >/dev/null 2>&1 || missing="$missing google-chrome"
-command -v socat >/dev/null 2>&1 || missing="$missing socat"
+command -v xfce4-terminal >/dev/null 2>&1 || missing="$missing xfce4-terminal"
+command -v thunar >/dev/null 2>&1 || missing="$missing thunar"
 if [ -n "$missing" ]; then echo "__MISSING__:$missing"; exit 42; fi
 
 WSL_IP="$(hostname -I | awk '{print $1}')"
-if [ -z "$WSL_IP" ]; then echo '__NO_WSL_IP__'; exit 57; fi
 
 pkill -f 'Xtigervnc.*:1' >/dev/null 2>&1 || true
 pkill -f 'websockify.*6080' >/dev/null 2>&1 || true
@@ -226,36 +286,35 @@ nohup env \
 
 nohup websockify --web=/usr/share/novnc 0.0.0.0:6080 127.0.0.1:5901 >/tmp/agentie-novnc.log 2>&1 </dev/null &
 
-# Chrome stays on Ubuntu loopback. Some Chrome builds ignore a requested
-# non-loopback DevTools bind. socat exposes only the WSL-IP side of 9222.
-nohup env \
-  -u WAYLAND_DISPLAY -u WAYLAND_SOCKET \
-  DISPLAY=127.0.0.1:1 \
-  XDG_SESSION_TYPE=x11 GDK_BACKEND=x11 \
-  google-chrome \
-  --ozone-platform=x11 \
-  --user-data-dir="$HOME/.agentie-chrome" \
-  --remote-debugging-port=9222 \
-  --remote-debugging-address=127.0.0.1 \
-  --remote-allow-origins=* \
-  --no-first-run --no-default-browser-check --disable-gpu \
-  about:blank >/tmp/agentie-chrome.log 2>&1 </dev/null &
+# Chrome automation is optional for the Computer itself. Start it best-effort;
+# if it cannot be bridged to Windows, the desktop remains fully usable and
+# browser automation may use its existing fallback path.
+if command -v google-chrome >/dev/null 2>&1; then
+  nohup env \
+    -u WAYLAND_DISPLAY -u WAYLAND_SOCKET \
+    DISPLAY=127.0.0.1:1 \
+    XDG_SESSION_TYPE=x11 GDK_BACKEND=x11 \
+    google-chrome \
+    --ozone-platform=x11 \
+    --user-data-dir="$HOME/.agentie-chrome" \
+    --remote-debugging-port=9222 \
+    --remote-debugging-address=127.0.0.1 \
+    --remote-allow-origins=* \
+    --no-first-run --no-default-browser-check --disable-gpu \
+    about:blank >/tmp/agentie-chrome.log 2>&1 </dev/null &
 
-for i in $(seq 1 80); do
-  (echo >/dev/tcp/127.0.0.1/9222) >/dev/null 2>&1 && break
-  sleep 0.1
-done
-if ! (echo >/dev/tcp/127.0.0.1/9222) >/dev/null 2>&1; then
-  echo '__CHROME_ERROR__'; cat /tmp/agentie-chrome.log 2>/dev/null || true; exit 58
+  for i in $(seq 1 30); do
+    (echo >/dev/tcp/127.0.0.1/9222) >/dev/null 2>&1 && break
+    sleep 0.1
+  done
+  if [ -n "$WSL_IP" ] && command -v socat >/dev/null 2>&1 && (echo >/dev/tcp/127.0.0.1/9222) >/dev/null 2>&1; then
+    nohup socat TCP-LISTEN:9222,bind="$WSL_IP",reuseaddr,fork TCP:127.0.0.1:9222 >/tmp/agentie-cdp-bridge.log 2>&1 </dev/null &
+  fi
 fi
 
-nohup socat TCP-LISTEN:9222,bind="$WSL_IP",reuseaddr,fork TCP:127.0.0.1:9222 >/tmp/agentie-cdp-bridge.log 2>&1 </dev/null &
-
+# The Computer is ready as soon as its visual desktop bridge is available.
 for i in $(seq 1 120); do
-  novnc_ok=0; cdp_ok=0
-  (echo >/dev/tcp/127.0.0.1/6080) >/dev/null 2>&1 && novnc_ok=1
-  (echo >/dev/tcp/"$WSL_IP"/9222) >/dev/null 2>&1 && cdp_ok=1
-  if [ "$novnc_ok" = 1 ] && [ "$cdp_ok" = 1 ]; then echo "__READY__:$WSL_IP"; exit 0; fi
+  (echo >/dev/tcp/127.0.0.1/6080) >/dev/null 2>&1 && { echo '__DESKTOP_READY__'; exit 0; }
   sleep 0.2
 done
 
@@ -263,8 +322,6 @@ echo '__START_TIMEOUT__'
 echo '--- VNC ---'; cat /tmp/agentie-vnc.log 2>/dev/null || true
 echo '--- XFCE ---'; cat /tmp/agentie-xfce.log 2>/dev/null || true
 echo '--- noVNC ---'; cat /tmp/agentie-novnc.log 2>/dev/null || true
-echo '--- Chrome ---'; cat /tmp/agentie-chrome.log 2>/dev/null || true
-echo '--- CDP bridge ---'; cat /tmp/agentie-cdp-bridge.log 2>/dev/null || true
 exit 56
 '''
 
@@ -282,13 +339,13 @@ def _start_once() -> dict[str, Any]:
         proc = _run_wsl(_start_script(), timeout=45)
         output = ((proc.stdout or "") + "\n" + (proc.stderr or "")).strip()
     if proc.returncode == 42 or "__MISSING__" in output:
-        return {**status(), "setup_required": True, "message": "Google Chrome or a required desktop component is still missing inside Ubuntu.", "setup_command": "google-chrome --version", "details": output[-1000:]}
+        return {**status(), "setup_required": True, "message": "A required desktop component is still missing inside Ubuntu.", "setup_command": "sudo apt-get install -y xfce4 xfce4-terminal thunar tigervnc-standalone-server novnc websockify dbus-x11", "details": output[-1000:]}
     if proc.returncode != 0:
         raise RuntimeError("Could not start the Agentie WSL desktop: " + (output[-3000:] or f"exit {proc.returncode}"))
     for _ in range(60):
         current = status()
-        if current["novnc_ready"] and current["chrome_ready"]:
-            return {**current, "message": f"Agentie Computer started. noVNC={current.get('novnc_host')}, CDP={current.get('cdp_host')}."}
+        if current["novnc_ready"]:
+            return {**current, "message": "Agentie Computer desktop started."}
         time.sleep(0.25)
     return status()
 
@@ -296,11 +353,11 @@ def _start_once() -> dict[str, Any]:
 def ensure_started() -> dict[str, Any]:
     with _START_LOCK:
         current = status()
-        if current["novnc_ready"] and current["chrome_ready"]:
+        if current["novnc_ready"]:
             return {**current, "message": "Agentie Computer is ready."}
 
         first = _start_once()
-        if first.get("novnc_ready") and first.get("chrome_ready"):
+        if first.get("novnc_ready"):
             return first
         if first.get("setup_required"):
             return first
@@ -309,16 +366,14 @@ def ensure_started() -> dict[str, Any]:
         if changed:
             _shutdown_wsl()
             second = _start_once()
-            if second.get("novnc_ready") and second.get("chrome_ready"):
+            if second.get("novnc_ready"):
                 return {**second, "message": "Agentie Computer started after enabling WSL mirrored networking."}
             if second.get("setup_required"):
                 return second
 
         current = status()
         raise RuntimeError(
-            "Agentie started the Linux desktop, but the Windows bridge is incomplete. "
-            f"noVNC host={current.get('novnc_host') or 'unreachable'}, "
-            f"Chrome CDP host={current.get('cdp_host') or 'unreachable'}, "
+            "Agentie started the Linux desktop services, but Windows cannot reach the visual desktop on port 6080. "
             f"WSL IP={current.get('wsl_ip') or 'unknown'}."
         )
 
