@@ -11,6 +11,7 @@ READY = {
     "novnc_ready": True,
     "chrome_ready": True,
     "novnc_url": "http://127.0.0.1:6080/vnc_lite.html?autoconnect=1",
+    "kasmvnc_url": "http://127.0.0.1:8444/",
     "distro": "Ubuntu",
     "message": "Agentie Computer started.",
 }
@@ -37,7 +38,7 @@ class AgentieDesktopRegressionTests(unittest.TestCase):
         self.assertEqual(result["card"]["type"], "desktop_view")
         self.assertEqual(result["card"]["mode"], "wsl")
         self.assertTrue(result["card"]["running"])
-        self.assertIn("6080", result["card"]["novnc_url"])
+        self.assertIn("8444", result["card"]["kasmvnc_url"])
 
     def test_open_terminal_starts_real_desktop(self):
         with patch.object(desktop_runtime, "ensure_wsl_desktop", return_value=READY):
@@ -49,25 +50,47 @@ class AgentieDesktopRegressionTests(unittest.TestCase):
             with self.subTest(text=text):
                 self.assertIsNone(desktop_runtime.route_desktop_request(text))
 
-    def test_files_app_uses_real_workspace(self):
+    def test_files_app_uses_real_host_workspace(self):
         result = desktop_runtime.route_desktop_request("Desktop control: files")
         names = {item["name"] for item in result["card"]["items"]}
         self.assertIn("hello.txt", names)
+        self.assertEqual(result["card"]["workspace"], "host")
         opened = desktop_runtime.route_desktop_request("Desktop control: open file hello.txt")
         self.assertEqual(opened["card"]["file"]["content"], "hello desktop")
 
-    def test_terminal_supports_workspace_commands(self):
-        result = desktop_runtime.route_desktop_request("Desktop control: terminal ls")
+    def test_terminal_routes_to_wsl_bridge(self):
+        terminal = {"command": "pwd", "output": "/home/user/AgentieWorkspace", "exit_code": 0, "workspace": "~/AgentieWorkspace"}
+        with patch.object(desktop_runtime, "run_linux_terminal", return_value=terminal) as run:
+            result = desktop_runtime.route_desktop_request("Desktop control: terminal pwd")
+        run.assert_called_once_with("pwd")
         self.assertEqual(result["card"]["app"], "terminal")
-        self.assertIn("hello.txt", result["card"]["terminal"]["output"])
+        self.assertEqual(result["card"]["mode"], "wsl")
+        self.assertIn("AgentieWorkspace", result["card"]["terminal"]["output"])
 
-    def test_terminal_rejects_arbitrary_host_shell(self):
-        result = desktop_runtime.route_desktop_request("Desktop control: terminal powershell whoami")
-        self.assertEqual(result["card"]["app"], "error")
-        self.assertIn("not enabled", result["message"].lower())
+    def test_natural_terminal_phrase_routes_to_wsl(self):
+        terminal = {"command": "git status", "output": "clean", "exit_code": 0, "workspace": "~/AgentieWorkspace"}
+        with patch.object(desktop_runtime, "run_linux_terminal", return_value=terminal) as run:
+            result = desktop_runtime.route_desktop_request("Run git status in the Linux terminal")
+        run.assert_called_once_with("git status")
+        self.assertEqual(result["card"]["mode"], "wsl")
+
+    def test_linux_files_route_is_separate_from_host_workspace(self):
+        listing = {"path": ".", "workspace": "~/AgentieWorkspace", "items": [{"name": "project", "kind": "folder", "size_bytes": 0}]}
+        with patch.object(desktop_runtime, "list_linux_files", return_value=listing):
+            result = desktop_runtime.route_desktop_request("Show Linux files")
+        self.assertEqual(result["card"]["mode"], "wsl")
+        self.assertEqual(result["card"]["workspace"], "~/AgentieWorkspace")
+        self.assertEqual(result["card"]["items"][0]["name"], "project")
+
+    def test_read_linux_file_routes_through_bridge(self):
+        item = {"path": "docs/hello.txt", "binary": False, "content": "hello linux", "workspace": "~/AgentieWorkspace"}
+        with patch.object(desktop_runtime, "read_linux_text_file", return_value=item):
+            result = desktop_runtime.route_desktop_request("Read Linux file docs/hello.txt")
+        self.assertEqual(result["card"]["file"]["content"], "hello linux")
+        self.assertEqual(result["card"]["mode"], "wsl")
 
     def test_setup_required_is_exposed_in_card(self):
-        info = {**READY, "running": False, "novnc_url": None, "setup_required": True, "setup_command": "sudo apt install novnc", "message": "One-time setup required."}
+        info = {**READY, "running": False, "novnc_url": None, "kasmvnc_url": None, "setup_required": True, "setup_command": "sudo apt install kasmvnc", "message": "One-time setup required."}
         with patch.object(desktop_runtime, "ensure_wsl_desktop", return_value=info):
             result = desktop_runtime.route_desktop_request("Show desktop")
         self.assertTrue(result["card"]["setup_required"])
