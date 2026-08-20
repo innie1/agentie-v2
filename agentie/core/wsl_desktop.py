@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import os
 import shutil
 import socket
@@ -54,10 +55,18 @@ def _run_wsl(script: str, timeout: int = 25, *, root: bool = False) -> subproces
     executable = _windows_wsl()
     if not executable:
         raise RuntimeError("The real Agentie Computer requires Windows with WSL2.")
+
+    # Do not pass shell metacharacters/redirections directly through wsl.exe.
+    # Windows-to-WSL argument marshalling can alter strings such as `2>&1`,
+    # multiline heredocs, and backslash continuations before Bash sees them.
+    # Base64 gives us an ASCII-only payload with no shell metacharacters.
+    payload = base64.b64encode(script.encode("utf-8")).decode("ascii")
+    launcher = f"printf '%s' '{payload}' | base64 -d | bash"
+
     args = [executable, "-d", DISTRO]
     if root:
         args += ["-u", "root"]
-    args += ["--", "bash", "-lc", script]
+    args += ["--", "bash", "-lc", launcher]
     return subprocess.run(args, capture_output=True, text=True, timeout=timeout, shell=False)
 
 
