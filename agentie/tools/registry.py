@@ -29,7 +29,10 @@ from agentie.tools.task_tools import (
     create_task, delete_task, find_duplicate_tasks, list_tasks, request_task_delete_approval, update_task,
 )
 from agentie.tools.web_tools import search_web
-from agentie.tools.work_tools import create_website_monitor, find_contacts, list_website_monitors, plan_task, save_contact
+from agentie.tools.work_tools import (
+    create_calendar_event, create_website_monitor, find_contacts, list_calendar_events,
+    list_website_monitors, plan_task, save_contact,
+)
 
 TASK_TOOLS=[create_task,list_tasks,update_task,find_duplicate_tasks,request_task_delete_approval,delete_task]
 DOCUMENT_TOOLS=[read_pdf,read_csv]
@@ -42,7 +45,7 @@ ADVANCED_LOCAL_TOOLS=[local_datetime,date_difference,countdown_to,create_recurri
 FREE_KNOWLEDGE_TOOLS=[rss_read,wikipedia_lookup]
 FILE_TOOLS=[read_text_file,write_text_file,list_workspace_files,edit_text_file,*DOCUMENT_TOOLS,*COLLECTION_TOOLS,*ARTIFACT_TOOLS]
 RESEARCH_TOOLS=[search_web,browser_read_page,http_get,*FREE_KNOWLEDGE_TOOLS]
-WORK_TOOLS=[plan_task,save_contact,find_contacts,create_website_monitor,list_website_monitors]
+WORK_TOOLS=[plan_task,save_contact,find_contacts,create_calendar_event,list_calendar_events,create_website_monitor,list_website_monitors]
 
 BASE_TOOLSETS={
  "general":[get_current_utc_time,*LOCAL_UTILITY_TOOLS,*PRODUCTIVITY_TOOLS,*ADVANCED_LOCAL_TOOLS,*RESEARCH_TOOLS,*FILE_TOOLS,*WORK_TOOLS,run_python,*MEMORY_TOOLS,*TASK_TOOLS,supabase_select,supabase_insert,request_approval,list_approvals],
