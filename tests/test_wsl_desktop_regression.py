@@ -43,11 +43,20 @@ class WSLDesktopRegressionTests(unittest.TestCase):
 
     def test_start_script_uses_tcp_x_transport_and_avoids_wslg_socket(self):
         script = wsl_desktop._start_script()
-        self.assertIn("-nolisten unix -listen tcp", script)
+        self.assertIn("-nolisten unix -listen tcp -noreset", script)
         self.assertIn("DISPLAY=127.0.0.1:1", script)
+        self.assertIn("-u WAYLAND_DISPLAY", script)
+        self.assertIn("XDG_SESSION_TYPE=x11", script)
+        self.assertIn("--ozone-platform=x11", script)
         self.assertNotIn("chmod 1777 /tmp/.X11-unix", script)
         self.assertNotIn("tigervncserver :1", script)
         self.assertIn("Xtigervnc :1", script)
+
+    def test_start_script_does_not_probe_vnc_by_connecting_to_5901(self):
+        script = wsl_desktop._start_script()
+        self.assertNotIn("echo >/dev/tcp/127.0.0.1/5901", script)
+        self.assertIn("kill -0 \"$vnc_pid\"", script)
+        self.assertIn("ss -ltn", script)
 
     def test_ready_desktop_does_not_restart(self):
         ready = {"supported": True, "running": True, "novnc_ready": True, "chrome_ready": True, "novnc_url": wsl_desktop.NOVNC_URL, "cdp_url": wsl_desktop.CDP_URL, "distro": "Ubuntu"}
