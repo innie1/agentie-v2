@@ -107,13 +107,13 @@ def _natural_command(text: str) -> str | None:
     low = " ".join(text.lower().split()).strip(" .?!")
     if low in {"show desktop", "open desktop", "desktop", "go home", "show home", "computer home", "open home"}:
         return "home"
-    if re.fullmatch(r"(?:open|show|view|look at) (?:my |the )?(?:workspace )?files", low) or low in {"files", "file manager", "open file manager"}:
+    if low in {"file manager", "open file manager", "open the file manager", "show computer files", "open computer files"}:
         return "files"
-    if re.fullmatch(r"(?:open|show|view) (?:my )?notes", low) or low == "notes":
+    if low in {"open computer notes", "show computer notes"}:
         return "notes"
-    if re.fullmatch(r"(?:open|show|view) (?:my )?tasks", low) or low == "tasks":
+    if low in {"open computer tasks", "show computer tasks"}:
         return "tasks"
-    if re.fullmatch(r"(?:open|show|view) (?:my )?plugins", low) or low in {"plugins", "open plugins"}:
+    if low in {"open computer plugins", "show computer plugins"}:
         return "plugins"
     if low in {"open terminal", "show terminal", "terminal", "open the terminal"}:
         return "terminal"
