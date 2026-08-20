@@ -21,6 +21,14 @@ def _adapt(agent,message):
         if len(text)>220:text=text[:217].rstrip()+"..."
     return text
 def _result(agent,message,kind):return {"message":_adapt(agent,message),"routed_by":"npc_brain","npc_role":kind}
+def _preference_statement(message):
+    low=_normalized(message)
+    if not low:return False
+    if re.search(r"\b(?:this time|this one|for this|just this|only this|right now|today only)\b",low):return False
+    explicit=bool(re.search(r"\b(?:i prefer|i like|i want|from now on|always|whenever|usually|in general|my preference)\b",low))
+    known=bool(re.search(r"\b(?:repl(?:y|ies)|answers?|responses?|reports?|analysis|research|bullets?|lists?|formal|casual|friendly|conversational|commands?|code|copyable|copy and paste|implementation)\b",low))
+    directive=bool(re.match(r"^(?:always|from now on|whenever|when you|keep|use|avoid|prefer|give|make)\b",low))
+    return (explicit and known) or (directive and known)
 def _role_local_response(agent,message):
     kind=role_profile(agent);norm=_normalized(message);words=set(norm.split())
     if kind=="general" or not norm:return None
@@ -34,6 +42,9 @@ def _role_local_response(agent,message):
 def try_npc_response(agent,message):
     learned=learn_from_user_message(agent,message)
     if learned:return _result(agent,"Got it. I’ll remember that for how I work with you.",role_profile(agent))|{"learned":learned}
+    # Repeating an already-learned durable preference is still a local conversation turn.
+    # Do not fall through to the paid provider just because the stored profile did not change.
+    if _preference_statement(message):return _result(agent,"Got it. I already have that preference and I’ll keep following it.",role_profile(agent))
     norm=_normalized(message)
     if not norm:return None
     if len(norm.split())<=10:
