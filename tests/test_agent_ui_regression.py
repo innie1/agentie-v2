@@ -25,6 +25,16 @@ class AgentUIRegressionTests(unittest.TestCase):
         self.assertIn("Change agent", text)
         self.assertIn("location.reload()", text)
 
+    def test_delete_is_inside_overflow_menu_and_reuses_existing_button(self):
+        text = Path("frontend/plugins.js").read_text(encoding="utf-8")
+        enhancement = text.split("// Persistent agent UI enhancement.", 1)[1]
+        self.assertIn(".agent-delete{display:none!important}", enhancement)
+        self.assertIn("agent-menu", enhancement)
+        self.assertIn("Delete agent", enhancement)
+        self.assertIn("if(del)del.click()", enhancement)
+        self.assertIn("querySelector('.agent-delete')", enhancement)
+        self.assertNotIn("/approvals/", enhancement)
+
     def test_loaded_ui_preserves_plugins_mcp_and_web_snapshot(self):
         text = Path("frontend/plugins.js").read_text(encoding="utf-8")
         self.assertIn("agentiePluginsButton", text)
