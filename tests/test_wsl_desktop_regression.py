@@ -8,10 +8,10 @@ from agentie.core import wsl_desktop
 
 
 class WSLDesktopRegressionTests(unittest.TestCase):
-    def test_urls_use_selected_bridge_host(self):
-        novnc, cdp = wsl_desktop._urls("127.0.0.1")
+    def test_urls_support_different_hosts(self):
+        novnc, cdp = wsl_desktop._urls("127.0.0.1", "172.21.18.153")
         self.assertTrue(novnc.startswith("http://127.0.0.1:6080/"))
-        self.assertEqual(cdp, "http://127.0.0.1:9222")
+        self.assertEqual(cdp, "http://172.21.18.153:9222")
 
     def test_wsl_script_is_base64_marshaled(self):
         captured = {}
@@ -37,35 +37,25 @@ class WSLDesktopRegressionTests(unittest.TestCase):
         self.assertIn("rm -f /tmp/.X1-lock", calls[0][0])
         self.assertNotIn("chmod 1777 /tmp/.X11-unix", calls[0][0])
 
-    def test_start_script_uses_tcp_x_and_forwardable_bridge(self):
+    def test_start_script_bridges_cdp_separately(self):
         script = wsl_desktop._start_script()
         self.assertIn("-nolisten unix -listen tcp -noreset", script)
         self.assertIn("DISPLAY=127.0.0.1:1", script)
         self.assertIn("0.0.0.0:6080", script)
-        self.assertIn("--remote-debugging-address=0.0.0.0", script)
-        self.assertIn("--remote-allow-origins=*", script)
+        self.assertIn("--remote-debugging-address=127.0.0.1", script)
+        self.assertIn("socat TCP-LISTEN:9222", script)
+        self.assertIn('bind="$WSL_IP"', script)
+        self.assertIn("TCP:127.0.0.1:9222", script)
         self.assertNotIn("chmod 1777 /tmp/.X11-unix", script)
 
-    def test_start_script_does_not_probe_vnc_by_connecting_to_5901(self):
-        script = wsl_desktop._start_script()
-        self.assertNotIn("echo >/dev/tcp/127.0.0.1/5901", script)
-        self.assertIn("kill -0 \"$vnc_pid\"", script)
+    def test_bootstrap_installs_socat(self):
+        with patch.object(wsl_desktop, "_run_wsl", return_value=subprocess.CompletedProcess([], 0, stdout="", stderr="")) as runner:
+            wsl_desktop._bootstrap_packages()
+        self.assertIn("socat", runner.call_args.args[0])
 
-    def test_status_prefers_windows_localhost_forwarding(self):
-        with patch.object(wsl_desktop, "_windows_wsl", return_value="wsl.exe"), \
-             patch.object(wsl_desktop, "_wsl_ip", return_value="172.21.18.153"), \
-             patch.object(wsl_desktop, "_port_open", return_value=True) as port_open, \
-             patch.object(wsl_desktop, "_http_ready", return_value=True) as http_ready:
-            result = wsl_desktop.status()
-        port_open.assert_called_once_with("127.0.0.1", 6080)
-        http_ready.assert_called_once_with("http://127.0.0.1:9222/json/version")
-        self.assertEqual(result["bridge_host"], "127.0.0.1")
-        self.assertEqual(result["wsl_ip"], "172.21.18.153")
-        self.assertTrue(result["running"])
-
-    def test_status_falls_back_to_wsl_ip_when_localhost_unavailable(self):
+    def test_status_can_use_localhost_for_novnc_and_wsl_ip_for_cdp(self):
         def port_open(host, port):
-            return host == "172.21.18.153" and port == 6080
+            return host == "127.0.0.1" and port == 6080
         def http_ready(url):
             return url == "http://172.21.18.153:9222/json/version"
         with patch.object(wsl_desktop, "_windows_wsl", return_value="wsl.exe"), \
@@ -73,8 +63,12 @@ class WSLDesktopRegressionTests(unittest.TestCase):
              patch.object(wsl_desktop, "_port_open", side_effect=port_open), \
              patch.object(wsl_desktop, "_http_ready", side_effect=http_ready):
             result = wsl_desktop.status()
-        self.assertEqual(result["bridge_host"], "172.21.18.153")
+        self.assertEqual(result["novnc_host"], "127.0.0.1")
+        self.assertEqual(result["cdp_host"], "172.21.18.153")
+        self.assertTrue(result["novnc_ready"])
+        self.assertTrue(result["chrome_ready"])
         self.assertTrue(result["running"])
+        self.assertEqual(result["cdp_url"], "http://172.21.18.153:9222")
 
     def test_mirrored_networking_preserves_existing_wslconfig(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -91,43 +85,29 @@ class WSLDesktopRegressionTests(unittest.TestCase):
         self.assertIn("localhostForwarding=true", text)
 
     def test_ready_desktop_does_not_restart(self):
-        ready = {"supported": True, "running": True, "novnc_ready": True, "chrome_ready": True, "novnc_url": "http://127.0.0.1:6080/vnc_lite.html", "cdp_url": "http://127.0.0.1:9222", "distro": "Ubuntu", "wsl_ip": "172.21.18.153", "bridge_host": "127.0.0.1"}
+        ready = {"supported": True, "running": True, "novnc_ready": True, "chrome_ready": True, "novnc_url": "http://127.0.0.1:6080/vnc_lite.html", "cdp_url": "http://172.21.18.153:9222", "distro": "Ubuntu", "wsl_ip": "172.21.18.153", "bridge_host": "127.0.0.1", "novnc_host": "127.0.0.1", "cdp_host": "172.21.18.153"}
         with patch.object(wsl_desktop, "status", return_value=ready), patch.object(wsl_desktop, "_run_wsl") as runner, patch.object(wsl_desktop, "_prepare_x11_runtime") as prepare:
             result = wsl_desktop.ensure_started()
         runner.assert_not_called()
         prepare.assert_not_called()
         self.assertTrue(result["running"])
 
-    def test_unreachable_bridge_migrates_to_mirrored_and_retries_once(self):
-        not_ready = {"supported": True, "running": False, "novnc_ready": False, "chrome_ready": False, "novnc_url": None, "cdp_url": None, "distro": "Ubuntu", "wsl_ip": "172.21.18.153", "bridge_host": None}
-        ready = {"supported": True, "running": True, "novnc_ready": True, "chrome_ready": True, "novnc_url": "http://127.0.0.1:6080/vnc_lite.html", "cdp_url": "http://127.0.0.1:9222", "distro": "Ubuntu", "wsl_ip": "127.0.0.1", "bridge_host": "127.0.0.1"}
-        with patch.object(wsl_desktop, "status", return_value=not_ready), \
-             patch.object(wsl_desktop, "_start_once", side_effect=[not_ready, ready]) as start_once, \
-             patch.object(wsl_desktop, "_ensure_mirrored_networking", return_value=True) as migrate, \
-             patch.object(wsl_desktop, "_shutdown_wsl") as shutdown:
-            result = wsl_desktop.ensure_started()
-        self.assertEqual(start_once.call_count, 2)
-        migrate.assert_called_once()
-        shutdown.assert_called_once()
-        self.assertTrue(result["running"])
-        self.assertIn("mirrored networking", result["message"])
-
     def test_missing_bridge_packages_bootstrap_once(self):
-        missing = subprocess.CompletedProcess([], 42, stdout="__MISSING__: Xtigervnc websockify novnc", stderr="")
-        started = subprocess.CompletedProcess([], 0, stdout="__READY__", stderr="")
-        not_ready = {"supported": True, "running": False, "novnc_ready": False, "chrome_ready": False, "novnc_url": None, "cdp_url": None, "distro": "Ubuntu", "wsl_ip": "172.21.18.153", "bridge_host": None}
-        ready = {"supported": True, "running": True, "novnc_ready": True, "chrome_ready": True, "novnc_url": "http://127.0.0.1:6080/vnc_lite.html", "cdp_url": "http://127.0.0.1:9222", "distro": "Ubuntu", "wsl_ip": "172.21.18.153", "bridge_host": "127.0.0.1"}
+        missing = subprocess.CompletedProcess([], 42, stdout="__MISSING__: socat", stderr="")
+        started = subprocess.CompletedProcess([], 0, stdout="__READY__:172.21.18.153", stderr="")
+        not_ready = {"supported": True, "running": False, "novnc_ready": False, "chrome_ready": False, "novnc_url": None, "cdp_url": None, "distro": "Ubuntu", "wsl_ip": "172.21.18.153", "bridge_host": None, "novnc_host": None, "cdp_host": None}
+        ready = {"supported": True, "running": True, "novnc_ready": True, "chrome_ready": True, "novnc_url": "http://127.0.0.1:6080/vnc_lite.html", "cdp_url": "http://172.21.18.153:9222", "distro": "Ubuntu", "wsl_ip": "172.21.18.153", "bridge_host": "127.0.0.1", "novnc_host": "127.0.0.1", "cdp_host": "172.21.18.153"}
         with patch.object(wsl_desktop, "status", side_effect=[not_ready, ready]), patch.object(wsl_desktop, "_run_wsl", side_effect=[missing, started]), patch.object(wsl_desktop, "_bootstrap_packages") as bootstrap, patch.object(wsl_desktop, "_prepare_x11_runtime") as prepare:
-            result = wsl_desktop.ensure_started()
+            result = wsl_desktop._start_once()
         bootstrap.assert_called_once()
         self.assertEqual(prepare.call_count, 2)
         self.assertTrue(result["running"])
 
-    def test_stop_kills_desktop_services(self):
-        stopped = {"supported": True, "running": False, "novnc_ready": False, "chrome_ready": False, "novnc_url": None, "cdp_url": None, "distro": "Ubuntu", "wsl_ip": "172.21.18.153", "bridge_host": None}
+    def test_stop_kills_cdp_bridge(self):
+        stopped = {"supported": True, "running": False, "novnc_ready": False, "chrome_ready": False, "novnc_url": None, "cdp_url": None, "distro": "Ubuntu", "wsl_ip": "172.21.18.153", "bridge_host": None, "novnc_host": None, "cdp_host": None}
         with patch.object(wsl_desktop, "_windows_wsl", return_value="wsl.exe"), patch.object(wsl_desktop, "_run_wsl", return_value=subprocess.CompletedProcess([], 0, stdout="", stderr="")) as runner, patch.object(wsl_desktop, "_prepare_x11_runtime") as prepare, patch.object(wsl_desktop, "status", return_value=stopped):
             result = wsl_desktop.stop()
-        self.assertEqual(runner.call_count, 1)
+        self.assertIn("socat.*9222", runner.call_args.args[0])
         prepare.assert_called_once()
         self.assertFalse(result["running"])
 
