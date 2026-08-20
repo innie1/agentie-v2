@@ -76,15 +76,22 @@ def _failed_turn_is_latest(session_id):
     return last.get("role")=="user" and str(last.get("content") or "").strip()==str(failed.get("user_message") or "").strip()
 
 def _active_team_followup(agent,norm,session_id):
-    if not re.fullmatch(r"(?:do that|do it|go ahead|go ahead with that|proceed with that|continue|continue with that|go on|what happened|what is happening|how is that going|check that|status of that)",norm):return None
+    commands=r"(?:do that|do it|go ahead|go ahead with that|proceed with that|continue|continue with that|go on|what happened|what is happening|how is that going|check that|status of that|retry that|retry it|try that again|try it again)"
+    if not re.fullmatch(commands,norm):return None
     job_id=str(get_context(session_id,"active_team_job_id","") or "")
     if not job_id:return None
     try:
-        from agentie.core.team_orchestrator import get_team_job,team_job_card
+        from agentie.core.team_orchestrator import get_team_job,retry_team_worker,team_job_card
         job=get_team_job(job_id)
     except Exception:return None
     if not job:return None
     status=str(job.get("status") or "unknown");names=", ".join(job.get("agent_names") or []) or "the delegated agent";task=str(job.get("task") or get_context(session_id,"active_team_job_task","") or "the task")
+    if re.fullmatch(r"(?:retry that|retry it|try that again|try it again)",norm):
+        failed=next((h for h in job.get("handoffs",[]) if h.get("status")=="failed"),None)
+        if not failed:return _result(agent,f"That handoff is {status}; there isn’t a failed worker to retry right now.",role_profile(agent),.99,context_action="retry_active_team_job",card=team_job_card(job))
+        try:retried=retry_team_worker(job_id,str(failed.get("to_agent_name") or ""))
+        except ValueError as exc:return _result(agent,str(exc),role_profile(agent),.99,context_action="retry_active_team_job",card=team_job_card(job))
+        return _result(agent,f"Retrying {failed.get('to_agent_name') or 'the delegated agent'} on {job_id}.",role_profile(agent),.99,context_action="retry_active_team_job",card=team_job_card(retried))
     if status in {"queued","working"}:msg=f"That is already in progress with {names}: {task}. Status: {status}."
     elif status in {"completed","partial"}:msg=f"That handoff is {status}. {names} worked on: {task}."
     else:msg=f"That handoff is {status}. The task is still saved as {job_id}, so you can inspect or retry it."
@@ -103,15 +110,13 @@ def _contextual_followup(agent,message,session_id):
     if not latest:return None
     if shorten_match:return _result(agent,_shorten(latest),kind,.98,context_action="shorten_previous")
     if repeat_match:return _result(agent,latest,kind,.99,context_action="repeat_previous")
-    if re.fullmatch(r"(?:what do you mean|what did you mean|explain that simply)",norm):
-        return _result(agent,"In simpler terms: "+_shorten(latest,220),kind,.9,context_action="clarify_previous")
+    if re.fullmatch(r"(?:what do you mean|what did you mean|explain that simply)",norm):return _result(agent,"In simpler terms: "+_shorten(latest,220),kind,.9,context_action="clarify_previous")
     if re.fullmatch(r"(?:do that|do it|go ahead|go ahead with that|proceed with that|continue with that|the second one|second one|use the second one|the first one|first one|use the first one)",norm):
         history=recent_messages(session_id,limit=6,max_chars=5000);context=[]
         for item in history[-5:]:context.append(("User" if item.get("role")=="user" else "Assistant")+": "+str(item.get("content") or ""))
         if context:
             expanded="Resolve the user's follow-up using the immediately preceding conversation. The user said: "+message+"\n\nRecent context:\n"+"\n".join(context)
-            set_context(session_id,"npc_last_followup",{"message":message,"kind":"context_reference"})
-            return _escalate(agent,expanded,kind,.72)
+            set_context(session_id,"npc_last_followup",{"message":message,"kind":"context_reference"});return _escalate(agent,expanded,kind,.72)
     return None
 
 def _role_local_response(agent,message):
@@ -130,11 +135,7 @@ def _role_local_response(agent,message):
     return None
 
 def try_npc_response(agent,message,session_id=None):
-    """Return a confident local response, a context-enriched escalation, or None.
-
-    Local answers are deliberately conservative. Complex/open-ended generation is
-    escalated rather than faked by the lightweight NPC layer.
-    """
+    """Return a confident local response, a context-enriched escalation, or None."""
     learned=learn_from_user_message(agent,message)
     if learned:return _result(agent,"Got it. I’ll remember that for how I work with you.",role_profile(agent),.99,learned=learned)
     if _preference_statement(message):return _result(agent,"Got it. I already have that preference and I’ll keep following it.",role_profile(agent),.99)
@@ -152,6 +153,5 @@ def try_npc_response(agent,message,session_id=None):
             if active_team is not None:return active_team
             history=recent_messages(session_id,limit=5,max_chars=4000)
             if history:
-                context="\n".join(("User" if x["role"]=="user" else "Assistant")+": "+x["content"] for x in history[-4:])
-                return _escalate(agent,"Continue the current task from this recent context without restarting it:\n"+context,role_profile(agent),.7)
+                context="\n".join(("User" if x["role"]=="user" else "Assistant")+": "+x["content"] for x in history[-4:]);return _escalate(agent,"Continue the current task from this recent context without restarting it:\n"+context,role_profile(agent),.7)
     return _role_local_response(agent,message)
