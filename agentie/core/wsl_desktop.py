@@ -5,6 +5,7 @@ import os
 import shutil
 import socket
 import subprocess
+import threading
 import time
 import urllib.request
 from typing import Any
@@ -12,6 +13,7 @@ from typing import Any
 DISTRO = os.getenv("AGENTIE_WSL_DISTRO", "Ubuntu")
 NOVNC_URL = "http://127.0.0.1:6080/vnc_lite.html?autoconnect=1&resize=scale&reconnect=1&path=websockify"
 CDP_URL = "http://127.0.0.1:9222"
+_START_LOCK = threading.Lock()
 
 
 def _windows_wsl() -> str | None:
@@ -55,14 +57,8 @@ def _run_wsl(script: str, timeout: int = 25, *, root: bool = False) -> subproces
     executable = _windows_wsl()
     if not executable:
         raise RuntimeError("The real Agentie Computer requires Windows with WSL2.")
-
-    # Do not pass shell metacharacters/redirections directly through wsl.exe.
-    # Windows-to-WSL argument marshalling can alter strings such as `2>&1`,
-    # multiline heredocs, and backslash continuations before Bash sees them.
-    # Base64 gives us an ASCII-only payload with no shell metacharacters.
     payload = base64.b64encode(script.encode("utf-8")).decode("ascii")
     launcher = f"printf '%s' '{payload}' | base64 -d | bash"
-
     args = [executable, "-d", DISTRO]
     if root:
         args += ["-u", "root"]
@@ -83,31 +79,47 @@ def _bootstrap_packages() -> None:
 
 def _start_script() -> str:
     return r'''
-set -e
+set -u
 missing=""
 command -v tigervncserver >/dev/null 2>&1 || missing="$missing tigervncserver"
 command -v websockify >/dev/null 2>&1 || missing="$missing websockify"
 [ -d /usr/share/novnc ] || missing="$missing novnc"
 command -v startxfce4 >/dev/null 2>&1 || missing="$missing xfce4"
+command -v dbus-launch >/dev/null 2>&1 || missing="$missing dbus-x11"
 command -v google-chrome >/dev/null 2>&1 || missing="$missing google-chrome"
 if [ -n "$missing" ]; then
   echo "__MISSING__:$missing"
   exit 42
 fi
-mkdir -p "$HOME/.vnc"
-cat > "$HOME/.vnc/xstartup" <<'EOF'
+
+mkdir -p "$HOME/.vnc" "$HOME/.config/tigervnc"
+cat > "$HOME/.config/tigervnc/xstartup" <<'EOF'
 #!/bin/sh
 unset SESSION_MANAGER
 unset DBUS_SESSION_BUS_ADDRESS
-startxfce4 &
+exec dbus-launch --exit-with-session startxfce4
 EOF
+chmod +x "$HOME/.config/tigervnc/xstartup"
+cp "$HOME/.config/tigervnc/xstartup" "$HOME/.vnc/xstartup"
 chmod +x "$HOME/.vnc/xstartup"
+
 if ! pgrep -f 'Xtigervnc.*:1' >/dev/null 2>&1; then
-  tigervncserver :1 -geometry 1440x900 -depth 24 -localhost yes -SecurityTypes None >/tmp/agentie-vnc-start.log 2>&1
+  tigervncserver -kill :1 >/dev/null 2>&1 || true
+  tigervncserver -list -cleanstale >/dev/null 2>&1 || true
+  rm -f /tmp/.X1-lock /tmp/.X11-unix/X1
+  if ! tigervncserver :1 -geometry 1440x900 -depth 24 -localhost yes -SecurityTypes None -xstartup "$HOME/.config/tigervnc/xstartup" >/tmp/agentie-vnc-start.log 2>&1; then
+    echo '__VNC_ERROR__'
+    cat /tmp/agentie-vnc-start.log 2>/dev/null || true
+    tail -n 80 "$HOME"/.vnc/*.log 2>/dev/null || true
+    tail -n 80 "$HOME"/.config/tigervnc/*.log 2>/dev/null || true
+    exit 55
+  fi
 fi
+
 if ! pgrep -f 'websockify.*6080' >/dev/null 2>&1; then
   nohup websockify --web=/usr/share/novnc 127.0.0.1:6080 127.0.0.1:5901 >/tmp/agentie-novnc.log 2>&1 </dev/null &
 fi
+
 if ! pgrep -f 'google-chrome.*\.agentie-chrome' >/dev/null 2>&1; then
   nohup env DISPLAY=:1 google-chrome \
     --user-data-dir="$HOME/.agentie-chrome" \
@@ -116,52 +128,65 @@ if ! pgrep -f 'google-chrome.*\.agentie-chrome' >/dev/null 2>&1; then
     --no-first-run --no-default-browser-check \
     about:blank >/tmp/agentie-chrome.log 2>&1 </dev/null &
 fi
-for i in $(seq 1 50); do
-  if (echo >/dev/tcp/127.0.0.1/6080) >/dev/null 2>&1 && (echo >/dev/tcp/127.0.0.1/9222) >/dev/null 2>&1; then
+
+for i in $(seq 1 100); do
+  novnc_ok=0
+  chrome_ok=0
+  (echo >/dev/tcp/127.0.0.1/6080) >/dev/null 2>&1 && novnc_ok=1
+  (echo >/dev/tcp/127.0.0.1/9222) >/dev/null 2>&1 && chrome_ok=1
+  if [ "$novnc_ok" = 1 ] && [ "$chrome_ok" = 1 ]; then
     echo '__READY__'
     exit 0
   fi
   sleep 0.2
 done
-echo '__STARTED__'
+
+echo '__START_TIMEOUT__'
+echo '--- VNC ---'
+cat /tmp/agentie-vnc-start.log 2>/dev/null || true
+echo '--- noVNC ---'
+cat /tmp/agentie-novnc.log 2>/dev/null || true
+echo '--- Chrome ---'
+cat /tmp/agentie-chrome.log 2>/dev/null || true
+exit 56
 '''
 
 
 def ensure_started() -> dict[str, Any]:
-    current = status()
-    if current["novnc_ready"] and current["chrome_ready"]:
-        return {**current, "message": "Agentie Computer is ready."}
-
-    try:
-        proc = _run_wsl(_start_script(), timeout=30)
-    except subprocess.TimeoutExpired as exc:
-        raise RuntimeError("The Agentie Computer took too long to start.") from exc
-
-    output = ((proc.stdout or "") + "\n" + (proc.stderr or "")).strip()
-    if proc.returncode == 42 or "__MISSING__" in output:
-        # WSL can launch the distro as root without asking for the Linux user's
-        # sudo password. This is a one-time bootstrap; later starts are fast.
-        _bootstrap_packages()
-        proc = _run_wsl(_start_script(), timeout=35)
-        output = ((proc.stdout or "") + "\n" + (proc.stderr or "")).strip()
-
-    if proc.returncode == 42 or "__MISSING__" in output:
-        return {
-            **status(),
-            "setup_required": True,
-            "message": "Google Chrome or a required desktop component is still missing inside Ubuntu.",
-            "setup_command": "google-chrome --version",
-            "details": output[-1000:],
-        }
-    if proc.returncode != 0:
-        raise RuntimeError("Could not start the Agentie WSL desktop: " + (output[-1200:] or f"exit {proc.returncode}"))
-
-    for _ in range(40):
+    with _START_LOCK:
         current = status()
         if current["novnc_ready"] and current["chrome_ready"]:
-            return {**current, "message": "Agentie Computer started."}
-        time.sleep(0.2)
-    return {**status(), "message": "The WSL desktop started, but its local display bridge is not reachable yet."}
+            return {**current, "message": "Agentie Computer is ready."}
+
+        try:
+            proc = _run_wsl(_start_script(), timeout=45)
+        except subprocess.TimeoutExpired as exc:
+            raise RuntimeError("The Agentie Computer took too long to start.") from exc
+
+        output = ((proc.stdout or "") + "\n" + (proc.stderr or "")).strip()
+        if proc.returncode == 42 or "__MISSING__" in output:
+            _bootstrap_packages()
+            proc = _run_wsl(_start_script(), timeout=45)
+            output = ((proc.stdout or "") + "\n" + (proc.stderr or "")).strip()
+
+        if proc.returncode == 42 or "__MISSING__" in output:
+            return {
+                **status(),
+                "setup_required": True,
+                "message": "Google Chrome or a required desktop component is still missing inside Ubuntu.",
+                "setup_command": "google-chrome --version",
+                "details": output[-1000:],
+            }
+        if proc.returncode != 0:
+            detail = output[-2400:] or f"exit {proc.returncode}"
+            raise RuntimeError("Could not start the Agentie WSL desktop: " + detail)
+
+        for _ in range(50):
+            current = status()
+            if current["novnc_ready"] and current["chrome_ready"]:
+                return {**current, "message": "Agentie Computer started."}
+            time.sleep(0.2)
+        raise RuntimeError("The WSL desktop process started, but noVNC or Chrome did not become reachable.")
 
 
 def stop() -> dict[str, Any]:
