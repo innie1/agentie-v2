@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 from datetime import datetime
@@ -74,8 +75,97 @@ def result_content(item: dict[str, Any] | None) -> str | None:
     message=str(item.get("message") or "").strip();return message or None
 
 
+def source_fingerprint(content: str) -> str:
+    clean=str(content or "").strip().encode("utf-8",errors="ignore")
+    return hashlib.sha256(clean).hexdigest()[:20]
+
+
+def _clean_preview(text: str) -> str:
+    value=str(text or "")
+    value=re.sub(r"```[\s\S]*?```"," ",value)
+    value=re.sub(r"^#{1,6}\s*","",value,flags=re.M)
+    value=re.sub(r"\*\*([^*]+)\*\*",r"\1",value)
+    value=re.sub(r"`([^`]+)`",r"\1",value)
+    value=re.sub(r"\s+"," ",value).strip(" -|#")
+    return value
+
+
+def _candidate_title(content: str) -> str:
+    raw=str(content or "").strip()
+    heading=re.search(r"^#{1,6}\s+(.+)$",raw,re.M)
+    if heading:return _clean_preview(heading.group(1))[:100] or "Result"
+    first=next((x.strip() for x in raw.splitlines() if x.strip()),"Result")
+    return _clean_preview(first)[:100] or "Result"
+
+
+def list_result_candidates(session_id: str, limit: int = 8) -> list[dict[str, Any]]:
+    """Return substantive result-like outputs from this exact chat, newest first."""
+    from agentie.core.memory_store import recent_messages
+    seen=set();out=[]
+    excluded={"local_artifact","local_pdf","project_handoff","capability_permission","observability","clarification"}
+    rows=recent_messages(session_id,limit=50,max_chars=300000)
+    for row in reversed(rows):
+        if row.get("role")!="assistant":continue
+        content=str(row.get("content") or "").strip();meta=row.get("metadata") or {};route=str(meta.get("routed_by") or "")
+        if not content or route in excluded:continue
+        if route!="project_handoff_result" and len(content)<120:continue
+        fid=source_fingerprint(content)
+        if fid in seen:continue
+        seen.add(fid);clean=_clean_preview(content)
+        out.append({"id":fid,"title":_candidate_title(content),"summary":clean[:220]+("…" if len(clean)>220 else ""),"content":content,"route":route or "assistant","created_at":row.get("created_at"),"team_job_id":meta.get("team_job_id"),"project_id":meta.get("project_id")})
+        if len(out)>=max(1,limit):break
+    data=_load()
+    for bucket in (session_id,GLOBAL_RESULTS):
+        for item in reversed(data.get(bucket,[])):
+            content=result_content(item)
+            if not content:continue
+            fid=source_fingerprint(content)
+            if fid in seen:continue
+            seen.add(fid);clean=_clean_preview(content)
+            out.append({"id":fid,"title":_candidate_title(content),"summary":clean[:220]+("…" if len(clean)>220 else ""),"content":content,"route":str(item.get("type") or "result"),"created_at":item.get("at")})
+            if len(out)>=max(1,limit):return out
+    return out
+
+
+def resolve_candidate(session_id: str, candidate_id: str) -> str | None:
+    wanted=str(candidate_id or "").strip().lower()
+    return next((str(x.get("content") or "") for x in list_result_candidates(session_id,20) if str(x.get("id"))==wanted),None)
+
+
+def artifact_source_picker(session_id: str, kind: str, candidates: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+    rows=candidates if candidates is not None else list_result_candidates(session_id)
+    return {"type":"artifact_source_picker","format":str(kind).lower(),"items":[{"id":x["id"],"title":x["title"],"summary":x["summary"],"route":x.get("route"),"created_at":x.get("created_at")} for x in rows]}
+
+
+def existing_artifact(session_id: str, kind: str, content: str) -> dict[str, Any] | None:
+    from agentie.core.memory_store import get_context
+    from agentie.core.file_service import UPLOADS
+    registry=get_context(session_id,"artifact_registry",{})
+    if not isinstance(registry,dict):return None
+    row=registry.get(f"{str(kind).lower()}:{source_fingerprint(content)}")
+    if not isinstance(row,dict):return None
+    card=row.get("card") if isinstance(row.get("card"),dict) else None
+    if not card:return None
+    name=str(card.get("name") or card.get("filename") or "")
+    if name and not (UPLOADS/name).exists():return None
+    return dict(card)
+
+
+def remember_artifact(session_id: str, kind: str, content: str, card: dict[str, Any]) -> None:
+    from agentie.core.memory_store import get_context,set_context
+    registry=get_context(session_id,"artifact_registry",{})
+    if not isinstance(registry,dict):registry={}
+    key=f"{str(kind).lower()}:{source_fingerprint(content)}"
+    registry[key]={"source_id":source_fingerprint(content),"kind":str(kind).lower(),"card":dict(card),"created_at":datetime.now().astimezone().isoformat(timespec="seconds")}
+    set_context(session_id,"artifact_registry",registry)
+
+
 def resolve_result_reference(session_id: str, user_message: str) -> str | None:
     text=re.sub(r"\s+"," ",str(user_message or "").strip()).lower();last30=r"(?:last\s*30\s*days?|last30days|30[- ]?days?)";research_word=r"(?:research|search(?:e|es|ed)?|result|report|findings?)"
+    selected=re.search(r"\bresult\s+([a-f0-9]{12,24})\b",text)
+    if selected:
+        hit=resolve_candidate(session_id,selected.group(1))
+        if hit:return hit
     if re.search(rf"\b{last30}\b.*\b{research_word}\b|\b{research_word}\b.*\b{last30}\b",text):return result_content(_last(session_id,{"last30days"}))
     if re.search(r"\b(?:team job|team result|collaboration|handoff result|agents? working)\b",text):return result_content(_last(session_id,{"team_job"}))
     if re.search(r"\b(?:research|research result|research findings|research report)\b",text):
