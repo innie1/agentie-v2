@@ -3,7 +3,7 @@ import json,re
 from datetime import datetime
 from pathlib import Path
 from typing import Any
-from agentie.core.agent_registry import create_agent,delete_agent,get_agent,hierarchy,list_agents,update_agent_manager,update_agent_profile
+from agentie.core.agent_registry import create_agent,delete_agent,get_agent,hierarchy,list_agents,set_agent_pinned,update_agent_manager,update_agent_profile
 from agentie.core.agent_prompt import instruction_card,learning_audit,set_manual_instructions
 from agentie.core.deletion_registry import find_deleted
 from agentie.core.team_orchestrator import route_team_command
@@ -57,6 +57,12 @@ def route_role_command(message):
     if team is not None:return team
     created=_agent_creation_command(text)
     if created is not None:return created
+    pin_match=re.match(r"^(pin|unpin)\s+(?:agent\s+)?(.+?)[.!?]?$",text,re.I)
+    if pin_match:
+        requested=pin_match.group(2).strip(' .?!\"“”');target=get_agent(requested)
+        if not target:return {"message":"Agent was not found.","card":None}
+        pinned=pin_match.group(1).casefold()=="pin";agent=set_agent_pinned(target["id"],pinned)
+        return {"message":f"{agent['name']} {'pinned to the top' if pinned else 'unpinned'}.","card":{"type":"agent_profile",**agent}}
     audit=re.match(r"^(?:show|view|what has|what did)\s+(?:agent\s+)?(.+?)(?:['’]s)?\s+(?:learning audit|learned history|instruction history|learned)[.!?]?$",text,re.I)
     if audit:
         agent=get_agent(audit.group(1).strip())
