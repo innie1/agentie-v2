@@ -106,17 +106,44 @@ Never invent a citation. Prefer primary/authoritative sources, distinguish fact 
 """
 
 
+def deterministic_evidence_report(question: str, sources: list[Source]) -> str:
+    """Produce a provider-free research fallback using only gathered evidence.
+
+    This intentionally avoids making cross-source conclusions that would need a
+    reasoning model. It preserves useful evidence and citations so a downstream
+    specialist can continue even when the synthesis provider is quota-limited.
+    """
+    title=re.sub(r"\s+"," ",str(question or "Research report")).strip().strip(" .?!")[:140] or "Research report"
+    lines=[f"# {title}","","> Local evidence summary — the AI synthesis provider was unavailable, so Agentie preserved the gathered evidence without inventing additional conclusions.","","## Evidence collected"]
+    for source in sources[:12]:
+        evidence=re.sub(r"\s+"," ",(source.text or source.snippet or "").strip())
+        excerpt=evidence[:700].rstrip()
+        lines.extend(["",f"### [{source.id}] {source.title}",f"- URL: {source.url}",f"- Found via: {source.query}",f"- Evidence excerpt: {excerpt or 'No readable page text; search metadata only.'} [{source.id}]"])
+    lines.extend(["","## Limitations","- This fallback does not add model-generated conclusions, rankings, or recommendations.","- Review the cited evidence directly before making high-impact decisions.","","## Sources"])
+    for source in sources:
+        lines.append(f"- [{source.id}] {source.title} — {source.url}")
+    return "\n".join(lines)
+
+
 async def run_deep_research(question:str,runner,session_id:str,breadth:int=5,max_sources:int=18)->dict[str,Any]:
     queries,sources,errors=await collect_sources(question,breadth,max_sources)
     if not sources:
         detail=(errors[-1].split(": ",1)[-1] if errors else "No search backend produced usable results.")
-        return {"question":question,"queries":queries,"sources":[],"errors":errors,"report":f"I couldn't retrieve usable web sources for this research task. {detail}","verification":{"passed":False,"unsupported_claims":0,"weak_claims":0,"citation_count":0}}
+        return {"question":question,"queries":queries,"sources":[],"errors":errors,"report":f"I couldn't retrieve usable web sources for this research task. {detail}","verification":{"passed":False,"unsupported_claims":0,"weak_claims":0,"citation_count":0},"synthesis_mode":"none"}
     # Internal synthesis must not run through the owning agent's normal persistent
     # conversation session. That session can invoke the local NPC/preferences layer,
     # which is appropriate for user chat but can turn an internal synthesis prompt
-    # into an unrelated conversational acknowledgement. Keep ownership on the job;
-    # run only this evidence-pack synthesis without user-chat memory/NPC interception.
-    draft=await runner(synthesis_prompt(question,queries,sources),"research",None)
+    # into an unrelated conversational acknowledgement.
+    synthesis_mode="provider"
+    try:
+        draft=await runner(synthesis_prompt(question,queries,sources),"research",None)
+    except Exception as exc:
+        # Search/page gathering has already succeeded. Do not throw that useful work
+        # away or repeatedly hammer a quota-limited provider; preserve a deterministic
+        # evidence pack that downstream agents can still use.
+        errors.append(f"Synthesis provider unavailable: {exc}")
+        draft=deterministic_evidence_report(question,sources)
+        synthesis_mode="local_evidence_fallback"
     verification=verify_report(draft,sources)
     report=annotate_report(draft,verification)
-    return {"question":question,"queries":queries,"sources":[asdict(s)|{"text":""} for s in sources],"errors":errors,"report":report,"verification":verification}
+    return {"question":question,"queries":queries,"sources":[asdict(s)|{"text":""} for s in sources],"errors":errors,"report":report,"verification":verification,"synthesis_mode":synthesis_mode}
