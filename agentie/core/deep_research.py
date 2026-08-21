@@ -110,7 +110,12 @@ async def run_deep_research(question:str,runner,session_id:str,breadth:int=5,max
     if not sources:
         detail=(errors[-1].split(": ",1)[-1] if errors else "No search backend produced usable results.")
         return {"question":question,"queries":queries,"sources":[],"errors":errors,"report":f"I couldn't retrieve usable web sources for this research task. {detail}","verification":{"passed":False,"unsupported_claims":0,"weak_claims":0,"citation_count":0}}
-    draft=await runner(synthesis_prompt(question,queries,sources),"research",session_id)
+    # Internal synthesis must not run through the owning agent's normal persistent
+    # conversation session. That session can invoke the local NPC/preferences layer,
+    # which is appropriate for user chat but can turn an internal synthesis prompt
+    # into an unrelated conversational acknowledgement. Keep ownership on the job;
+    # run only this evidence-pack synthesis without user-chat memory/NPC interception.
+    draft=await runner(synthesis_prompt(question,queries,sources),"research",None)
     verification=verify_report(draft,sources)
     report=annotate_report(draft,verification)
     return {"question":question,"queries":queries,"sources":[asdict(s)|{"text":""} for s in sources],"errors":errors,"report":report,"verification":verification}
