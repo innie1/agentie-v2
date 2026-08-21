@@ -48,6 +48,12 @@ class PinJobTitleDocumentDelegationRegressionTests(unittest.TestCase):
         self.assertIn("displayName=c.document_name||c.name",upload)
         self.assertIn("File: ${c.name}",upload)
 
+    def test_custom_project_assignment_keeps_task_after_project_name(self):
+        task=project_brain._delegated_task("Church App: Research competitors, pricing and WhatsApp onboarding","Church App")
+        self.assertEqual(task,"Research competitors, pricing and WhatsApp onboarding")
+        task2=project_brain._delegated_task("Build the technical architecture for Church App","Church App")
+        self.assertEqual(task2,"Build the technical architecture")
+
     def test_two_delegated_agents_receive_only_their_scoped_project_context(self):
         with tempfile.TemporaryDirectory() as tmp:
             root=Path(tmp)
