@@ -71,14 +71,58 @@ def project_context(project,role,task,max_items=8):
     milestones=[str(x.get("value",x)) for x in project.get("milestones",[])[-max_items:]]
     if milestones:parts.append("MILESTONES:\n- "+"\n- ".join(milestones))
     parts.append("CONTEXT RULE: Use only this scoped project brief plus your own agent memory. Do not import another specialist's private conversation.");return "\n\n".join(parts)
-def record_handoff(pid,from_agent,to_agent,task,team_job_id=None):append_project_item(pid,"handoffs",{"from":from_agent,"to":to_agent,"task":task,"team_job_id":team_job_id})
+def record_handoff(pid,from_agent,to_agent,task,team_job_id=None):
+    append_project_item(pid,"handoffs",{"from":from_agent,"to":to_agent,"task":task,"team_job_id":team_job_id})
+    try:
+        from agentie.core.agent_registry import get_agent
+        agent=get_agent(to_agent)
+        if agent:assign_agents(pid,[agent])
+    except Exception:pass
 def record_worker_result(pid,agent_name,role,task,result):
     compact=re.sub(r"\s+"," ",str(result or "")).strip();compact=compact if len(compact)<=900 else compact[:899].rstrip()+"…";append_project_item(pid,"summaries",compact,{"agent":agent_name,"role":role,"task":task});append_project_item(pid,"knowledge",compact,{"source_agent":agent_name,"audience":"all","task":task})
 def project_card(p,viewer_agent_id=None):return {"type":"project","id":p["id"],"name":p["name"],"goal":p["goal"],"kind":p["kind"],"status":p["status"],"skill":p.get("skill"),"specialists":p.get("specialists",[]),"assigned_agents":p.get("assigned_agents",[]),"assigned_to_viewer":bool(viewer_agent_id and viewer_agent_id in (p.get("assigned_agent_ids") or [])),"milestones":p.get("milestones",[])[-8:],"summaries":p.get("summaries",[])[-8:],"updated_at":p.get("updated_at")}
 def _name_from_goal(goal,kind):
     clean=re.sub(r"^(i\s+(want|plan|need)\s+to\s+|i('m| am)\s+)","",goal.strip(),flags=re.I);clean=re.sub(r"\s+"," ",clean).strip(" .?!");return clean[:70] or f"{kind.title()} project"
+def _project_from_reference(text):
+    lower=text.casefold()
+    for p in list_projects():
+        if str(p.get("name","")).casefold() in lower:return p
+    if re.search(r"\b(this|that|the)\s+project\b",lower):return latest_project()
+    m=re.search(r"\bproject\s+([\w][\w ._-]{1,100})",text,re.I)
+    if m:
+        guess=m.group(1).strip(' .?!');hit=get_project(guess)
+        if hit:return hit
+    return None
+def _project_delegation(text):
+    project=_project_from_reference(text)
+    if not project:return None
+    from agentie.core.agent_registry import get_agent
+    from agentie.core.team_orchestrator import create_team_job,start_team_job,team_job_card
+    patterns=[
+        re.match(r"^(?:delegate|assign|give)\s+(?:(?:project\s+)?(.+?)\s+)?to\s+(.+?)[.!?]?$",text,re.I),
+        re.match(r"^(?:have|ask|tell)\s+(.+?)\s+(?:to\s+)?work\s+together\s+(?:on|for)\s+(?:project\s+)?(.+?)[.!?]?$",text,re.I),
+    ]
+    raw_agents=None;task=f"Work on project {project['name']}"
+    if patterns[0]:raw_agents=patterns[0].group(2);detail=(patterns[0].group(1) or "").strip();task=detail if detail and project['name'].casefold() not in detail.casefold() else task
+    elif patterns[1]:raw_agents=patterns[1].group(1);detail=patterns[1].group(2).strip();task=detail if detail.casefold()!=project['name'].casefold() else task
+    if not raw_agents:return None
+    names=[x.strip(' .?!\"“”') for x in re.split(r"\s*,\s*|\s+and\s+",raw_agents,flags=re.I) if x.strip()];agents=[]
+    for name in names:
+        a=get_agent(name)
+        if not a:return {"message":f"Agent {name} was not found.","card":None}
+        if all(x['id']!=a['id'] for x in agents):agents.append(a)
+    assign_agents(project['id'],agents);job=create_team_job(task,agents,project_id=project['id']);start_team_job(job['id'])
+    return {"message":f"Assigned {project['name']} to {', '.join(a['name'] for a in agents)}. The project is now visible from each assigned agent's workspace.","card":team_job_card(job)}
 def route_project_command(message):
     text=" ".join(message.strip().split());lower=text.casefold().strip(" .?!")
+    delegated=_project_delegation(text)
+    if delegated is not None:return delegated
+    m_agent=re.match(r"^(?:show|list)\s+(?:the\s+)?projects?\s+(?:for|assigned to)\s+(.+?)[.!?]?$",text,re.I)
+    if m_agent:
+        from agentie.core.agent_registry import get_agent
+        a=get_agent(m_agent.group(1).strip())
+        if not a:return {"message":"Agent was not found.","card":None}
+        items=projects_for_agent(a['id']);return {"message":f"{a['name']} has {len(items)} assigned project(s).","card":{"type":"projects","agent_id":a['id'],"agent_name":a['name'],"items":[project_card(x,a['id']) for x in items]}}
     if lower in {"show projects","list projects","my projects","show my projects"}:
         items=list_projects();return {"message":f"You have {len(items)} project(s).","card":{"type":"projects","items":[project_card(x) for x in items]}}
     if re.search(r"\b(where are we|project status|how is the project|where are we so far)\b",lower):
