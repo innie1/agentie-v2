@@ -22,6 +22,7 @@ The project is Python-first with a FastAPI backend and a lightweight web UI. Age
 - Worker agents receive role-scoped project briefs instead of another agent's full private chat.
 - A project delegated to several agents remains one shared Project Brain and appears in every assigned agent's chat workspace.
 - Each assigned-agent project view includes that agent's delegated task, role-scoped context, work status and latest result without exposing another worker's private context.
+- The final project-manager renderer preserves `viewer_assignment`; a worker-scoped project cannot be replaced by the global project view when the user presses **Open**.
 - Project handoff tasks and results are mirrored into the receiving specialist's normal `main` chat timeline, and the selected-agent UI reads that persisted timeline back as a live `Delegated work` feed.
 - Creating an active project with an existing name reuses the existing Project Brain instead of creating another duplicate record.
 - Assigned-agent project views collapse legacy same-name duplicate entries and prefer the record containing that agent's real delegated work.
@@ -61,6 +62,7 @@ Delete project Shepherd
 - Pause, resume and retry controls.
 - Team jobs and handoffs between persistent agents.
 - Persisted queued/working team handoffs are recovered after Agentie restarts; completed handoffs are not rerun.
+- Project Brain work state is synchronized with team execution (`queued` → `working` → `completed` or `failed`) so recipient project views stay truthful.
 - Live team-status questions such as `what's the state of that task?` ask active workers for short progress summaries without interrupting their work sessions.
 - Team-status checks fall back to truthful backend state if a worker/provider cannot answer, rather than inventing progress.
 - Collaboration avatars remain visible while a team job is active and for 60 seconds after terminal completion/failure.
