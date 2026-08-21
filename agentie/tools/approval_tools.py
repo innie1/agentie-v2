@@ -26,7 +26,6 @@ def _load():
     if not STORE.exists(): return []
     try: return json.loads(STORE.read_text(encoding="utf-8"))
     except Exception: return []
-
 def _save(items):
     STORE.parent.mkdir(parents=True, exist_ok=True)
     STORE.write_text(json.dumps(items, indent=2, ensure_ascii=False), encoding="utf-8")
@@ -87,11 +86,13 @@ def _execute_approved_action(item: dict):
         project_ids=[str(x).strip() for x in (meta.get("project_ids") or []) if str(x).strip()]
         if not project_ids:raise ValueError("Approved project deletion is missing project ids.")
         from agentie.core.project_brain import delete_project
-        deleted=[]
+        deleted=[];already=[]
         for project_id in project_ids:
             row=delete_project(project_id)
-            if row:deleted.append({"id":row.get("id"),"name":row.get("name")})
-        result={"deleted_projects":deleted,"count":len(deleted)}
+            if not row:continue
+            if row.get("already_deleted"):already.append({"id":row.get("id"),"name":row.get("name"),"deleted_at":row.get("deleted_at")})
+            else:deleted.append({"id":row.get("id"),"name":row.get("name")})
+        result={"deleted_projects":deleted,"already_deleted":already,"count":len(deleted)}
     else:return None
     item["status"] = "consumed";item["consumed_at"] = datetime.now(timezone.utc).isoformat();item["execution_result"] = result;return result
 def resolve_approval(approval_id: str, approved: bool, remember: bool = False):
