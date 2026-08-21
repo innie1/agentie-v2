@@ -23,11 +23,11 @@ from pptx.util import Inches as PptInches, Pt as PptPt
 from agentie.core.artifact_naming import artifact_filename,creator_from_session
 from agentie.core.document_design import choose_style, document_title, first_numeric_series, parse_blocks, numeric_series, chart_png_bytes
 from agentie.core.file_service import UPLOADS, inspect_file, unique_path
-from agentie.core.memory_store import latest_assistant_text
+from agentie.core.memory_store import latest_assistant_text,recent_messages
 from agentie.core.result_memory import resolve_result_reference
 
 _REFERENCE_RE = re.compile(r"\b(?:this|that|it|the previous answer|previous answer|last answer|above|what you just wrote|what you wrote)\b", re.I)
-_DOCX_RE = re.compile(r"\b(?:create|make|generate|export|save|turn|convert)\b.*\b(?:docx|word document|word file)\b|\b(?:docx|word document|word file)\b.*\b(?:create|make|generate|export|save|turn|convert)\b", re.I)
+_DOCX_RE = re.compile(r"\b(?:create|make|generate|export|save|turn|convert)\b.*\b(?:docx|docs? file|word document|word file)\b|\b(?:docx|docs? file|word document|word file)\b.*\b(?:create|make|generate|export|save|turn|convert)\b", re.I)
 _XLSX_RE = re.compile(r"\b(?:create|make|generate|export|save|turn|convert)\b.*\b(?:xlsx|excel|spreadsheet)\b|\b(?:xlsx|excel|spreadsheet)\b.*\b(?:create|make|generate|export|save|turn|convert)\b", re.I)
 _PPTX_RE = re.compile(r"\b(?:create|make|generate|export|save|turn|convert)\b.*\b(?:pptx|powerpoint|presentation|slide deck|slides)\b|\b(?:pptx|powerpoint|presentation|slide deck|slides)\b.*\b(?:create|make|generate|export|save|turn|convert)\b", re.I)
 
@@ -39,9 +39,19 @@ def _explicit_content(message: str) -> str | None:
     m=re.search(r"\b(?:with|using|from)\s+(?:the\s+)?(?:text|content|data)\s*[:\-]?\s*(.+)$",message,re.I|re.S)
     if not m:return None
     value=m.group(1).strip();return value.strip(" \"'") if value and not _REFERENCE_RE.fullmatch(value.strip(" .?!\"'")) else None
+def _latest_specialist_result(session_id:str)->str|None:
+    try:
+        for item in reversed(recent_messages(session_id,limit=50,max_chars=120000)):
+            metadata=item.get('metadata') or {}
+            if item.get('role')=='assistant' and str(metadata.get('routed_by') or '')=='project_handoff_result':
+                value=str(item.get('content') or '').strip()
+                if value:return value
+    except Exception:pass
+    return None
 def _resolve_content(session_id:str,message:str)->str|None:
     content=_explicit_content(message)
     if content is None:content=resolve_result_reference(session_id,message)
+    if content is None and _REFERENCE_RE.search(message):content=_latest_specialist_result(session_id)
     if content is None and (_REFERENCE_RE.search(message) or len(message.split())<=14):content=latest_assistant_text(session_id,max_chars=120000)
     return content
 
