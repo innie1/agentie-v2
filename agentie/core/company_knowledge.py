@@ -105,18 +105,32 @@ def add_company_knowledge(statement: str, *, source: str = "brain_dump", project
             key=_knowledge_key(value,f"|duplicate:{n}");n+=1
     routed_by=_chief_of_staff_name() or "Agentie local knowledge router";metadata={"source":source,"approved":True,"shared":True,"categories":categories,"routed_by":routed_by,"project_id":project_id,"pinned":True,"duplicate_override":bool(force_duplicate)};set_memory(COMPANY_SCOPE,key,value,metadata);row=next((x for x in list_memories(COMPANY_SCOPE,300) if x.get("key")==key),None);return _row_card(row or {"key":key,"value":value,"metadata_json":json.dumps(metadata),"updated_at":None})
 def force_add_duplicate_company_knowledge(statement: str) -> dict[str, Any]:return add_company_knowledge(statement,source="user_duplicate_override",force_duplicate=True)
+def _group_duplicate_matches(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    grouped={}
+    for item in items:
+        existing=item.get("existing") or {};existing_id=str(existing.get("id") or "")
+        key=existing_id or _knowledge_key(str(existing.get("value") or item.get("incoming") or ""))
+        current=grouped.get(key)
+        if current is None:
+            copy=dict(item);copy["variants"]=[str(item.get("incoming") or "")];grouped[key]=copy;continue
+        incoming=str(item.get("incoming") or "")
+        if incoming and incoming not in current["variants"]:current["variants"].append(incoming)
+        if float(item.get("similarity") or 0)>float(current.get("similarity") or 0):
+            current["similarity"]=item.get("similarity");current["incoming"]=incoming
+    return list(grouped.values())
 def review_company_brain_dump(text: str) -> dict[str, list[dict[str, Any]]]:
     added=[];duplicates=[]
     for statement in _split_dump(text):
         duplicate=_find_duplicate(statement)
         if duplicate:duplicates.append(duplicate);continue
         added.append(add_company_knowledge(statement))
-    return {"added":added,"duplicates":duplicates}
+    return {"added":added,"duplicates":_group_duplicate_matches(duplicates)}
 def ingest_company_brain_dump(text: str) -> list[dict[str, Any]]:return review_company_brain_dump(text)["added"]
 def _duplicate_approval(item: dict[str, Any]) -> dict[str, Any]:
-    incoming=str(item.get("incoming") or "");existing=item.get("existing") or {};fingerprint=hashlib.sha256((str(existing.get("id") or "")+"|"+incoming.casefold()).encode("utf-8")).hexdigest()[:12];action=f"add_duplicate_company_knowledge:{fingerprint}"
-    reason=f"This looks like knowledge that already exists. Existing: {str(existing.get('value') or '')[:280]} New: {incoming[:280]} Add the repeated idea anyway?"
-    return create_approval(action,reason,{"kind":"company_knowledge_duplicate_add","statement":incoming,"existing_id":existing.get("id"),"existing_value":existing.get("value"),"similarity":item.get("similarity")})
+    incoming=str(item.get("incoming") or "");existing=item.get("existing") or {};variants=[str(x) for x in item.get("variants") or [incoming] if str(x)];fingerprint=hashlib.sha256((str(existing.get("id") or "")+"|"+"|".join(sorted(x.casefold() for x in variants))).encode("utf-8")).hexdigest()[:12];action=f"add_duplicate_company_knowledge:{fingerprint}"
+    variant_note=(f" I also grouped {len(variants)} equivalent versions of this same idea." if len(variants)>1 else "")
+    reason=f"This looks like knowledge that already exists. Existing: {str(existing.get('value') or '')[:280]} New: {incoming[:280]}.{variant_note} Add the repeated idea anyway?"
+    return create_approval(action,reason,{"kind":"company_knowledge_duplicate_add","statement":incoming,"existing_id":existing.get("id"),"existing_value":existing.get("value"),"similarity":item.get("similarity"),"variants":variants})
 def _find_company_row(key: str) -> dict[str, Any] | None:
     needle=str(key or "").strip().casefold();return next((row for row in list_memories(COMPANY_SCOPE,300) if str(row.get("key") or "").casefold()==needle),None)
 def update_company_knowledge(key: str, value: str) -> dict[str, Any]:
@@ -160,9 +174,9 @@ def route_company_knowledge_command(message: str) -> dict[str, Any] | None:
         review=review_company_brain_dump(dump.group(1));items=review["added"];duplicates=review["duplicates"];approvals=[_duplicate_approval(x) for x in duplicates]
         knowledge_card={"type":"company_knowledge","title":"Company knowledge","items":items,"routed_by":_chief_of_staff_name() or "Agentie local knowledge router"}
         if approvals and items:
-            return {"message":f"Added {len(items)} new company knowledge item(s). I found {len(approvals)} repeated idea(s) and did not add them again without your approval.","card":{"type":"multi","items":[{"message":"New company knowledge","card":knowledge_card},{"message":"Possible repeated ideas","card":{"type":"approvals","items":approvals}}]}}
+            return {"message":f"Added {len(items)} new company knowledge item(s). I found {len(approvals)} repeated idea(s) and grouped equivalent wording into one decision per idea.","card":{"type":"multi","items":[{"message":"New company knowledge","card":knowledge_card},{"message":"Possible repeated ideas","card":{"type":"approvals","items":approvals}}]}}
         if approvals:
-            return {"message":f"I found {len(approvals)} idea(s) that already exist, so I did not add another copy. Approve any one you still want saved again.","card":{"type":"approvals","items":approvals}}
+            return {"message":f"I found {len(approvals)} distinct idea(s) that already exist, so I did not add another copy. Equivalent wording was grouped together.","card":{"type":"approvals","items":approvals}}
         return {"message":f"Organized {len(items)} company knowledge item(s) and routed them by role.","card":knowledge_card}
     if lower in {"show company knowledge","list company knowledge","company knowledge","what does the company know","show company brain","show the company brain"}:
         items=list_company_knowledge(100);return {"message":f"The company brain has {len(items)} approved knowledge item(s).","card":{"type":"company_knowledge","title":"Company knowledge","items":items,"routed_by":_chief_of_staff_name() or "Agentie local knowledge router"}}
