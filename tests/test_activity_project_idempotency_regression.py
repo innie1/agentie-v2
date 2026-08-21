@@ -45,6 +45,8 @@ class ActivityProjectIdempotencyRegressionTests(unittest.TestCase):
         project = project_brain.create_project("Church App", "Build a church management application", "app")
         project_brain.append_project_item(project["id"], "decisions", "Use Supabase")
         project_brain.append_project_item(project["id"], "knowledge", "Pastors need WhatsApp onboarding", {"audience": "researcher"})
+        project_brain.append_project_item(project["id"], "knowledge", "Implementation-only secret", {"audience": "coder"})
+        project_brain.append_project_item(project["id"], "milestones", "Research competitors")
         mira = {"id": "agt_mira", "name": "Mira", "role": "researcher", "base": "research"}
         project_brain.assign_agents(project["id"], [mira])
         current = project_brain.get_project(project["id"])
@@ -53,9 +55,11 @@ class ActivityProjectIdempotencyRegressionTests(unittest.TestCase):
         card = project_brain.project_card(project_brain.get_project(project["id"]), mira["id"])
         self.assertEqual(card["viewer_assignment"]["task"], "Research competing church apps")
         self.assertIn("Pastors need WhatsApp onboarding", card["viewer_assignment"]["scoped_brief"])
-        self.assertEqual(card["decisions"], [])
-        self.assertEqual(card["context"], [])
-        self.assertEqual(card["milestones"], [])
+        self.assertIn("Your delegated task: Research competing church apps", card["goal"])
+        self.assertIn("Use Supabase", card["decisions"])
+        self.assertIn("Pastors need WhatsApp onboarding", card["context"])
+        self.assertNotIn("Implementation-only secret", card["context"])
+        self.assertIn("Research competitors", card["milestones"])
 
     def test_frontend_has_activity_ranking_scoped_project_and_auto_scroll(self):
         raw = (Path(__file__).parents[1] / "frontend" / "events.js").read_text(encoding="utf-8")
@@ -65,6 +69,7 @@ class ActivityProjectIdempotencyRegressionTests(unittest.TestCase):
         self.assertIn("Your delegated task", raw)
         self.assertIn("Context for your work", raw)
         self.assertIn("Already deleted", raw)
+        self.assertNotIn("new MutationObserver(()=>setTimeout(refreshActivities,40))", raw)
 
 
 if __name__ == "__main__":
