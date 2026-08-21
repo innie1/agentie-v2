@@ -67,6 +67,17 @@ def recent_messages(session_id: str, limit: int = 12, max_chars: int = 14000) ->
         items.append({"role":row["role"],"content":content,"metadata":json.loads(row["metadata_json"] or "{}"),"created_at":row["created_at"]})
     return items
 
+def session_messages(session_id: str, limit: int = 100, newest_first: bool = True) -> list[dict[str, Any]]:
+    """Read messages from one exact session without semantic/global fallback or recent-context truncation."""
+    init_db();order="DESC" if newest_first else "ASC";safe_limit=max(1,min(int(limit),500))
+    with _LOCK,_connect() as conn:rows=conn.execute(f"SELECT role,content,metadata_json,created_at FROM messages WHERE session_id=? ORDER BY id {order} LIMIT ?",(session_id,safe_limit)).fetchall()
+    items=[]
+    for row in rows:
+        try:metadata=json.loads(row["metadata_json"] or "{}")
+        except Exception:metadata={}
+        items.append({"role":row["role"],"content":str(row["content"]),"metadata":metadata,"created_at":row["created_at"]})
+    return items
+
 def latest_assistant_text(session_id: str, max_chars: int = 12000) -> str | None:
     init_db()
     with _LOCK,_connect() as conn:row=conn.execute("SELECT content FROM messages WHERE session_id=? AND role='assistant' AND length(trim(content))>0 ORDER BY id DESC LIMIT 1",(session_id,)).fetchone()
