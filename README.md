@@ -66,6 +66,13 @@ Delete project Shepherd
 ### Jobs, approvals and orchestration
 - Multi-step background jobs with progress and provider-call budgets.
 - Jobs keep their internal IDs for routing but show users human-readable NPC-generated titles in cards and job controls.
+- **Manager Autopilot** lets a manager/CEO/Chief-of-Staff-style agent turn one complex goal into a specialist chain without the user manually naming workers.
+- Manager Autopilot planning is deterministic/local: it detects the work phases and selects the best existing specialists without spending a provider call just to route the job.
+- Current Autopilot templates cover software/product work (`research → coding/CTO → verification`) and content/campaign work (`research → writing → verification`) when suitable existing specialists are available.
+- Autopilot reuses one normal persisted team job, starts one specialist stage at a time, and keeps each handoff visible in that specialist's own chat/workspace.
+- Each downstream Autopilot worker receives the original manager goal plus only the bounded result of its immediate predecessor; unrelated worker chats/results are not injected into the handoff.
+- Simple single-specialty requests continue through the existing handoff proposal/preference system rather than being unnecessarily expanded into an Autopilot chain.
+- Existing research→PDF/DOCX/XLSX/PPTX compound jobs stay on the purpose-built local job/artifact pipeline instead of being intercepted by Manager Autopilot.
 - Compound requests such as `research X, then create a PDF/DOCX` are planned as dependent steps: research completes first, then the existing local artifact generator creates the requested file without another provider call.
 - Compound-job artifacts inherit the parent job's human NPC title as the document title and requested filename, so an internal section heading such as `Executive Summary` cannot become the artifact name.
 - A research step with no usable sources is treated as failed; dependent artifact steps are blocked and no failure-message PDF/DOCX is generated.
@@ -198,7 +205,7 @@ agentie-v2/
 └── README.md
 ```
 
-Important core modules include `agent_registry.py`, `agent_prompt.py`, `npc_brain.py`, `job_engine.py`, `team_orchestrator.py`, `project_brain.py`, `result_memory.py`, `memory_store.py`, `advanced_local_router.py`, `agent_access.py`, `skill_registry.py`, `native_last30days.py`, `external_skill_runtime.py`, `capability_router.py`, `browser_automation.py`, and `computer_session.py`.
+Important core modules include `agent_registry.py`, `agent_prompt.py`, `npc_brain.py`, `job_engine.py`, `team_orchestrator.py`, `manager_autopilot.py`, `project_brain.py`, `result_memory.py`, `memory_store.py`, `advanced_local_router.py`, `agent_access.py`, `skill_registry.py`, `native_last30days.py`, `external_skill_runtime.py`, `capability_router.py`, `browser_automation.py`, and `computer_session.py`.
 
 ## Local-first execution philosophy
 
@@ -290,25 +297,28 @@ When extending Agentie:
 
 ## Current development roadmap
 
-### 1. Skills and plugin permissions - active
+### 1. Manager Autopilot - active
+Harden end-to-end manager planning, specialist selection, sequential handoffs, failure recovery and eventually manager-level final synthesis while keeping specialist context bounded.
+
+### 2. Skills and plugin permissions
 Continue hardening real external skill/MCP discovery, credentials, health checks and permission UX. Global defaults + per-agent restrictions are now implemented, and Last30Days now has a native Python 3.11+ runtime.
 
-### 2. Background/routine reliability - next
+### 3. Background/routine reliability
 Harden scheduled work, restart recovery, missed-run behavior, job continuation and failure recovery.
 
-### 3. Voice
+### 4. Voice
 Turn the microphone UI into a complete speech-input workflow and later support richer voice interaction.
 
-### 4. Integration hardening
+### 5. Integration hardening
 Finish end-user connection and reliability flows for services such as GitHub, Gmail, Calendar, Slack and Notion.
 
-### 5. Authentication/accounts
+### 6. Authentication/accounts
 Add production user/account isolation if Agentie moves from a local personal workspace into a multi-user product.
 
-### 6. Final UI/UX polish
+### 7. Final UI/UX polish
 Once the underlying capabilities are stable, finish the cohesive desktop/web experience around those stable contracts.
 
-### 7. Computer reliability and autonomy - later
+### 8. Computer reliability and autonomy - later
 Return to WSL/KasmVNC reliability, Browser/Computer fallback, observe-act-verify autonomy and visual task execution after the other core systems are stable.
 
 ## Status
