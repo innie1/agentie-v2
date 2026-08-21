@@ -2,9 +2,9 @@ import asyncio
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
-from agentie.core import workflow_browser_runtime, workflow_teaching
+from agentie.core import browser_monitor, workflow_browser_runtime, workflow_teaching
 
 
 class TeachWorkflowRegressionTests(unittest.TestCase):
@@ -56,6 +56,13 @@ class TeachWorkflowRegressionTests(unittest.TestCase):
         self.assertEqual(workflow_browser_runtime._teach_command('Stop teaching'),('stop',None))
         self.assertEqual(workflow_browser_runtime._teach_command('Run workflow publish weekly update'),('run','publish weekly update'))
         self.assertIsNone(workflow_browser_runtime._teach_command('Research church software'))
+
+    def test_browser_router_checks_teach_mode_before_generic_browser_work(self):
+        expected={'message':'teaching locally','card':{'type':'note'}}
+        with patch.object(workflow_browser_runtime,'route_taught_workflow_request',new=AsyncMock(return_value=expected)) as taught:
+            result=asyncio.run(browser_monitor.route_browser_request('Teach Agentie: publish weekly update'))
+        self.assertEqual(result,expected)
+        taught.assert_awaited_once()
 
     def test_browser_probe_adds_init_script_only_once_per_page(self):
         class FakePage:
