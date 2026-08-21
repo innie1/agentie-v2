@@ -32,6 +32,13 @@ class ManagerAutopilotRegressionTests(unittest.TestCase):
         self.assertEqual(plan['steps'][1]['agent']['name'],'Alex')
         self.assertEqual(plan['steps'][2]['agent']['name'],'Vera')
 
+    def test_exact_ceo_prompt_builds_mira_alex_vera_chain(self):
+        prompt='Build a simple church management app for small Nigerian churches. Research competitors and requirements, create the technical implementation plan, then verify whether the plan is ready to build.'
+        plan=manager_autopilot.build_autopilot_plan(prompt,self.ceo)
+        self.assertIsNotNone(plan)
+        self.assertEqual([step['phase'] for step in plan['steps']],['research','coding','verification'])
+        self.assertEqual([step['agent']['name'] for step in plan['steps']],['Mira','Alex','Vera'])
+
     def test_non_manager_does_not_trigger_autopilot(self):
         session=f"{self.mira['session_prefix']}main"
         self.assertIsNone(manager_autopilot.maybe_manager_autopilot(
