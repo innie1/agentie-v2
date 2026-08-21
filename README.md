@@ -78,6 +78,9 @@ Delete project Shepherd
 - A research step with no usable sources is treated as failed; dependent artifact steps are blocked and no failure-message PDF/DOCX is generated.
 - Deep research retries a small set of DDGS search backends instead of depending on a single `auto` backend; if all attempts fail, the real retrieval error is preserved in the failed research step so the user can see why no sources were found.
 - Internal deep-research synthesis runs outside the owning persistent agent's normal conversation/NPC session, preventing chat preferences or local acknowledgement replies from replacing the gathered research report.
+- If web evidence was gathered successfully but the synthesis provider is quota-limited/unavailable, Deep Research keeps that work and produces a conservative local evidence summary with source IDs instead of throwing the evidence away.
+- Team-status questions such as `what's the state of that task?` are now provider-free: Agentie reports authoritative persisted queued/working/completed/failed state instead of spending one model call per worker just to paraphrase status.
+- Provider quota/rate-limit failures start a short process-local cooldown for that provider/model. Local/NPC work continues, but other agents do not immediately make repeated doomed remote calls during the cooldown window.
 - Completed/failed background jobs emit a one-time user-visible completion event through the existing local event polling system.
 - Background job ownership is preserved across agent switching: completion/file events are queued for the agent that started the job instead of being inserted into whichever agent chat happens to be open.
 - Completed/failed/partial delegated team jobs also emit a one-time completion event; retrying a failed worker resets that notification marker so the retried result can alert again.
@@ -85,11 +88,32 @@ Delete project Shepherd
 - Team jobs and handoffs between persistent agents.
 - Persisted queued/working team handoffs are recovered after Agentie restarts; completed handoffs are not rerun.
 - Project Brain work state is synchronized with team execution (`queued` → `working` → `completed` or `failed`) so recipient project views stay truthful.
-- Live team-status questions such as `what's the state of that task?` ask active workers for short progress summaries without interrupting their work sessions.
-- Team-status checks fall back to truthful backend state if a worker/provider cannot answer, rather than inventing progress.
 - Collaboration avatars remain visible while a team job is active and for 60 seconds after terminal completion/failure.
 - Approval gates for consequential actions such as permanent deletion.
 - Execution traces with routing, provider/model, latency, token usage and status information.
+
+### Teach by Demonstration
+- Agentie can record a browser workflow by watching actions performed once in the visible Chrome session inside Agentie Computer.
+- Teach mode is local-first: recording, storing, listing and replay planning do **not** require an AI-provider call.
+- The first version records browser navigation, button/link clicks, normal form-field changes and common keys such as Enter/Tab/Escape.
+- Recorded workflows are stored in `workspace/taught_workflows.json`; re-teaching the same named workflow replaces the old copy instead of creating duplicates.
+- Password values are never persisted. Protected fields are represented as `<secret>` and automatic replay is blocked until the workflow is redesigned so secrets are not stored.
+- Replay uses Agentie's existing Playwright/browser executor rather than a second automation engine, so existing consequential-action approvals still apply to sending, posting, paying, deleting and similar actions.
+- The browser recorder installs one page probe per Playwright page and uses idempotent DOM listeners, avoiding listener/init-script accumulation during a long teaching session.
+- Teach mode deliberately uses field labels/ARIA/placeholder/name metadata rather than the user's typed value as the field identity.
+- This first release teaches **browser workflows**. Recording arbitrary XFCE/Linux desktop gestures outside the browser is a later Computer-autonomy extension.
+
+Useful commands:
+
+```text
+Teach Agentie: publish weekly update
+Stop teaching
+Cancel teaching
+Show taught workflows
+Show workflow publish weekly update
+Run workflow publish weekly update
+Delete workflow publish weekly update
+```
 
 ### Memory
 - Persistent user and agent memory.
@@ -142,6 +166,7 @@ Some service integrations still require credentials, provider setup or additiona
 - Website screenshots and interaction workflows.
 - Website monitoring infrastructure.
 - Deep research and citation verification components.
+- Local Teach-by-Demonstration workflow recording/replay on the visible browser.
 - Browser/Computer fallback is an active development area.
 
 ### Agentie's Computer
@@ -174,6 +199,7 @@ The current UI includes:
 - Compact assigned-project previews plus an expandable full specialist project workspace
 - Safe Markdown rendering for specialist results, including headings, lists, simple tables and fenced code blocks
 - Native result-source picker cards for ambiguous DOCX/PDF/XLSX/PPTX creation requests
+- Teach-mode status and learned-workflow summaries reuse existing note/browser-action cards rather than introducing a duplicate rendering system.
 - Specialist project preview observers are idempotent and animation-frame debounced so rendering a project result cannot lock the browser in a self-triggering DOM mutation loop.
 - Native agent profile cards instead of raw internal profile JSON
 - Agent search/create controls
@@ -205,7 +231,7 @@ agentie-v2/
 └── README.md
 ```
 
-Important core modules include `agent_registry.py`, `agent_prompt.py`, `npc_brain.py`, `job_engine.py`, `team_orchestrator.py`, `manager_autopilot.py`, `project_brain.py`, `result_memory.py`, `memory_store.py`, `advanced_local_router.py`, `agent_access.py`, `skill_registry.py`, `native_last30days.py`, `external_skill_runtime.py`, `capability_router.py`, `browser_automation.py`, and `computer_session.py`.
+Important core modules include `agent_registry.py`, `agent_prompt.py`, `npc_brain.py`, `job_engine.py`, `team_orchestrator.py`, `manager_autopilot.py`, `project_brain.py`, `result_memory.py`, `memory_store.py`, `workflow_teaching.py`, `workflow_browser_runtime.py`, `advanced_local_router.py`, `agent_access.py`, `skill_registry.py`, `native_last30days.py`, `external_skill_runtime.py`, `capability_router.py`, `browser_automation.py`, and `computer_session.py`.
 
 ## Local-first execution philosophy
 
@@ -216,10 +242,23 @@ The intended routing order is broadly:
 1. Parse obvious native/local commands.
 2. Use agent NPC/local intelligence for supported conversation and role behavior.
 3. Use skills/plugins/tools when a capability is available.
-4. Use a configured large model when genuine reasoning/generation is needed.
-5. Use Browser/Computer execution when direct integrations are unavailable or insufficient.
+4. Reuse deterministic taught workflows for repeatable browser work.
+5. Use a configured large model when genuine reasoning/generation is needed.
+6. Use Browser/Computer execution when direct integrations are unavailable or insufficient.
 
-Provider failure should therefore affect only work that genuinely requires that provider, not timers, local conversation, job controls, memory commands, or other supported local operations.
+Provider failure should therefore affect only work that genuinely requires that provider, not timers, local conversation, status checks, taught-workflow replay, job controls, memory commands, or other supported local operations.
+
+## API/provider efficiency
+
+Agentie treats provider calls as a limited resource:
+
+- Manager Autopilot planning and specialist selection are local.
+- Team/job status checks are local and do not ask each worker model to restate backend state.
+- Artifact generation steps use local generators after their source result exists.
+- Teach-by-Demonstration recording and replay planning are local.
+- A real quota/rate-limit response starts a short provider/model cooldown so other background agents fail fast locally instead of repeatedly hitting the same exhausted API.
+- Deep Research keeps successfully gathered web evidence and can return a deterministic evidence summary when synthesis is unavailable.
+- Observability traces continue to expose provider-call/token use so expensive routes can be identified and reduced over time.
 
 ## Capability permission model
 
@@ -297,30 +336,33 @@ When extending Agentie:
 
 ## Current development roadmap
 
-### 1. Manager Autopilot - active
-Harden end-to-end manager planning, specialist selection, sequential handoffs, failure recovery and eventually manager-level final synthesis while keeping specialist context bounded.
+### 1. Teach by Demonstration - active
+Harden browser workflow recording/replay, parameterized inputs, interruption/recovery and later promote stable demonstrated workflows into installable/reusable skills. Arbitrary non-browser desktop demonstrations remain later Computer work.
 
-### 2. Skills and plugin permissions
+### 2. Manager Autopilot
+Harden end-to-end manager planning, specialist selection, failure recovery and eventually manager-level final synthesis while keeping specialist context bounded and provider use economical.
+
+### 3. Skills and plugin permissions
 Continue hardening real external skill/MCP discovery, credentials, health checks and permission UX. Global defaults + per-agent restrictions are now implemented, and Last30Days now has a native Python 3.11+ runtime.
 
-### 3. Background/routine reliability
+### 4. Background/routine reliability
 Harden scheduled work, restart recovery, missed-run behavior, job continuation and failure recovery.
 
-### 4. Voice
+### 5. Voice
 Turn the microphone UI into a complete speech-input workflow and later support richer voice interaction.
 
-### 5. Integration hardening
+### 6. Integration hardening
 Finish end-user connection and reliability flows for services such as GitHub, Gmail, Calendar, Slack and Notion.
 
-### 6. Authentication/accounts
+### 7. Authentication/accounts
 Add production user/account isolation if Agentie moves from a local personal workspace into a multi-user product.
 
-### 7. Final UI/UX polish
+### 8. Final UI/UX polish
 Once the underlying capabilities are stable, finish the cohesive desktop/web experience around those stable contracts.
 
-### 8. Computer reliability and autonomy - later
-Return to WSL/KasmVNC reliability, Browser/Computer fallback, observe-act-verify autonomy and visual task execution after the other core systems are stable.
+### 9. Computer reliability and autonomy - later
+Return to WSL/KasmVNC reliability, Browser/Computer fallback, arbitrary desktop demonstration capture, observe-act-verify autonomy and visual task execution after the other core systems are stable.
 
 ## Status
 
-Agentie v2 is under active development. It already has a substantial working agent runtime; the current focus is making that runtime more autonomous, local-first, reliable and capable before treating the UI as final.
+Agentie v2 is under active development. It already has a substantial working agent runtime; the current focus is making that runtime more autonomous, local-first, provider-efficient, reliable and capable before treating the UI as final.
