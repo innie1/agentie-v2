@@ -142,6 +142,21 @@ class CompanyBrainDumpRegressionTests(unittest.TestCase):
         self.assertEqual(len(approvals["items"]), 1)
         self.assertEqual(approvals["items"][0]["metadata"]["kind"], "company_knowledge_duplicate_add")
 
+    def test_multiple_rewordings_of_same_existing_idea_share_one_approval(self):
+        company_knowledge.add_company_knowledge("We want to target students and offices")
+        company_knowledge.add_company_knowledge("We have one washing machine")
+        result = company_knowledge.route_company_knowledge_command(
+            "Brain dump: We want to target students and offices. Our target audience is students and offices. We have one washing machine."
+        )
+        self.assertEqual(result["card"]["type"], "approvals")
+        approvals = result["card"]["items"]
+        self.assertEqual(len(approvals), 2)
+        target = next(a for a in approvals if "students and offices" in a["metadata"].get("existing_value", ""))
+        self.assertEqual(len(target["metadata"].get("variants", [])), 2)
+        self.assertIn("grouped 2 equivalent versions", target["reason"])
+        machine = next(a for a in approvals if "washing machine" in a["metadata"].get("existing_value", ""))
+        self.assertEqual(len(machine["metadata"].get("variants", [])), 1)
+
     def test_project_brain_dump_reuses_existing_project_knowledge(self):
         project = project_brain.create_project("Laundry", "Launch and grow a laundry business", "business")
         result = company_knowledge.route_company_knowledge_command(
@@ -168,6 +183,7 @@ class CompanyBrainDumpRegressionTests(unittest.TestCase):
         cards = Path("frontend/cards.js").read_text(encoding="utf-8")
         index = Path("frontend/index.html").read_text(encoding="utf-8")
         approvals = Path("agentie/tools/approval_tools.py").read_text(encoding="utf-8")
+        company = Path("agentie/core/company_knowledge.py").read_text(encoding="utf-8")
         self.assertIn("company_knowledge", cards)
         self.assertIn("Update company knowledge ${item.id}", cards)
         self.assertIn("Delete company knowledge ${item.id}", cards)
@@ -182,6 +198,8 @@ class CompanyBrainDumpRegressionTests(unittest.TestCase):
         self.assertIn('kind == "company_knowledge_delete"', approvals)
         self.assertIn('kind == "company_knowledge_duplicate_add"', approvals)
         self.assertIn("force_add_duplicate_company_knowledge", approvals)
+        self.assertIn("_group_duplicate_matches", company)
+        self.assertIn('"variants":variants', company)
 
 
 if __name__ == "__main__":
