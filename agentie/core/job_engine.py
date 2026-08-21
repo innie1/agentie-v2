@@ -141,8 +141,12 @@ async def _run_one(jid,step,runner):
         if local_artifact:output=_create_artifact_step(job,step,by)
         elif step["specialist"]=="deep_research":
             from agentie.core.deep_research import run_deep_research
-            result=await run_deep_research(instruction,runner,job["session_id"]);output=result["report"]
-            _event(jid,"research_sources",f"Deep research collected {len(result['sources'])} sources.",{"queries":result["queries"],"sources":result["sources"]});_event(jid,"citation_verification","Citation verification completed.",result.get("verification") or {})
+            result=await run_deep_research(instruction,runner,job["session_id"])
+            sources=result.get("sources") or []
+            if not sources:raise RuntimeError("Research failed: no usable web sources were retrieved. The file step was not run.")
+            output=str(result.get("report") or "").strip()
+            if not output:raise RuntimeError("Research failed: no usable report was produced. The file step was not run.")
+            _event(jid,"research_sources",f"Deep research collected {len(sources)} sources.",{"queries":result.get("queries") or [],"sources":sources});_event(jid,"citation_verification","Citation verification completed.",result.get("verification") or {})
         else:output=await runner(instruction,step["specialist"],job["session_id"])
         _set_step(jid,step["id"],status="completed",output=output,error=None,finished_at=_now());_event(jid,"step_completed",f"Completed: {step['title']}",{"step_id":step["id"]})
     except asyncio.CancelledError:
