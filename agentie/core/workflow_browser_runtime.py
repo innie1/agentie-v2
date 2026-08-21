@@ -163,6 +163,17 @@ async def _drain(page) -> None:
             record_browser_event(event)
 
 
+async def _flush_focused_field(page) -> None:
+    try:
+        await page.evaluate("""() => {
+          const el=document.activeElement;
+          if(el && ['INPUT','TEXTAREA','SELECT'].includes(String(el.tagName||'').toUpperCase()))
+            el.dispatchEvent(new Event('change',{bubbles:true}));
+        }""")
+    except Exception:
+        pass
+
+
 async def _poll_teaching() -> None:
     global _TEACH_TASK
     try:
@@ -206,6 +217,7 @@ async def _start(name: str, session_id: str | None) -> dict[str, Any]:
 async def _stop() -> dict[str, Any]:
     page = browser._PAGE
     if page is not None and not page.is_closed():
+        await _flush_focused_field(page)
         await _drain(page)
     item = stop_recording();_reset_probe_state()
     return {"message": f"Learned “{item['name']}” from {len(item.get('steps') or [])} browser step(s). You can now say “Run workflow {item['name']}”.", "card": _workflow_note(item,"Learned workflow")}
