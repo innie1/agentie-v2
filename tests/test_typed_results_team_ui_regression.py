@@ -19,7 +19,7 @@ class TypedResultsTeamUIRegressionTests(unittest.TestCase):
         card={'type':'last30days','topic':'AI agent trends','answer':'What I learned\n\nPractical signals\n• [L1] Agents are moving into production.','source_counts':{'github':2},'sources':[{'id':'L1','title':'Agent report','url':'https://example.com/a','source':'web'}]}
         result_memory.remember_global_result('',card)
         with patch('agentie.core.office_artifacts.latest_assistant_text',return_value='Started team job team_123 with Mira and Vera.'):
-            content=_resolve_content('agent:alex:main','create a docx with the last 30day search')
+            content=_resolve_content('agent:alex:main','create a docx with the last 30day searche')
         self.assertIn('Last30Days Research: AI agent trends',content)
         self.assertIn('Agents are moving into production',content)
         self.assertNotIn('Started team job',content)
