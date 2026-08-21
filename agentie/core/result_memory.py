@@ -8,6 +8,7 @@ from typing import Any
 
 WORKSPACE = Path.cwd() / "workspace"
 RESULTS_FILE = WORKSPACE / "result_memory.json"
+GLOBAL_RESULTS = "__global__"
 MAX_RESULTS_PER_SESSION = 60
 
 
@@ -42,11 +43,17 @@ def remember_result(session_id: str, message: str, card: dict[str, Any] | None) 
     _save(data)
 
 
+def remember_global_result(message: str, card: dict[str, Any] | None) -> None:
+    remember_result(GLOBAL_RESULTS, message, card)
+
+
 def _last(session_id: str, wanted: set[str] | None = None) -> dict[str, Any] | None:
-    items = _load().get(session_id, [])
-    for item in reversed(items):
-        if wanted is None or item.get("type") in wanted:
-            return item
+    data = _load()
+    for bucket in (session_id, GLOBAL_RESULTS):
+        items = data.get(bucket, [])
+        for item in reversed(items):
+            if wanted is None or item.get("type") in wanted:
+                return item
     return None
 
 
@@ -107,7 +114,7 @@ def result_content(item: dict[str, Any] | None) -> str | None:
 
 def resolve_result_reference(session_id: str, user_message: str) -> str | None:
     text = re.sub(r"\s+", " ", str(user_message or "").strip()).lower()
-    if re.search(r"\b(?:last\s*30\s*days?|last30days|30[- ]?day)\b.*\b(?:research|search|result|report|findings?)\b|\b(?:research|search|result|report|findings?)\b.*\b(?:last\s*30\s*days?|last30days|30[- ]?day)\b", text):
+    if re.search(r"\b(?:last\s*30\s*days?|last30days|last\s*30\s*day|30[- ]?day)\b.*\b(?:research|search|result|report|findings?)\b|\b(?:research|search|result|report|findings?)\b.*\b(?:last\s*30\s*days?|last30days|last\s*30\s*day|30[- ]?day)\b", text):
         return result_content(_last(session_id, {"last30days"}))
     if re.search(r"\b(?:team job|team result|collaboration|handoff result|agents? working)\b", text):
         return result_content(_last(session_id, {"team_job"}))
