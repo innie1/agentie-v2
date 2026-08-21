@@ -13,14 +13,15 @@ def _load():
 def _save(data):PROMPTS_FILE.parent.mkdir(parents=True,exist_ok=True);PROMPTS_FILE.write_text(json.dumps(data,indent=2,ensure_ascii=False),encoding="utf-8")
 def agent_from_session(session_id):
     m=re.match(r"^agent:(agt_[a-z0-9]+):",str(session_id or ""),re.I);return get_agent(m.group(1)) if m else None
-def _base_profile(agent):return {"agent_id":agent["id"],"name":agent.get("name"),"role":str(agent.get("role") or "general"),"purpose":str(agent.get("purpose") or "").strip(),"manual_instructions":"","communication":{},"task_preferences":{},"durable_context":[],"learned_rules":[],"learning_candidates":{},"learning_audit":[],"updated_at":_now()}
+def _identity_snapshot(agent):return {"name":agent.get("name"),"role":str(agent.get("role") or "general"),"purpose":str(agent.get("purpose") or "").strip(),"personality":str(agent.get("personality") or "").strip(),"goal":str(agent.get("goal") or "").strip(),"responsibilities":list(agent.get("responsibilities") or []),"company_identity":str(agent.get("company_identity") or "").strip()}
+def _base_profile(agent):return {"agent_id":agent["id"],**_identity_snapshot(agent),"manual_instructions":"","communication":{},"task_preferences":{},"durable_context":[],"learned_rules":[],"learning_candidates":{},"learning_audit":[],"updated_at":_now()}
 def get_instruction_profile(agent):
     data=_load();profiles=data.setdefault("agents",{});profile=profiles.get(agent["id"])
     if not isinstance(profile,dict):profile=_base_profile(agent);profiles[agent["id"]]=profile;_save(data)
     changed=False
     for key,default in (("manual_instructions",""),("communication",{}),("task_preferences",{}),("durable_context",[]),("learned_rules",[]),("learning_candidates",{}),("learning_audit",[])):
         if key not in profile:profile[key]=default;changed=True
-    for key,value in (("name",agent.get("name")),("role",agent.get("role")),("purpose",agent.get("purpose",""))):
+    for key,value in _identity_snapshot(agent).items():
         if profile.get(key)!=value:profile[key]=value;changed=True
     if changed:profile["updated_at"]=_now();_save(data)
     return profile
@@ -66,9 +67,15 @@ def learn_from_user_message(agent,message):
         profile["updated_at"]=_now();profiles[agent["id"]]=profile;_save(data)
     return changes
 def build_agent_instructions(agent):
-    p=get_instruction_profile(agent);name=str(agent.get("name") or "Agent");role=str(agent.get("role") or "general");purpose=str(agent.get("purpose") or "").strip();permissions=agent.get("permissions") or {};skills=agent.get("skills") or []
-    lines=[f"You are {name}, a persistent Agentie agent.",f"Your role is {role}.","Keep your identity, private memory, and task context scoped to this agent. Do not pretend to remember another agent's private conversations.","If a task clearly belongs to another existing specialist, delegate or hand it off instead of stretching your role unnecessarily."]
+    p=get_instruction_profile(agent);name=str(agent.get("name") or "Agent");role=str(agent.get("role") or "general");purpose=str(agent.get("purpose") or "").strip();personality=str(agent.get("personality") or "").strip();goal=str(agent.get("goal") or "").strip();company_identity=str(agent.get("company_identity") or "").strip();responsibilities=[str(x).strip() for x in (agent.get("responsibilities") or []) if str(x).strip()];permissions=agent.get("permissions") or {};skills=agent.get("skills") or []
+    lines=[f"You are {name}, a persistent Agentie AI employee.",f"Your role/job is {role}.","Keep your identity, private memory, and task context scoped to this agent. Do not pretend to remember another agent's private conversations.","If a task clearly belongs to another existing specialist, delegate or hand it off instead of stretching your role unnecessarily."]
+    if company_identity:lines.append(f"Company identity: {company_identity}. When communicating externally, identify yourself consistently as {name} from {company_identity} unless the user explicitly instructs otherwise.")
+    if personality:lines.append(f"Personality and working style: {personality}.")
     if purpose:lines.append(f"Primary purpose: {purpose}.")
+    if goal:lines.append(f"Primary goal: {goal}.")
+    if responsibilities:lines.append("Core responsibilities:\n- "+"\n- ".join(responsibilities))
+    lines.append("Act like a capable employee, not a passive chatbot: when useful, make recommendations, flag risks, and respectfully disagree with a proposed approach if your role knowledge suggests a better option.")
+    lines.append("Clearly distinguish facts from recommendations/opinions, and never treat an approval-required action as your own final decision.")
     if permissions.get("delegate"):lines.append("You are allowed to coordinate and delegate work to other Agentie agents.")
     if skills:lines.append("Assigned skills: "+", ".join(map(str,skills))+".")
     comm=p.get("communication") or {};tasks=p.get("task_preferences") or {}
