@@ -6,33 +6,65 @@ from agents import function_tool
 from ddgs import DDGS
 
 
+def _search_attempt(query: str, limit: int, backend: str | None) -> list[dict]:
+    kwargs = {
+        "safesearch": "moderate",
+        "max_results": limit,
+    }
+    if backend:
+        kwargs["backend"] = backend
+    rows = DDGS(timeout=12).text(query, **kwargs)
+    return list(rows or [])
+
+
 @function_tool
 def search_web(query: str, max_results: int = 5) -> str:
-    """Search the public web and return concise search results with titles, URLs, and snippets."""
+    """Search the public web and return concise search results with titles, URLs, and snippets.
+
+    The search retries a small set of DDGS backends so one backend outage/rate-limit
+    does not make Agentie's research engine look like the entire web is unavailable.
+    """
     clean_query = str(query or "").strip()
     if not clean_query:
         return json.dumps({"error": "A search query is required."})
 
     limit = max(1, min(int(max_results), 8))
+    errors: list[str] = []
+    raw_results: list[dict] = []
+    used_backend = None
 
-    try:
-        raw_results = DDGS(timeout=10).text(
-            clean_query,
-            safesearch="moderate",
-            max_results=limit,
-            backend="auto",
-        )
-    except Exception as exc:
-        return json.dumps({"error": f"Web search failed: {exc}"})
+    # Keep this deterministic and small. `None` lets DDGS choose its own default if
+    # explicit backends are temporarily unavailable in the installed ddgs version.
+    for backend in ("auto", "duckduckgo", "brave", None):
+        try:
+            raw_results = _search_attempt(clean_query, limit, backend)
+            if raw_results:
+                used_backend = backend or "default"
+                break
+            errors.append(f"{backend or 'default'} returned no results")
+        except Exception as exc:
+            errors.append(f"{backend or 'default'}: {exc}")
 
     results = []
-    for item in raw_results or []:
+    for item in raw_results:
+        url = str(item.get("href") or item.get("url") or "").strip()
+        if not url:
+            continue
         results.append(
             {
-                "title": str(item.get("title") or "").strip(),
-                "url": str(item.get("href") or item.get("url") or "").strip(),
+                "title": str(item.get("title") or url).strip(),
+                "url": url,
                 "snippet": str(item.get("body") or item.get("snippet") or "").strip(),
             }
         )
 
-    return json.dumps({"query": clean_query, "results": results}, ensure_ascii=False)
+    payload = {
+        "query": clean_query,
+        "results": results,
+        "backend": used_backend,
+    }
+    if not results:
+        payload["error"] = "Web search returned no usable results. " + (" | ".join(errors[-4:]) if errors else "No backend produced results.")
+    elif errors:
+        payload["warnings"] = errors
+    return json.dumps(payload, ensure_ascii=False)
