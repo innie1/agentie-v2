@@ -15,7 +15,6 @@ from agentie.core.workflow_teaching import (
     record_browser_event,
     start_recording,
     stop_recording,
-    workflow_card,
 )
 
 _TEACH_TASK: asyncio.Task | None = None
@@ -105,6 +104,27 @@ def _teach_command(message: str) -> tuple[str, str | None] | None:
     return None
 
 
+def _workflow_note(item: dict[str, Any], title_prefix: str = "Taught workflow") -> dict[str, Any]:
+    steps = item.get("steps") or []
+    commands = [str(step.get("command") or "").strip() for step in steps if str(step.get("command") or "").strip()]
+    lines = [f"{len(steps)} recorded step(s) · ran {int(item.get('run_count') or 0)} time(s)"]
+    lines.extend(f"{index}. {command}" for index, command in enumerate(commands[:10], 1))
+    if len(commands) > 10:
+        lines.append(f"…and {len(commands)-10} more step(s)")
+    return {"type": "note", "title": f"{title_prefix}: {item.get('name') or 'Workflow'}", "content": "\n".join(lines)}
+
+
+def _workflow_list_note(items: list[dict[str, Any]]) -> dict[str, Any]:
+    if not items:
+        content = "No taught workflows yet. Start with: Teach Agentie: <workflow name>"
+    else:
+        content = "\n".join(
+            f"{index}. {item.get('name')} · {len(item.get('steps') or [])} steps · ran {int(item.get('run_count') or 0)} time(s)"
+            for index, item in enumerate(items, 1)
+        )
+    return {"type": "note", "title": "Taught workflows", "content": content}
+
+
 def _reset_probe_state() -> None:
     global _LAST_URL
     _LAST_URL = ""
@@ -115,15 +135,11 @@ async def _install_probe(page) -> None:
     page_id = id(page)
     if page_id not in _PROBED_PAGE_IDS:
         try:
-            # Register once per Playwright Page so future navigations reinstall the
-            # listener, without accumulating hundreds of init scripts while polling.
             await page.add_init_script(script=_TEACH_SCRIPT)
             _PROBED_PAGE_IDS.add(page_id)
         except Exception:
             pass
     try:
-        # Current documents still need immediate installation. The JS itself is
-        # idempotent, so this cheap check does not duplicate DOM listeners.
         installed = await page.evaluate("() => Boolean(window.__agentieTeachInstalled)")
         if not installed:
             await page.evaluate(_TEACH_SCRIPT)
@@ -179,7 +195,8 @@ async def _start(name: str, session_id: str | None) -> dict[str, Any]:
         await _install_probe(page)
         await _drain(page)
         _ensure_polling()
-        card = workflow_card(active_recording() or item, "workflow_teach")
+        recording = active_recording() or item
+        card = {"type":"note","title":f"Teaching: {recording['name']}","content":"Recording visible browser actions locally. Perform the workflow once in Agentie Computer, then say “Stop teaching”.\n\nPasswords/secrets are never stored."}
         return {"message": f"Teach mode is recording “{item['name']}”. Perform the workflow once in the visible browser, then say “Stop teaching”.", "card": card}
     except Exception as exc:
         cancel_recording();_reset_probe_state()
@@ -191,7 +208,7 @@ async def _stop() -> dict[str, Any]:
     if page is not None and not page.is_closed():
         await _drain(page)
     item = stop_recording();_reset_probe_state()
-    return {"message": f"Learned “{item['name']}” from {len(item.get('steps') or [])} browser step(s). You can now say “Run workflow {item['name']}”.", "card": workflow_card(item)}
+    return {"message": f"Learned “{item['name']}” from {len(item.get('steps') or [])} browser step(s). You can now say “Run workflow {item['name']}”.", "card": _workflow_note(item,"Learned workflow")}
 
 
 async def _run(name: str, session_id: str | None) -> dict[str, Any]:
@@ -202,7 +219,7 @@ async def _run(name: str, session_id: str | None) -> dict[str, Any]:
     blocked = [step for step in item.get("steps") or [] if (step.get("metadata") or {}).get("requires_input")]
     if blocked:
         fields = ", ".join(str((step.get("metadata") or {}).get("field") or "secret field") for step in blocked)
-        return {"message": f"This workflow contains a protected value ({fields}). Agentie intentionally did not save the secret. Complete the protected field manually before replay or re-teach that step without a secret.", "card": workflow_card(item)}
+        return {"message": f"This workflow contains a protected value ({fields}). Agentie intentionally did not save the secret. Complete the protected field manually before replay or re-teach that step without a secret.", "card": _workflow_note(item)}
     actions: list[str] = []
     try:
         page = await browser._ensure_page()
@@ -221,11 +238,11 @@ async def _run(name: str, session_id: str | None) -> dict[str, Any]:
             await browser._publish_frame(page, status="working", url=page.url, detail=result)
         mark_run(str(item.get("id")))
         await browser._publish_frame(page, status="done", url=page.url, detail=f"Workflow {item['name']} complete")
-        return {"message": f"Completed taught workflow “{item['name']}” locally.", "card": {**workflow_card(get_workflow(str(item.get('id')), owner) or item, "workflow_run"), "actions": actions, "url": page.url}}
+        return {"message": f"Completed taught workflow “{item['name']}” locally.", "card": {"type":"browser_actions","title":f"Workflow · {item['name']}","url":page.url,"actions":actions,"workflow_id":item.get("id"),"provider_calls":0}}
     except browser.BrowserApprovalRequired as exc:
         return {"message": "This taught workflow reached an action that needs your approval before it can continue.", "card": {"type": "browser_approval", "url": browser._PAGE.url if browser._PAGE else "", "step": exc.step, "approval": exc.approval, "command": f"Run workflow {item['name']}"}}
     except Exception as exc:
-        return {"message": f"Taught workflow failed: {str(exc)[:500]}", "card": {**workflow_card(item, "workflow_run"), "status": "failed", "error": str(exc)[:500], "actions": actions}}
+        return {"message": f"Taught workflow failed: {str(exc)[:500]}", "card": {"type":"browser_actions","title":f"Workflow failed · {item['name']}","actions":actions+[f"Failed: {str(exc)[:300]}"],"provider_calls":0}}
 
 
 async def route_taught_workflow_request(message: str, session_id: str | None = None) -> dict[str, Any] | None:
@@ -244,13 +261,13 @@ async def route_taught_workflow_request(message: str, session_id: str | None = N
         if action == "list":
             owner = _owner_from_session(session_id)
             items = list_workflows(owner)
-            return {"message": f"You have {len(items)} taught workflow(s).", "card": {"type": "taught_workflows", "items": [workflow_card(x) for x in items]}}
+            return {"message": f"You have {len(items)} taught workflow(s).", "card": _workflow_list_note(items)}
         if action == "show":
             item = get_workflow(str(value or ""), _owner_from_session(session_id))
-            return {"message": "Taught workflow was not found.", "card": None} if not item else {"message": f"Here is “{item['name']}”.", "card": workflow_card(item)}
+            return {"message": "Taught workflow was not found.", "card": None} if not item else {"message": f"Here is “{item['name']}”.", "card": _workflow_note(item)}
         if action == "delete":
             item = delete_workflow(str(value or ""), _owner_from_session(session_id))
-            return {"message": f"Deleted taught workflow “{item['name']}”.", "card": {**workflow_card(item), "status": "deleted"}}
+            return {"message": f"Deleted taught workflow “{item['name']}”.", "card": _workflow_note(item,"Deleted workflow")}
         if action == "run":
             return await _run(str(value or ""), session_id)
     except ValueError as exc:
