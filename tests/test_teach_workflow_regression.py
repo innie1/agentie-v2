@@ -1,3 +1,4 @@
+import asyncio
 import tempfile
 import unittest
 from pathlib import Path
@@ -11,10 +12,10 @@ class TeachWorkflowRegressionTests(unittest.TestCase):
         self.temp=tempfile.TemporaryDirectory();root=Path(self.temp.name)
         self.workflow_file_patch=patch.object(workflow_teaching,'WORKFLOWS_FILE',root/'workflows.json')
         self.active_file_patch=patch.object(workflow_teaching,'ACTIVE_FILE',root/'active.json')
-        self.workflow_file_patch.start();self.active_file_patch.start()
+        self.workflow_file_patch.start();self.active_file_patch.start();workflow_browser_runtime._reset_probe_state()
 
     def tearDown(self):
-        self.active_file_patch.stop();self.workflow_file_patch.stop();self.temp.cleanup()
+        workflow_browser_runtime._reset_probe_state();self.active_file_patch.stop();self.workflow_file_patch.stop();self.temp.cleanup()
 
     def test_teaching_records_browser_actions_and_saves_reusable_workflow(self):
         started=workflow_teaching.start_recording('Publish weekly update','agt_manager')
@@ -55,6 +56,30 @@ class TeachWorkflowRegressionTests(unittest.TestCase):
         self.assertEqual(workflow_browser_runtime._teach_command('Stop teaching'),('stop',None))
         self.assertEqual(workflow_browser_runtime._teach_command('Run workflow publish weekly update'),('run','publish weekly update'))
         self.assertIsNone(workflow_browser_runtime._teach_command('Research church software'))
+
+    def test_browser_probe_adds_init_script_only_once_per_page(self):
+        class FakePage:
+            def __init__(self):self.added=0;self.installed=False
+            async def add_init_script(self,script):self.added+=1
+            async def evaluate(self,script):
+                if 'Boolean(window.__agentieTeachInstalled)' in script:return self.installed
+                self.installed=True;return None
+        page=FakePage()
+        asyncio.run(workflow_browser_runtime._install_probe(page));asyncio.run(workflow_browser_runtime._install_probe(page))
+        self.assertEqual(page.added,1)
+
+    def test_form_field_labels_never_use_the_typed_value_as_the_field_name(self):
+        script=workflow_browser_runtime._TEACH_SCRIPT
+        field_section=script.split('const fieldLabel = el => {',1)[1].split('const actionLabel = raw => {',1)[0]
+        self.assertNotIn('el.value',field_section)
+        self.assertIn("el.getAttribute?.('aria-label')",field_section)
+        self.assertIn("el.getAttribute?.('placeholder')",field_section)
+        self.assertIn("label[for=",field_section)
+
+    def test_taught_workflow_ui_reuses_existing_note_and_browser_action_cards(self):
+        item={'id':'wf_1','name':'Weekly update','steps':[{'command':'click Reports'}],'run_count':0}
+        self.assertEqual(workflow_browser_runtime._workflow_note(item)['type'],'note')
+        self.assertEqual(workflow_browser_runtime._workflow_list_note([item])['type'],'note')
 
 
 if __name__=='__main__':unittest.main()
