@@ -69,7 +69,9 @@ Delete project Shepherd
 - Compound requests such as `research X, then create a PDF/DOCX` are planned as dependent steps: research completes first, then the existing local artifact generator creates the requested file without another provider call.
 - A research step with no usable sources is treated as failed; dependent artifact steps are blocked and no failure-message PDF/DOCX is generated.
 - Deep research retries a small set of DDGS search backends instead of depending on a single `auto` backend; if all attempts fail, the real retrieval error is preserved in the failed research step so the user can see why no sources were found.
+- Internal deep-research synthesis runs outside the owning persistent agent's normal conversation/NPC session, preventing chat preferences or local acknowledgement replies from replacing the gathered research report.
 - Completed/failed background jobs emit a one-time user-visible completion event through the existing local event polling system.
+- Background job ownership is preserved across agent switching: completion/file events are queued for the agent that started the job instead of being inserted into whichever agent chat happens to be open.
 - Completed/failed/partial delegated team jobs also emit a one-time completion event; retrying a failed worker resets that notification marker so the retried result can alert again.
 - Pause, resume and retry controls.
 - Team jobs and handoffs between persistent agents.
@@ -159,6 +161,7 @@ The current UI includes:
 - Agent replies reuse that agent's existing round sidebar orb beside the response instead of rendering anonymous assistant text.
 - Reply orbs visibly animate and show `Working` / `Queued` while a background job is active; terminal updates stop the animation for that job.
 - When the selected specialist is still working or queued on delegated/team work, the chat shows one live `<agent> is working…` / `<agent> is queued…` row with that same orb so background work is not silent.
+- If one agent finishes a background job while another agent is selected, the current chat gets only a small completion notice; the completion response and generated file remain queued for the owning agent's chat and appear when that agent is opened.
 - Selected-agent `Delegated work` feed that polls persisted handoff tasks/results from that agent's own normal chat timeline
 - Compact assigned-project previews plus an expandable full specialist project workspace
 - Safe Markdown rendering for specialist results, including headings, lists, simple tables and fenced code blocks
