@@ -7,6 +7,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from agentie.core.deletion_registry import find_deleted, remember_deleted
+
 WORKSPACE = Path.cwd() / "workspace"
 AGENTS_FILE = WORKSPACE / "agents.json"
 VALID_BASES = {"general", "research", "coding", "manager", "github"}
@@ -68,9 +70,12 @@ def update_agent_manager(agent_id_or_name: str, manager_id_or_name: str | None) 
     target["manager_id"]=manager_id;target["updated_at"]=datetime.now().astimezone().isoformat(timespec="seconds");_save(data);return _public(target)
 
 def delete_agent(agent_id_or_name: str) -> dict[str, Any]:
-    """Permanently delete an agent plus its private memories, chats, context, semantic shards and learned instructions."""
+    """Permanently delete an agent once; repeated calls return an already-deleted result."""
     data=_load();agents=data.setdefault("agents",[]);key=_clean(agent_id_or_name).casefold();target=next((x for x in agents if str(x.get("id","")).casefold()==key or str(x.get("name","")).casefold()==key),None)
-    if not target:raise ValueError("Agent was not found.")
+    if not target:
+        tombstone=find_deleted("agent",key)
+        if tombstone:return {"deleted":False,"already_deleted":True,"agent":{"id":tombstone.get("entity_id"),"name":tombstone.get("name")},"deleted_at":tombstone.get("deleted_at")}
+        raise ValueError("Agent was not found.")
     public=_public(target);agent_id=str(target["id"]);now=datetime.now().astimezone().isoformat(timespec="seconds")
     for item in agents:
         if item.get("manager_id")==agent_id:item["manager_id"]=None;item["updated_at"]=now
@@ -81,7 +86,8 @@ def delete_agent(agent_id_or_name: str) -> dict[str, Any]:
     removed=0
     for path in (WORKSPACE/"agents"/agent_id,WORKSPACE/"agent_data"/agent_id):
         if path.exists():shutil.rmtree(path,ignore_errors=True);removed+=1
-    return {"deleted":True,"agent":public,"purged":{**purged,"instruction_profiles":instruction_profiles,"directories":removed}}
+    remember_deleted("agent",agent_id,public.get("name"),{"role":public.get("role")})
+    return {"deleted":True,"already_deleted":False,"agent":public,"purged":{**purged,"instruction_profiles":instruction_profiles,"directories":removed}}
 def hierarchy() -> list[dict[str, Any]]:
     items=list_agents();by_manager:dict[str|None,list[dict[str,Any]]]={}
     for item in items:by_manager.setdefault(item.get("manager_id"),[]).append(item)
