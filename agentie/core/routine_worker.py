@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from agentie.core.browser_monitor import capture_website, routine_always_show, website_routine_target
-from agentie.core.job_engine import create_job, job_card, start_job
+from agentie.core.job_engine import create_job, job_card, poll_job_completion_events, start_job
 from agentie.core.routine_engine import claim_due_routines, record_run
 from agentie.core.runner import run_agent
 
@@ -26,6 +26,8 @@ def _push(event:dict[str,Any])->None:
 def poll_routine_events()->list[dict[str,Any]]:
     items=_load_events()
     if items:_save_events([])
+    try:items.extend(poll_job_completion_events())
+    except Exception:pass
     return items
 
 async def _runner(instruction:str,specialist:str,session_id:str)->str:
