@@ -51,6 +51,13 @@ class TeachWorkflowRegressionTests(unittest.TestCase):
         self.assertTrue(step['metadata']['requires_input'])
         self.assertIn('<secret>',step['command'])
 
+    def test_sensitive_text_fields_are_protected_even_when_site_does_not_mask_them(self):
+        workflow_teaching.start_recording('Configure integration')
+        workflow_teaching.record_browser_event({'kind':'fill','field':'OpenAI API Key','value':'sk-do-not-store','secret':False})
+        saved=workflow_teaching.stop_recording();step=saved['steps'][0]
+        self.assertNotIn('sk-do-not-store',step['command'])
+        self.assertTrue(step['metadata']['secret']);self.assertTrue(step['metadata']['requires_input'])
+
     def test_teach_commands_are_narrow_and_local(self):
         self.assertEqual(workflow_browser_runtime._teach_command('Teach Agentie: publish weekly update'),('start','publish weekly update'))
         self.assertEqual(workflow_browser_runtime._teach_command('Stop teaching'),('stop',None))
