@@ -40,10 +40,13 @@ class PinJobTitleDocumentDelegationRegressionTests(unittest.TestCase):
     def test_generated_document_cards_expose_human_document_name(self):
         office=Path("agentie/core/office_artifacts.py").read_text(encoding="utf-8")
         pdf=Path("agentie/core/pdf_service.py").read_text(encoding="utf-8")
+        upload=Path("frontend/upload.js").read_text(encoding="utf-8")
         self.assertGreaterEqual(office.count("'document_name':title"),3)
         self.assertIn("'document_name':title",pdf)
         self.assertIn("Created “{card.get('document_name')",office)
         self.assertIn("Created “{card.get('document_name')",pdf)
+        self.assertIn("displayName=c.document_name||c.name",upload)
+        self.assertIn("File: ${c.name}",upload)
 
     def test_two_delegated_agents_receive_only_their_scoped_project_context(self):
         with tempfile.TemporaryDirectory() as tmp:
