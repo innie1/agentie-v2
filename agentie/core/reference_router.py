@@ -30,7 +30,11 @@ def _ensure_jobs_resumed():
     try:
         from agentie.core.job_engine import resume_unfinished
         from agentie.core.routine_worker import start_routine_worker
+        from agentie.core.team_orchestrator import list_team_jobs,start_team_job
         resume_unfinished(_job_step_runner);start_routine_worker()
+        for team_job in reversed(list_team_jobs(100)):
+            pending={str(h.get('id')) for h in (team_job.get('handoffs') or []) if h.get('status') in {'queued','working'} and h.get('id')}
+            if team_job.get('status') in {'queued','working'} and pending:start_team_job(str(team_job['id']),pending)
     except RuntimeError:_JOBS_RESUMED=False
     except Exception:pass
 
