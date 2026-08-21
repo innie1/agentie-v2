@@ -24,6 +24,7 @@ The project is Python-first with a FastAPI backend and a lightweight web UI. Age
 - Each assigned-agent project view includes that agent's delegated task, role-scoped context, work status and latest result without exposing another worker's private context.
 - Assigned-project list rows stay compact: they show task/status plus a short, Markdown-clean result title/summary instead of squeezing a whole report or raw formatting tokens into the list.
 - **Open** in a worker workspace expands a full specialist workspace with that agent's task, status, scoped project context, full persisted handoff result rendered as readable Markdown, and project artifacts when present.
+- Specialist workspaces render project context from the original scoped handoff brief that worker received, so later work by another specialist is not retroactively injected into that worker's visible context.
 - Specialist workspace selection resolves the actual selected agent name independently of sidebar role badges, so role labels cannot break the Open action.
 - The full specialist workspace reads only `Show projects for <agent>` plus that agent's own handoff history; it never fetches the global project to render recipient work.
 - The final project-manager renderer preserves `viewer_assignment`; a worker-scoped project cannot be replaced by the global project view when the user presses **Open**.
@@ -99,6 +100,7 @@ Agentie includes local tools and routing for capabilities such as:
 - Research and browser workflows
 - Code execution and workspace operations
 - Professional DOCX, PDF, XLSX and PPTX artifacts that expose both a human document name and the downloadable filename.
+- Word-export references such as `make docs file with this` resolve the selected agent's latest specialist handoff result before falling back to an unrelated ordinary assistant reply.
 
 ### Skills, plugins and MCP
 - Real skill registry and role/skill routing infrastructure.
