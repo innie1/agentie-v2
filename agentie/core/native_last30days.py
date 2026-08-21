@@ -10,6 +10,7 @@ from urllib.parse import urlparse
 from agents import Agent, ModelSettings, Runner
 from ddgs import DDGS
 
+from agentie.core.result_memory import remember_global_result
 from agentie.models.provider import get_model
 
 SOURCE_LANES = [
@@ -42,7 +43,11 @@ def _search_lane(topic: str, lane: str, qualifier: str, max_results: int = 4) ->
     for item in rows or []:
         url=str(item.get("href") or item.get("url") or "").strip()
         if not url:continue
-        out.append({"source":lane,"title":str(item.get("title") or url).strip(),"url":url,"domain":_domain(url),"snippet":str(item.get("body") or item.get("snippet") or "").strip()})
+        title=re.sub(r"\s+"," ",str(item.get("title") or url)).strip()
+        snippet=re.sub(r"\s+"," ",str(item.get("body") or item.get("snippet") or "")).strip()
+        if len(title)>180:title=title[:177]+"..."
+        if len(snippet)>360:snippet=snippet[:357]+"..."
+        out.append({"source":lane,"title":title,"url":url,"domain":_domain(url),"snippet":snippet})
     return out
 
 
@@ -73,7 +78,7 @@ def _fallback_summary(topic: str, sources: list[dict[str, Any]]) -> str:
     lines.append(f"Recent coverage: {sum(counts.values())} sources across {len(counts)} source types.");lines.append("")
     for s in sources[:7]:
         snippet=re.sub(r"\s+"," ",s.get("snippet","")).strip()
-        if len(snippet)>190:snippet=snippet[:187]+"..."
+        if len(snippet)>150:snippet=snippet[:147]+"..."
         lines.append(f"• [{s['id']}] {s['title']}"+(f" — {snippet}" if snippet else ""))
     return "\n".join(lines)
 
@@ -83,7 +88,7 @@ async def _synthesize(topic: str, sources: list[dict[str, Any]]) -> str:
     instructions=("You are Agentie's Last30Days Native synthesizer. Use only the supplied evidence from the last-30-days search lanes. "
                   "Write for a clean chat UI, not Markdown. Do not use # headings, asterisks, backticks, tables, or long blocks. "
                   "Use this readable structure: first line 'What I learned'; blank line; 3 to 5 short sections with plain section names; "
-                  "under each section use short bullet lines beginning with the bullet character •. Keep paragraphs to at most 3 sentences. "
+                  "under each section use short bullet lines beginning with the bullet character •. Keep bullets focused on synthesized conclusions, not copied search snippets. "
                   "Focus on recurring themes, disagreements, recent changes, and practical signals. Cite claims using only supplied IDs like [L1] or [L2][L5]. "
                   "Do not invent facts, source IDs, dates, or URLs. Mention evidence gaps when coverage is weak. Do not add a Sources section because the UI renders sources below.")
     prompt=f"TOPIC\n{topic}\n\nLAST-30-DAYS EVIDENCE\n{pack}"
@@ -96,11 +101,12 @@ async def research(topic: str) -> dict[str, Any]:
     sources=gather(topic);counts={}
     for s in sources:counts[s["source"]]=counts.get(s["source"],0)+1
     if not sources:
-        answer=_fallback_summary(topic,[]);return {"message":"","card":{"type":"last30days","engine":"native","topic":topic,"window_days":30,"answer":answer,"sources":[],"source_counts":{},"provider_calls":0}}
+        answer=_fallback_summary(topic,[]);result={"message":"","card":{"type":"last30days","engine":"native","topic":topic,"window_days":30,"answer":answer,"sources":[],"source_counts":{},"provider_calls":0}};remember_global_result("",result["card"]);return result
     try:answer=await _synthesize(topic,sources);provider_calls=1 if answer else 0
     except Exception:answer="";provider_calls=0
     if not answer:answer=_fallback_summary(topic,sources)
-    return {"message":"","card":{"type":"last30days","engine":"native","topic":topic,"window_days":30,"answer":_clean_output(answer),"sources":sources,"source_counts":counts,"provider_calls":provider_calls}}
+    result={"message":"","card":{"type":"last30days","engine":"native","topic":topic,"window_days":30,"answer":_clean_output(answer),"sources":sources,"source_counts":counts,"provider_calls":provider_calls}}
+    remember_global_result("",result["card"]);return result
 
 
 def run(topic: str) -> dict[str, Any]:
