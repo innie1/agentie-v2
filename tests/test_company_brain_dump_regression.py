@@ -4,6 +4,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from agentie.core import agent_registry, company_knowledge, memory_store, project_brain, semantic_memory
+from agentie.tools import approval_tools
 
 
 class CompanyBrainDumpRegressionTests(unittest.TestCase):
@@ -20,6 +21,7 @@ class CompanyBrainDumpRegressionTests(unittest.TestCase):
             patch.object(semantic_memory, "DB_PATH", self.root / "semantic.sqlite3"),
             patch.object(project_brain, "WORKSPACE", self.root),
             patch.object(project_brain, "PROJECTS_FILE", self.root / "projects.json"),
+            patch.object(approval_tools, "STORE", self.root / "approvals.json"),
         ]
         for item in self.patches:
             item.start()
@@ -84,15 +86,15 @@ class CompanyBrainDumpRegressionTests(unittest.TestCase):
         self.assertEqual(rows[0]["key"], item["id"])
         self.assertIn("₦350000", rows[0]["value"])
 
-    def test_company_knowledge_delete_uses_existing_approval_then_permanently_removes(self):
+    def test_company_knowledge_delete_uses_existing_approval_and_executes_on_approval(self):
         item = company_knowledge.add_company_knowledge("Rent is ₦300000 yearly")
         first = company_knowledge.route_company_knowledge_command(f"Delete company knowledge {item['id']}")
         self.assertEqual(first["card"]["type"], "approvals")
         approval = first["card"]["items"][0]
         self.assertEqual(approval["metadata"]["kind"], "company_knowledge_delete")
-        with patch.object(company_knowledge, "approval_is_granted", return_value=True):
-            second = company_knowledge.route_company_knowledge_command(f"Delete company knowledge {item['id']}")
-        self.assertEqual(second["card"]["type"], "company_knowledge_deleted")
+        resolved = approval_tools.resolve_approval(approval["id"], True)
+        self.assertEqual(resolved["status"], "consumed")
+        self.assertTrue(resolved["execution_result"]["deleted"])
         self.assertEqual(memory_store.list_memories("company", 50), [])
 
     def test_project_brain_dump_reuses_existing_project_knowledge(self):
@@ -119,11 +121,12 @@ class CompanyBrainDumpRegressionTests(unittest.TestCase):
         self.assertIn("route_company_knowledge_command", router)
         self.assertLess(router.index("route_company_knowledge_command(text)"), router.index("_memory_command(text)"))
         cards = Path("frontend/cards.js").read_text(encoding="utf-8")
+        approvals = Path("agentie/tools/approval_tools.py").read_text(encoding="utf-8")
         self.assertIn("company_knowledge", cards)
         self.assertIn("Update company knowledge ${item.id}", cards)
         self.assertIn("Delete company knowledge ${item.id}", cards)
-        self.assertIn("company_knowledge_delete", cards)
-        self.assertIn("Delete company knowledge ${i.metadata.knowledge_id}", cards)
+        self.assertIn('kind == "company_knowledge_delete"', approvals)
+        self.assertIn("delete_company_knowledge", approvals)
 
 
 if __name__ == "__main__":
