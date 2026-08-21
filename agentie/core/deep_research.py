@@ -98,6 +98,7 @@ def context_pack(question:str,queries:list[str],sources:list[Source])->str:
 def synthesis_prompt(question:str,queries:list[str],sources:list[Source])->str:
     return f"""You are Agentie's research synthesis specialist.
 Produce a rigorous answer using ONLY the source pack below.
+Begin the report with exactly one level-1 Markdown heading (`# ...`) whose title directly names the research topic. Do not use a generic section heading such as `Executive Summary`, `Overview`, `Findings`, or `Context` as the report title. Section headings may follow after the topic title.
 Every externally grounded factual claim must cite source IDs like [S1] or [S2][S5].
 Never invent a citation. Prefer primary/authoritative sources, distinguish fact from inference, explain disagreements and limitations, and end with a Sources section containing source IDs, titles, and URLs.
 
