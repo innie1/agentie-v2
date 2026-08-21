@@ -23,13 +23,14 @@ from pptx.util import Inches as PptInches, Pt as PptPt
 from agentie.core.artifact_naming import artifact_filename,creator_from_session
 from agentie.core.document_design import choose_style, document_title, first_numeric_series, parse_blocks, numeric_series, chart_png_bytes
 from agentie.core.file_service import UPLOADS, inspect_file, unique_path
-from agentie.core.memory_store import latest_assistant_text,recent_messages
-from agentie.core.result_memory import resolve_result_reference
+from agentie.core.memory_store import latest_assistant_text
+from agentie.core.result_memory import artifact_source_picker,existing_artifact,list_result_candidates,remember_artifact,resolve_result_reference
 
 _REFERENCE_RE = re.compile(r"\b(?:this|that|it|the previous answer|previous answer|last answer|above|what you just wrote|what you wrote)\b", re.I)
 _DOCX_RE = re.compile(r"\b(?:create|make|generate|export|save|turn|convert)\b.*\b(?:docx|docs? file|word document|word file)\b|\b(?:docx|docs? file|word document|word file)\b.*\b(?:create|make|generate|export|save|turn|convert)\b", re.I)
 _XLSX_RE = re.compile(r"\b(?:create|make|generate|export|save|turn|convert)\b.*\b(?:xlsx|excel|spreadsheet)\b|\b(?:xlsx|excel|spreadsheet)\b.*\b(?:create|make|generate|export|save|turn|convert)\b", re.I)
 _PPTX_RE = re.compile(r"\b(?:create|make|generate|export|save|turn|convert)\b.*\b(?:pptx|powerpoint|presentation|slide deck|slides)\b|\b(?:pptx|powerpoint|presentation|slide deck|slides)\b.*\b(?:create|make|generate|export|save|turn|convert)\b", re.I)
+_SELECTED_RE=re.compile(r"\bresult\s+[a-f0-9]{12,24}\b",re.I)
 
 
 def _safe_filename(name: str | None, suffix: str, prefix: str,creator:str="Agentie") -> str:return artifact_filename(creator,name,suffix,prefix)
@@ -39,21 +40,17 @@ def _explicit_content(message: str) -> str | None:
     m=re.search(r"\b(?:with|using|from)\s+(?:the\s+)?(?:text|content|data)\s*[:\-]?\s*(.+)$",message,re.I|re.S)
     if not m:return None
     value=m.group(1).strip();return value.strip(" \"'") if value and not _REFERENCE_RE.fullmatch(value.strip(" .?!\"'")) else None
-def _latest_specialist_result(session_id:str)->str|None:
-    try:
-        for item in reversed(recent_messages(session_id,limit=50,max_chars=120000)):
-            metadata=item.get('metadata') or {}
-            if item.get('role')=='assistant' and str(metadata.get('routed_by') or '')=='project_handoff_result':
-                value=str(item.get('content') or '').strip()
-                if value:return value
-    except Exception:pass
-    return None
 def _resolve_content(session_id:str,message:str)->str|None:
     content=_explicit_content(message)
     if content is None:content=resolve_result_reference(session_id,message)
-    if content is None and _REFERENCE_RE.search(message):content=_latest_specialist_result(session_id)
     if content is None and (_REFERENCE_RE.search(message) or len(message.split())<=14):content=latest_assistant_text(session_id,max_chars=120000)
     return content
+
+def _ambiguous_source(session_id:str,message:str)->dict[str,Any]|None:
+    if _explicit_content(message) is not None or _SELECTED_RE.search(message):return None
+    if not (_REFERENCE_RE.search(message) or re.search(r"\b(?:research|result|report|findings|work)\b",message,re.I)):return None
+    candidates=list_result_candidates(session_id,8)
+    return artifact_source_picker(session_id,"",candidates) if len(candidates)>1 else None
 
 def _hex(value:str)->RGBColor:return RGBColor.from_string(value)
 def _ppt_hex(value:str)->PptRGBColor:return PptRGBColor.from_string(value)
@@ -174,10 +171,22 @@ def create_pptx(content:str,filename:str|None=None,creator:str="Agentie",style_h
 def try_office_request(session_id:str,message:str)->dict[str,Any]|None:
     kind='docx' if _DOCX_RE.search(message) else 'xlsx' if _XLSX_RE.search(message) else 'pptx' if _PPTX_RE.search(message) else None
     if not kind:return None
+    picker=_ambiguous_source(session_id,message)
+    if picker:
+        picker['format']=kind
+        return {'message':f"I found several possible results. Choose which one you want to turn into a {kind.upper()} file.",'card':picker,'needs_content':True}
     content=_resolve_content(session_id,message)
+    if not content:
+        candidates=list_result_candidates(session_id,2)
+        if len(candidates)==1:content=str(candidates[0].get('content') or '')
     if not content:return {'message':f"What should I put in the {kind.upper()} file? Paste the content or say “use the previous answer.”",'card':None,'needs_content':True}
+    existing=existing_artifact(session_id,kind,content)
+    if existing:
+        existing['already_created']=True
+        return {'message':f"Already created “{existing.get('document_name') or existing.get('name')}”. Here is the existing file.",'card':existing,'needs_content':False,'already_created':True}
     creator=creator_from_session(session_id);style_hint=message
     if kind=='docx':card=create_docx(content,_extract_filename(message,'.docx'),creator,style_hint)
     elif kind=='xlsx':card=create_xlsx(content,_extract_filename(message,'.xlsx'),creator,style_hint)
     else:card=create_pptx(content,_extract_filename(message,'.pptx'),creator,style_hint)
+    remember_artifact(session_id,kind,content,card)
     return {'message':f"Created “{card.get('document_name') or card['name']}” as {card['name']} using the {card.get('document_style','professional')} document style.",'card':card,'needs_content':False}
