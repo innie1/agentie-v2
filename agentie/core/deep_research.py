@@ -8,8 +8,8 @@ from typing import Any
 from urllib.parse import urlparse
 
 from agentie.core.citation_verifier import annotate_report, verify_report
-from agentie.tools.web_tools import search_web
-from agentie.tools.browser_tools import browser_read_page
+from agentie.tools.web_tools import search_web_json
+from agentie.tools.browser_tools import browser_read_page_text
 
 
 @dataclass
@@ -63,21 +63,11 @@ def dedupe_sources(sources:list[Source],max_sources:int=18)->list[Source]:
     return out
 
 
-async def _call_tool(tool:Any,*args:Any,**kwargs:Any)->str:
-    if callable(tool):return await asyncio.to_thread(tool,*args,**kwargs)
-    invoke=getattr(tool,"on_invoke_tool",None)
-    if invoke:
-        payload=json.dumps(kwargs or ({"query":args[0]} if args else {}));result=invoke(None,payload)
-        if asyncio.iscoroutine(result):result=await result
-        return str(result)
-    raise TypeError("Unsupported tool wrapper")
-
-
 async def collect_sources(question:str,breadth:int=5,max_sources:int=18)->tuple[list[str],list[Source],list[str]]:
     queries=build_queries(question,breadth);errors=[]
     async def search(q:str)->list[Source]:
         try:
-            payload=await _call_tool(search_web,query=q,max_results=8)
+            payload=await asyncio.to_thread(search_web_json,q,8)
             error=_search_error(payload)
             if error:errors.append(f"{q}: {error}")
             return parse_search_payload(payload,q)
@@ -93,7 +83,7 @@ async def collect_sources(question:str,breadth:int=5,max_sources:int=18)->tuple[
     sources=chosen[:max_sources];sem=asyncio.Semaphore(5)
     async def read(source:Source)->None:
         async with sem:
-            try:source.text=(await _call_tool(browser_read_page,url=source.url))[:16000]
+            try:source.text=(await asyncio.to_thread(browser_read_page_text,source.url))[:16000]
             except Exception:source.text=""
     await asyncio.gather(*(read(s) for s in sources));return queries,sources,errors
 
