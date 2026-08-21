@@ -1,4 +1,6 @@
+import gc
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -9,13 +11,14 @@ from agentie.tools import approval_tools
 
 class CompanyBrainDumpRegressionTests(unittest.TestCase):
     def setUp(self):
-        self.temp = tempfile.TemporaryDirectory()
+        self.temp = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
         self.root = Path(self.temp.name)
         self.patches = [
             patch.object(agent_registry, "WORKSPACE", self.root),
             patch.object(agent_registry, "AGENTS_FILE", self.root / "agents.json"),
             patch.object(memory_store, "WORKSPACE", self.root),
             patch.object(memory_store, "DB_PATH", self.root / "memory.sqlite3"),
+            patch.object(memory_store, "_SEMANTIC_BOOTSTRAPPED", False),
             patch.object(memory_store, "_semantic_async", lambda *args, **kwargs: None),
             patch.object(semantic_memory, "WORKSPACE", self.root),
             patch.object(semantic_memory, "DB_PATH", self.root / "semantic.sqlite3"),
@@ -31,8 +34,15 @@ class CompanyBrainDumpRegressionTests(unittest.TestCase):
         self.ops = agent_registry.create_agent("Owen", "Operations Agent", "general")["agent"]
 
     def tearDown(self):
+        memory_store.set_active_memory_scope("user")
+        try:
+            memory_store._SEMANTIC_POOL.submit(lambda: None).result(timeout=30)
+        except Exception:
+            pass
         for item in reversed(self.patches):
             item.stop()
+        gc.collect()
+        time.sleep(0.05)
         self.temp.cleanup()
 
     def test_plain_conversation_is_not_blindly_saved_as_company_knowledge(self):
