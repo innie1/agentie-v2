@@ -12,6 +12,7 @@ WORKSPACE = Path.cwd() / "workspace"
 WORKFLOWS_FILE = WORKSPACE / "taught_workflows.json"
 ACTIVE_FILE = WORKSPACE / "taught_workflow_active.json"
 _LOCK = threading.Lock()
+_SENSITIVE_FIELD = re.compile(r"\b(password|passcode|pin|secret|api[ -]?key|access[ -]?token|auth(?:entication)?[ -]?token|private[ -]?key|cvv|cvc|security[ -]?code|card[ -]?number)\b",re.I)
 
 
 def _now() -> str:
@@ -83,8 +84,6 @@ def record_step(kind: str, command: str, metadata: dict[str, Any] | None = None)
             "recorded_at": _now(),
         }
         steps = item.setdefault("steps", [])
-        # Browser DOM events can fire twice around navigation/change. Keep the
-        # taught workflow compact without erasing genuinely repeated actions.
         if not steps or not _same_step(steps[-1], step):
             steps.append(step)
         item["updated_at"] = _now()
@@ -99,7 +98,8 @@ def record_browser_event(event: dict[str, Any]) -> dict[str, Any] | None:
         return record_step("click", f"click {target}", {"target": target})
     if kind == "fill":
         field = re.sub(r"\s+", " ", str(event.get("field") or "field")).strip()[:180]
-        if event.get("secret"):
+        sensitive=bool(event.get("secret")) or bool(_SENSITIVE_FIELD.search(field))
+        if sensitive:
             return record_step("fill", f"fill {field} with <secret>", {"field": field, "secret": True, "requires_input": True})
         value = str(event.get("value") or "")[:5000]
         return record_step("fill", f"fill {field} with {value}", {"field": field, "value": value})
@@ -147,8 +147,6 @@ def stop_recording() -> dict[str, Any]:
         item["status"] = "saved"
         item["updated_at"] = _now()
         items = _workflows()
-        # Re-teaching the same named workflow replaces it instead of creating
-        # confusing duplicates, while keeping the new workflow id/history clean.
         items = [x for x in items if str(x.get("name") or "").casefold() != str(item.get("name") or "").casefold()]
         items.append(item)
         _save(WORKFLOWS_FILE, items)
