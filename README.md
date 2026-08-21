@@ -23,6 +23,8 @@ The project is Python-first with a FastAPI backend and a lightweight web UI. Age
 - A project delegated to several agents remains one shared Project Brain and appears in every assigned agent's chat workspace.
 - Each assigned-agent project view includes that agent's delegated task, role-scoped context, work status and latest result without exposing another worker's private context.
 - Project handoff tasks and results are mirrored into the receiving specialist's normal `main` chat timeline, and the selected-agent UI reads that persisted timeline back as a live `Delegated work` feed.
+- Creating an active project with an existing name reuses the existing Project Brain instead of creating another duplicate record.
+- Assigned-agent project views collapse legacy same-name duplicate entries and prefer the record containing that agent's real delegated work.
 - Projects can be viewed as native project cards rather than raw JSON.
 - Users can rename a project, change its primary goal, and manually add project context, decisions, goals and milestones.
 - `Show projects` opens a selectable project list with checkboxes and per-project Open controls.
@@ -58,6 +60,7 @@ Delete project Shepherd
 - Jobs keep their internal IDs for routing but show users human-readable NPC-generated titles in cards and job controls.
 - Pause, resume and retry controls.
 - Team jobs and handoffs between persistent agents.
+- Persisted queued/working team handoffs are recovered after Agentie restarts; completed handoffs are not rerun.
 - Live team-status questions such as `what's the state of that task?` ask active workers for short progress summaries without interrupting their work sessions.
 - Team-status checks fall back to truthful backend state if a worker/provider cannot answer, rather than inventing progress.
 - Collaboration avatars remain visible while a team job is active and for 60 seconds after terminal completion/failure.
