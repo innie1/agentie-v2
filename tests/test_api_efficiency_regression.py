@@ -4,7 +4,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
-from agentie.core import agent_registry, deep_research, runner, team_orchestrator
+from agentie.core import agent_registry, deep_research, memory_store, runner, team_orchestrator
 
 
 class ApiEfficiencyRegressionTests(unittest.TestCase):
@@ -54,6 +54,34 @@ class ApiEfficiencyRegressionTests(unittest.TestCase):
         self.assertIn('Local evidence summary',result['report'])
         self.assertIn('[S1]',result['report'])
         self.assertIn('https://example.com',result['report'])
+
+    def test_recent_prompt_history_is_individually_and_globally_bounded(self):
+        raw=[
+            {'role':'assistant','content':'A'*6000,'metadata':{},'created_at':'1'},
+            {'role':'user','content':'B'*5000,'metadata':{},'created_at':'2'},
+            {'role':'assistant','content':'C'*4000,'metadata':{},'created_at':'3'},
+            {'role':'user','content':'short newest','metadata':{},'created_at':'4'},
+        ]
+        with patch.object(memory_store,'session_messages',return_value=raw):
+            history=memory_store._prompt_history('agent:agt_test:main')
+        self.assertTrue(history)
+        self.assertLessEqual(sum(len(x['content']) for x in history),5200)
+        self.assertTrue(all(len(x['content'])<=1400 for x in history))
+        self.assertIn('short newest',[x['content'] for x in history])
+
+    def test_bounded_handoff_prompt_does_not_pull_semantic_history(self):
+        with patch.object(memory_store,'_bootstrap_semantic'), patch.object(memory_store,'_prompt_history',return_value=[]), patch('agentie.core.semantic_memory.search_memory') as semantic:
+            prompt=memory_store.build_context_prompt('agent:agt_mira:handoff:team_123','Bounded worker brief')
+        semantic.assert_not_called()
+        self.assertEqual(prompt,'Bounded worker brief')
+
+    def test_normal_semantic_memory_is_clipped_before_provider_prompt(self):
+        hits={'hits':[{'kind':'message','score':.9,'text':'X'*9000},{'kind':'memory','score':.8,'text':'Y'*9000}]}
+        with patch.object(memory_store,'_bootstrap_semantic'), patch.object(memory_store,'_prompt_history',return_value=[]), patch('agentie.core.semantic_memory.search_memory',return_value=hits):
+            prompt=memory_store.build_context_prompt('agent:agt_mira:main','What did we decide?')
+        self.assertIn('Relevant long-term memory',prompt)
+        self.assertLess(len(prompt),2500)
+        self.assertNotIn('X'*1000,prompt)
 
 
 if __name__=='__main__':unittest.main()
