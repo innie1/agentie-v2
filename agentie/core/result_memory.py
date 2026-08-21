@@ -111,11 +111,11 @@ def _append_typed_candidates(out:list[dict[str,Any]],seen:set[str],items:list[di
 
 def list_result_candidates(session_id: str, limit: int = 8) -> list[dict[str, Any]]:
     """Return substantive result-like outputs from this exact chat, newest first; use global results only as fallback."""
-    from agentie.core.memory_store import recent_messages
+    from agentie.core.memory_store import session_messages
     seen=set();out=[]
     excluded={"local_artifact","local_pdf","project_handoff","capability_permission","observability","clarification"}
-    rows=recent_messages(session_id,limit=50,max_chars=300000)
-    for row in reversed(rows):
+    rows=session_messages(session_id,limit=100,newest_first=True)
+    for row in rows:
         if row.get("role")!="assistant":continue
         content=str(row.get("content") or "").strip();meta=row.get("metadata") or {};route=str(meta.get("routed_by") or "")
         if not content or route in excluded:continue
