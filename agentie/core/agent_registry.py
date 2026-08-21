@@ -50,6 +50,71 @@ def _clean_list(values: list[str] | tuple[str, ...] | None, *, item_limit: int =
     return out
 
 
+def _generated_employee_profile(role: str, base: str, purpose: str = "") -> dict[str, Any]:
+    """Generate a useful employee profile locally from creation inputs, with no provider/API call."""
+    role_text = _clean(role, 160)
+    purpose_text = _clean(purpose, 800)
+    low = f"{role_text} {purpose_text} {base}".casefold()
+    personality = "Professional, proactive, reliable, and willing to recommend better approaches when useful"
+    goal = f"Perform the {role_text or 'assigned'} role reliably and help move the user's goals forward"
+    responsibilities = [
+        "Handle work that belongs to this role",
+        "Use available tools and skills when they improve the result",
+        "Report progress, risks, and useful recommendations clearly",
+    ]
+
+    if any(x in low for x in ("sales", "outreach", "business development", "lead generation", "crm")):
+        personality = "Friendly, professional, proactive, persuasive without being pushy"
+        goal = "Increase qualified sales opportunities and help convert them into revenue"
+        responsibilities = ["Find and qualify opportunities", "Follow up leads and customers", "Track sales context and recommend next actions"]
+    elif any(x in low for x in ("marketing", "social media", "content creator", "copywriter", "brand")):
+        personality = "Creative, observant, concise, audience-focused, and commercially aware"
+        goal = "Grow attention, trust, and demand for the user's products or business"
+        responsibilities = ["Plan and create useful marketing content", "Study audience and channel performance", "Recommend campaigns, positioning, and improvements"]
+    elif any(x in low for x in ("finance", "account", "bookkeep", "budget", "financial")):
+        personality = "Careful, analytical, practical, and risk-aware"
+        goal = "Improve financial visibility, discipline, and decision quality"
+        responsibilities = ["Track and analyze financial information", "Flag unusual costs, risks, and missing data", "Prepare budgets, comparisons, and recommendations"]
+    elif any(x in low for x in ("operations", "logistics", "inventory", "supply", "procurement")):
+        personality = "Organized, practical, proactive, and detail-oriented"
+        goal = "Keep operations efficient, reliable, and well coordinated"
+        responsibilities = ["Coordinate operational work and dependencies", "Identify bottlenecks and process risks", "Recommend practical improvements and follow-up actions"]
+    elif any(x in low for x in ("support", "customer service", "customer success", "helpdesk")):
+        personality = "Patient, clear, helpful, empathetic, and solution-oriented"
+        goal = "Resolve customer issues quickly while protecting trust and service quality"
+        responsibilities = ["Understand and resolve customer requests", "Escalate issues that need human or specialist attention", "Keep communication clear, respectful, and consistent"]
+    elif any(x in low for x in ("research", "analyst", "critic", "verifier", "market research")) or base == "research":
+        personality = "Curious, rigorous, skeptical, evidence-focused, and clear about uncertainty"
+        goal = "Produce reliable research and recommendations that improve decisions"
+        responsibilities = ["Gather and compare relevant evidence", "Separate facts from inference and uncertainty", "Summarize findings, risks, and recommended next steps"]
+    elif any(x in low for x in ("developer", "engineer", "coder", "cto", "programmer", "technical")) or base == "coding":
+        personality = "Systematic, practical, quality-focused, and protective of backwards compatibility"
+        goal = "Build and maintain reliable software with the smallest safe changes"
+        responsibilities = ["Inspect existing implementations before changing them", "Implement and test working software", "Identify technical risks and recommend maintainable solutions"]
+    elif any(x in low for x in ("chief of staff", "manager", "ceo", "director", "planner", "lead")) or base == "manager":
+        personality = "Organized, decisive, proactive, collaborative, and comfortable challenging weak plans"
+        goal = "Coordinate the AI company so the user's goals are turned into completed work"
+        responsibilities = ["Break goals into clear work and delegate appropriately", "Coordinate agents and combine their results", "Track progress, risks, missing capabilities, and decisions needing approval"]
+    elif any(x in low for x in ("email", "inbox", "mail")):
+        personality = "Professional, concise, tactful, attentive, and consistent"
+        goal = "Manage email communication accurately and help important conversations move forward"
+        responsibilities = ["Draft and organize email communication", "Identify important messages and required responses", "Use the agent's identity consistently and request approval before sending when required"]
+    elif "whatsapp" in low:
+        personality = "Friendly, responsive, concise, and customer-focused"
+        goal = "Handle WhatsApp conversations helpfully while escalating when needed"
+        responsibilities = ["Understand and route incoming WhatsApp messages", "Reply within granted permissions and platform rules", "Escalate unresolved or sensitive conversations to a human"]
+
+    if purpose_text:
+        goal = f"{goal}. Current focus: {purpose_text}"
+
+    return {
+        "personality": _clean(personality, 800),
+        "goal": _clean(goal, 1200),
+        "responsibilities": _clean_list(responsibilities, item_limit=400, max_items=30),
+        "company_identity": "",
+    }
+
+
 def _public(agent: dict[str, Any]) -> dict[str, Any]:
     return {
         "id": agent.get("id"),
@@ -110,6 +175,7 @@ def create_agent(
     name = _clean(name, 120)
     role = _clean(role, 120) or "general"
     base = base if base in VALID_BASES else "general"
+    purpose = _clean(purpose, 800)
     if not name:
         raise ValueError("Agent name is required.")
     data = _load()
@@ -122,6 +188,7 @@ def create_agent(
         if not manager:
             raise ValueError("Manager agent was not found.")
         manager_id = str(manager["id"])
+    generated = _generated_employee_profile(role, base, purpose)
     now = datetime.now().astimezone().isoformat(timespec="seconds")
     agent_id = "agt_" + uuid.uuid4().hex[:10]
     item = {
@@ -129,11 +196,11 @@ def create_agent(
         "name": name,
         "role": role,
         "base": base,
-        "purpose": _clean(purpose, 800),
-        "personality": "",
-        "goal": "",
-        "responsibilities": [],
-        "company_identity": "",
+        "purpose": purpose,
+        "personality": generated["personality"],
+        "goal": generated["goal"],
+        "responsibilities": generated["responsibilities"],
+        "company_identity": generated["company_identity"],
         "avatar_kind": "default",
         "avatar_file": None,
         "manager_id": manager_id,
