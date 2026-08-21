@@ -17,13 +17,8 @@ def _search_attempt(query: str, limit: int, backend: str | None) -> list[dict]:
     return list(rows or [])
 
 
-@function_tool
-def search_web(query: str, max_results: int = 5) -> str:
-    """Search the public web and return concise search results with titles, URLs, and snippets.
-
-    The search retries a small set of DDGS backends so one backend outage/rate-limit
-    does not make Agentie's research engine look like the entire web is unavailable.
-    """
+def search_web_json(query: str, max_results: int = 5) -> str:
+    """Plain Python web-search implementation for internal systems and tests."""
     clean_query = str(query or "").strip()
     if not clean_query:
         return json.dumps({"error": "A search query is required."})
@@ -33,8 +28,6 @@ def search_web(query: str, max_results: int = 5) -> str:
     raw_results: list[dict] = []
     used_backend = None
 
-    # Keep this deterministic and small. `None` lets DDGS choose its own default if
-    # explicit backends are temporarily unavailable in the installed ddgs version.
     for backend in ("auto", "duckduckgo", "brave", None):
         try:
             raw_results = _search_attempt(clean_query, limit, backend)
@@ -68,3 +61,9 @@ def search_web(query: str, max_results: int = 5) -> str:
     elif errors:
         payload["warnings"] = errors
     return json.dumps(payload, ensure_ascii=False)
+
+
+@function_tool
+def search_web(query: str, max_results: int = 5) -> str:
+    """Search the public web and return concise search results with titles, URLs, and snippets."""
+    return search_web_json(query, max_results)
