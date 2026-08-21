@@ -10,6 +10,7 @@ The project is Python-first with a FastAPI backend and a lightweight web UI. Age
 - Create multiple named agents with roles and purposes.
 - Persistent per-agent identity, sessions, instructions and memory scope.
 - Rename agents and change roles dynamically.
+- Pin/unpin agents from the sidebar or by command; pinned agents persist at the top and new agents remain below the pinned group.
 - Manager/worker hierarchy and delegation permissions.
 - Permanent agent deletion with private memory/chat/semantic-data purge.
 - Agent-to-agent handoffs and simultaneous team jobs.
@@ -20,6 +21,7 @@ The project is Python-first with a FastAPI backend and a lightweight web UI. Age
 - Project Brain stores goals, decisions, distilled shared context, milestones, artifacts, handoffs and compact specialist summaries.
 - Worker agents receive role-scoped project briefs instead of another agent's full private chat.
 - A project delegated to several agents remains one shared Project Brain and appears in every assigned agent's chat workspace.
+- Each assigned-agent project view includes that agent's delegated task, role-scoped context, work status and latest result without exposing another worker's private context.
 - Projects can be viewed as native project cards rather than raw JSON.
 - Users can rename a project, change its primary goal, and manually add project context, decisions, goals and milestones.
 - `Show projects` opens a selectable project list with checkboxes and per-project Open controls.
@@ -47,10 +49,12 @@ Delete project Shepherd
 - Conversation-based preference learning without copying full chats into prompts.
 - Learning audit with compact structured changes.
 - Role-aware local NPC responses for common conversation and role-specific workflows.
+- Local NPC job-title generation creates concise human-readable job titles without spending a provider call.
 - Local-first routing avoids provider calls for supported deterministic tasks.
 
 ### Jobs, approvals and orchestration
 - Multi-step background jobs with progress and provider-call budgets.
+- Jobs keep their internal IDs for routing but show users human-readable NPC-generated titles in cards and job controls.
 - Pause, resume and retry controls.
 - Team jobs and handoffs between persistent agents.
 - Live team-status questions such as `what's the state of that task?` ask active workers for short progress summaries without interrupting their work sessions.
@@ -84,6 +88,7 @@ Agentie includes local tools and routing for capabilities such as:
 - File/archive operations
 - Research and browser workflows
 - Code execution and workspace operations
+- Professional DOCX, PDF, XLSX and PPTX artifacts that expose both a human document name and the downloadable filename.
 
 ### Skills, plugins and MCP
 - Real skill registry and role/skill routing infrastructure.
@@ -124,6 +129,8 @@ The Computer is intended to become an execution environment agents can use when 
 ### Web UI
 The current UI includes:
 - Persistent agent sidebar and agent switching
+- Visible persistent pin/unpin controls in the agent sidebar
+- Activity status dots while preserving the pinned-agent section above unpinned agents
 - Agent chat
 - Agent search/create controls
 - Agent information/instructions editing
@@ -227,21 +234,21 @@ Run the complete regression suite after every meaningful change:
 python -m unittest discover -s tests -p "test_*regression.py" -v
 ```
 
-For a new feature, run its targeted regression file first, then run the full suite.
+For a new feature, run its targeted regression file first, then run the related subsystem tests, then the full suite, and finally perform the manual UI/workflow test in Agentie.
 
 ## Development rules
 
 When extending Agentie:
 
-1. Inspect existing functionality before adding new code.
-2. Do not duplicate an existing subsystem.
-3. Prefer the smallest safe patch over broad rewrites.
+1. Inspect existing functionality and the relevant repo architecture before adding new code.
+2. Do not duplicate an existing subsystem, state store, router, permission model or UI implementation.
+3. Prefer the smallest safe patch over broad rewrites and connect new behavior to the existing source of truth.
 4. Preserve backend/API contracts during UI-only changes.
 5. Keep local operations local where possible.
 6. Require approvals for consequential/irreversible operations.
-7. Preserve per-agent memory isolation.
-8. Add regression tests for new behavior.
-9. Do not merge a feature while existing regressions are failing.
+7. Preserve per-agent memory and project-context isolation.
+8. Add regression tests for every new feature or meaningful bug fix.
+9. Run targeted tests, related subsystem tests and the full regression suite before considering a feature complete.
 10. Keep this README updated as major capabilities are added.
 
 ## Current development roadmap
