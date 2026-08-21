@@ -1,3 +1,4 @@
+import re
 import unittest
 from pathlib import Path
 
@@ -6,14 +7,23 @@ class SpecialistProjectWorkspaceRegressionTests(unittest.TestCase):
     def test_workspace_component_is_loaded_from_existing_ui_upgrade_bundle(self):
         main=Path('main.py').read_text(encoding='utf-8')
         self.assertIn('(FRONTEND_DIR/"project_workspace.js").read_text',main)
-        self.assertIn('/ui-upgrade.js?v=203',main)
+        self.assertRegex(main,r'/ui-upgrade\.js\?v=\d+')
 
-    def test_assigned_project_preview_is_compact(self):
+    def test_assigned_project_preview_is_compact_and_markdown_free(self):
         raw=Path('frontend/project_workspace.js').read_text(encoding='utf-8')
         self.assertIn('workspace-preview-task',raw)
         self.assertIn('workspace-preview-summary',raw)
-        self.assertIn('slice(0,180)',raw)
+        self.assertIn('cleanPreview',raw)
+        self.assertIn('previewTitle',raw)
+        self.assertIn("replace(/^#{1,6}\\s*/gm,'')",raw)
+        self.assertIn("replace(/\\*\\*([^*]+)\\*\\*/g,'$1')",raw)
+        self.assertIn("strong.textContent=title||'Completed result'",raw)
         self.assertIn('-webkit-line-clamp:2',raw)
+
+    def test_active_agent_lookup_ignores_role_badge_text(self):
+        raw=Path('frontend/project_workspace.js').read_text(encoding='utf-8')
+        self.assertIn("strong?.childNodes?.[0]?.textContent?.trim()",raw)
+        self.assertIn("find(a=>a.name===name)",raw)
 
     def test_open_uses_scoped_agent_project_not_global_project(self):
         raw=Path('frontend/project_workspace.js').read_text(encoding='utf-8')
@@ -21,6 +31,7 @@ class SpecialistProjectWorkspaceRegressionTests(unittest.TestCase):
         self.assertIn('ui:project-workspace:${agent.id}',raw)
         self.assertNotIn('Show project ${id}',raw)
         self.assertNotIn('Show project ${project.id}',raw)
+        self.assertIn('window.AgentieProjectWorkspace={open:openWorkspace,activeAgent}',raw)
 
     def test_open_click_is_captured_before_older_project_handler(self):
         raw=Path('frontend/project_workspace.js').read_text(encoding='utf-8')
@@ -30,6 +41,7 @@ class SpecialistProjectWorkspaceRegressionTests(unittest.TestCase):
         self.assertIn('e.stopImmediatePropagation()',raw)
         self.assertIn('openWorkspace(button)',raw)
         self.assertIn('},true);',raw)
+        self.assertIn("button.textContent='Opening…'",raw)
 
     def test_full_result_comes_from_that_agents_handoff_history(self):
         raw=Path('frontend/project_workspace.js').read_text(encoding='utf-8')
