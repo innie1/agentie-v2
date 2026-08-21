@@ -15,6 +15,7 @@ from agentie.core.artifact_naming import artifact_filename,creator_from_session
 from agentie.core.document_design import choose_style, document_title, first_numeric_series, parse_blocks
 from agentie.core.file_service import UPLOADS, inspect_file, unique_path
 from agentie.core.memory_store import latest_assistant_text
+from agentie.core.result_memory import resolve_result_reference
 
 _PDF_INTENT_RE=re.compile(r"\b(?:create|make|generate|export|save|turn|convert)\b.*\bpdf\b|\bpdf\b.*\b(?:create|make|generate|export|save|turn|convert)\b",re.I)
 _REFERENCE_RE=re.compile(r"\b(?:this|that|it|the previous answer|previous answer|last answer|above|what you just wrote|what you wrote)\b",re.I)
@@ -70,6 +71,7 @@ def create_pdf(content:str,filename:str|None=None,creator:str="Agentie",style_hi
 def try_pdf_request(session_id:str,message:str)->dict|None:
     if not _PDF_INTENT_RE.search(message):return None
     filename=_extract_filename(message);content=_explicit_content(message)
+    if content is None:content=resolve_result_reference(session_id,message)
     if content is None and (_REFERENCE_RE.search(message) or len(message.split())<=12):content=latest_assistant_text(session_id,max_chars=40000)
     if not content:return {'message':'What should I put in the PDF? You can paste the content or say “use the previous answer.”','card':None,'needs_content':True}
     creator=creator_from_session(session_id);card=create_pdf(content,filename,creator,message);return {'message':f"Created {card['name']} using the {card.get('document_style','professional')} document style.",'card':card,'needs_content':False}
