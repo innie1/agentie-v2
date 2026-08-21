@@ -15,10 +15,11 @@ from agentie.core.artifact_naming import artifact_filename,creator_from_session
 from agentie.core.document_design import choose_style, document_title, first_numeric_series, parse_blocks
 from agentie.core.file_service import UPLOADS, inspect_file, unique_path
 from agentie.core.memory_store import latest_assistant_text
-from agentie.core.result_memory import resolve_result_reference
+from agentie.core.result_memory import artifact_source_picker,existing_artifact,list_result_candidates,remember_artifact,resolve_result_reference
 
 _PDF_INTENT_RE=re.compile(r"\b(?:create|make|generate|export|save|turn|convert)\b.*\bpdf\b|\bpdf\b.*\b(?:create|make|generate|export|save|turn|convert)\b",re.I)
 _REFERENCE_RE=re.compile(r"\b(?:this|that|it|the previous answer|previous answer|last answer|above|what you just wrote|what you wrote)\b",re.I)
+_SELECTED_RE=re.compile(r"\bresult\s+[a-f0-9]{12,24}\b",re.I)
 
 def _clean_filename(name:str|None,creator:str="Agentie")->str:return artifact_filename(creator,name,'.pdf','report')
 def _extract_filename(message:str)->str|None:
@@ -70,8 +71,19 @@ def create_pdf(content:str,filename:str|None=None,creator:str="Agentie",style_hi
 
 def try_pdf_request(session_id:str,message:str)->dict|None:
     if not _PDF_INTENT_RE.search(message):return None
-    filename=_extract_filename(message);content=_explicit_content(message)
+    explicit=_explicit_content(message)
+    if explicit is None and not _SELECTED_RE.search(message) and (_REFERENCE_RE.search(message) or re.search(r"\b(?:research|result|report|findings|work)\b",message,re.I)):
+        candidates=list_result_candidates(session_id,8)
+        if len(candidates)>1:return {'message':'I found several possible results. Choose which one you want to turn into a PDF.','card':artifact_source_picker(session_id,'pdf',candidates),'needs_content':True}
+    filename=_extract_filename(message);content=explicit
     if content is None:content=resolve_result_reference(session_id,message)
+    if content is None:
+        candidates=list_result_candidates(session_id,2)
+        if len(candidates)==1:content=str(candidates[0].get('content') or '')
     if content is None and (_REFERENCE_RE.search(message) or len(message.split())<=12):content=latest_assistant_text(session_id,max_chars=40000)
     if not content:return {'message':'What should I put in the PDF? You can paste the content or say “use the previous answer.”','card':None,'needs_content':True}
-    creator=creator_from_session(session_id);card=create_pdf(content,filename,creator,message);return {'message':f"Created “{card.get('document_name') or card['name']}” as {card['name']} using the {card.get('document_style','professional')} document style.",'card':card,'needs_content':False}
+    existing=existing_artifact(session_id,'pdf',content)
+    if existing:
+        existing['already_created']=True
+        return {'message':f"Already created “{existing.get('document_name') or existing.get('name')}”. Here is the existing file.",'card':existing,'needs_content':False,'already_created':True}
+    creator=creator_from_session(session_id);card=create_pdf(content,filename,creator,message);remember_artifact(session_id,'pdf',content,card);return {'message':f"Created “{card.get('document_name') or card['name']}” as {card['name']} using the {card.get('document_style','professional')} document style.",'card':card,'needs_content':False}
