@@ -53,12 +53,12 @@ def create_team_job(task,agents,requested_by="user",project_id=None):
     for a in agents:
         task_text=str(task).strip()
         if project:
-            scoped=project_context(project,a.get("role") or a.get("base"),task_text)
+            scoped=project_context(project,a.get("role") or a.get("base"),task_text,agent_name=a.get("name"))
             context={"task":task_text,"project_id":project.get("id"),"scoped_brief":scoped}
         else:
             context={"task":task_text}
         h={"id":"ho_"+uuid.uuid4().hex[:8],"from":requested_by,"to_agent_id":a["id"],"to_agent_name":a["name"],"task":task_text,"context":context,"status":"queued","result":None,"error":None,"attempts":0,"progress_summary":None,"status_checked_at":None};hs.append(h)
-    job={"id":jid,"task":str(task).strip(),"status":"queued","requested_by":requested_by,"project_id":project.get("id") if project else None,"agent_ids":[a["id"] for a in agents],"agent_names":[a["name"] for a in agents],"handoffs":hs,"created_at":now,"updated_at":now,"final_output":None}
+    job={"id":jid,"task":str(task).strip(),"status":"queued","requested_by":requested_by,"project_id":project.get("id") if project else None,"agent_ids":[a["id"] for a in agents],"agent_names":[a["name"] for a in agents],"handoffs":hs,"created_at":now,"updated_at":now,"final_output":None,"completion_notified_at":None}
     with _LOCK:items=_load();items.append(job);_save(items)
     if project:
         for a in agents:record_handoff(project["id"],requested_by,a["name"],task,jid)
@@ -121,6 +121,18 @@ def _latest_job_for_status():
     jobs=list_team_jobs(30);return next((j for j in jobs if j.get("status") in {"queued","working"}),jobs[0] if jobs else None)
 def _looks_like_status_request(l):return bool((re.search(r"\bteam_[a-z0-9]+\b",l) and re.search(r"\b(status|state|progress|update|doing|going)\b",l)) or re.search(r"\b(state|status|progress)\s+(of|on)\s+(that|this|the)\s+(task|job|team job)\b|\bhow are they doing\b|\bwhat are (the )?agents? doing\b|\b(give|show|tell) me (a )?(quick |small |brief )?update (on|about) (that|this|the) (task|job|team job)\b",l))
 def team_job_card(j):return {"type":"team_job","id":j["id"],"task":j["task"],"status":j["status"],"project_id":j.get("project_id"),"agents":j.get("agent_names",[]),"handoffs":[{"id":h["id"],"agent":h["to_agent_name"],"status":h["status"],"error":h.get("error"),"attempts":h.get("attempts",0),"summary":h.get("progress_summary"),"status_checked_at":h.get("status_checked_at")} for h in j.get("handoffs",[])],"final_output":j.get("final_output"),"created_at":j.get("created_at"),"started_at":j.get("started_at"),"finished_at":j.get("finished_at"),"updated_at":j.get("updated_at"),"status_checked_at":j.get("status_checked_at")}
+def poll_team_completion_events(limit=20):
+    """Return each terminal team/delegation completion once for the existing local-event UI."""
+    terminal={"completed","failed","partial","cancelled"};events=[];changed=False;now=_now()
+    with _LOCK:
+        items=_load()
+        for j in reversed(items):
+            if j.get("status") not in terminal or j.get("completion_notified_at"):continue
+            status=str(j.get("status") or "completed");ok=status=="completed";title="Agent collaboration completed" if ok else "Agent collaboration needs attention"
+            events.append({"message":f"{title}: {j.get('task') or 'team task'}.","card":{**team_job_card(j),"completion_event":True}});j["completion_notified_at"]=now;changed=True
+            if len(events)>=max(1,limit):break
+        if changed:_save(items)
+    return list(reversed(events))
 def _status_message(j):return "\n".join([f"Team task is {j.get('status','unknown')}."]+[f"{h.get('to_agent_name') or 'Agent'}: {h.get('progress_summary') or _fallback_status(j,h)}" for h in j.get("handoffs",[])])
 def _finish_job(jid,results,only_ids=None):
     by={hid:(out,err) for hid,out,err in results}
@@ -152,7 +164,12 @@ def retry_team_worker(jid,agent_name):
     h=next((h for h in j["handoffs"] if str(h.get("to_agent_name","")).casefold()==agent_name.casefold()),None)
     if not h:raise ValueError(f"Agent {agent_name} is not part of this team job.")
     if h.get("status")!="failed":raise ValueError(f"{h['to_agent_name']} is not failed and does not need a retry.")
-    hid=h["id"];_mutate(jid,lambda x:[q.update(status="queued",error=None,progress_summary=None,status_checked_at=None) for q in x["handoffs"] if q["id"]==hid]);start_team_job(jid,{hid});return get_team_job(jid) or j
+    hid=h["id"]
+    def reset(x):
+        x["completion_notified_at"]=None
+        for q in x["handoffs"]:
+            if q["id"]==hid:q.update(status="queued",error=None,progress_summary=None,status_checked_at=None)
+    _mutate(jid,reset);start_team_job(jid,{hid});return get_team_job(jid) or j
 
 def route_team_command(message):
     text=" ".join(message.strip().split());lower=text.lower().strip(" .?!")
