@@ -1,8 +1,9 @@
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
-from agentie.core import file_service,job_engine,memory_store,office_artifacts,result_memory
+from agentie.core import file_service,job_engine,memory_store,office_artifacts,reference_router,result_memory,routine_worker
 from agentie.core.office_artifacts import try_office_request
 
 
@@ -15,12 +16,12 @@ class ArtifactResultWorkflowRegressionTests(unittest.TestCase):
             'result_workspace':result_memory.WORKSPACE,'result_file':result_memory.RESULTS_FILE,
             'file_workspace':file_service.WORKSPACE,'uploads':file_service.UPLOADS,'extracted':file_service.EXTRACTED,
             'office_uploads':office_artifacts.UPLOADS,
-            'job_workspace':job_engine.WORKSPACE,'job_db':job_engine.DB_PATH,
+            'job_workspace':job_engine.WORKSPACE,'job_db':job_engine.DB_PATH,'routine_events':routine_worker.EVENTS,
         }
         memory_store.WORKSPACE=root;memory_store.DB_PATH=root/'memory.sqlite3'
         result_memory.WORKSPACE=root;result_memory.RESULTS_FILE=root/'result_memory.json'
         file_service.WORKSPACE=root;file_service.UPLOADS=root/'uploads';file_service.EXTRACTED=root/'extracted';office_artifacts.UPLOADS=file_service.UPLOADS
-        job_engine.WORKSPACE=root;job_engine.DB_PATH=root/'jobs.sqlite3';job_engine._RUNNING.clear()
+        job_engine.WORKSPACE=root;job_engine.DB_PATH=root/'jobs.sqlite3';job_engine._RUNNING.clear();routine_worker.EVENTS=root/'routine_events.json'
 
     def tearDown(self):
         try:memory_store._SEMANTIC_POOL.submit(lambda:None).result(timeout=15)
@@ -28,7 +29,7 @@ class ArtifactResultWorkflowRegressionTests(unittest.TestCase):
         memory_store.WORKSPACE=self.old['memory_workspace'];memory_store.DB_PATH=self.old['memory_db']
         result_memory.WORKSPACE=self.old['result_workspace'];result_memory.RESULTS_FILE=self.old['result_file']
         file_service.WORKSPACE=self.old['file_workspace'];file_service.UPLOADS=self.old['uploads'];file_service.EXTRACTED=self.old['extracted'];office_artifacts.UPLOADS=self.old['office_uploads']
-        job_engine.WORKSPACE=self.old['job_workspace'];job_engine.DB_PATH=self.old['job_db'];job_engine._RUNNING.clear()
+        job_engine.WORKSPACE=self.old['job_workspace'];job_engine.DB_PATH=self.old['job_db'];job_engine._RUNNING.clear();routine_worker.EVENTS=self.old['routine_events']
         self.temp.cleanup()
 
     def _result(self,session,title,body):
@@ -64,7 +65,9 @@ class ArtifactResultWorkflowRegressionTests(unittest.TestCase):
         self.assertEqual(result_memory.resolve_result_reference(session,f'create docx from result {candidate["id"]}'),a)
 
     def test_research_then_pdf_is_two_step_dependency_plan(self):
-        plan=job_engine.make_plan('Research Nigerian church management apps, then create a PDF with the research')
+        phrase='Research Nigerian church management apps and after the research create a PDF with the research'
+        self.assertTrue(reference_router._looks_like_background_job(phrase))
+        plan=job_engine.make_plan(phrase)
         self.assertEqual(len(plan),2)
         self.assertEqual(plan[0]['specialist'],'deep_research')
         self.assertEqual(plan[1]['specialist'],'artifact_pdf')
@@ -81,6 +84,15 @@ class ArtifactResultWorkflowRegressionTests(unittest.TestCase):
         self.assertEqual(first[0]['card']['type'],'job_progress')
         self.assertEqual(first[0]['card']['status'],'completed')
         self.assertEqual(second,[])
+
+    def test_existing_event_poll_surfaces_generated_file_card(self):
+        artifact={'type':'uploaded_file','name':'Alex-report.docx','document_name':'Architecture Report','suffix':'.docx'}
+        event={'message':'Architecture job completed successfully.','card':{'type':'job_progress','id':'abc','title':'Architecture job','status':'completed','artifacts':[artifact]}}
+        with patch.object(routine_worker,'poll_job_completion_events',return_value=[event]),patch.object(routine_worker,'poll_team_completion_events',return_value=[]):
+            items=routine_worker.poll_routine_events()
+        self.assertEqual(items[0]['card']['type'],'job_progress')
+        self.assertEqual(items[1]['card'],artifact)
+        self.assertIn('Generated file',items[1]['message'])
 
     def test_picker_ui_uses_single_select_checkboxes(self):
         raw=Path('frontend/project_workspace.js').read_text(encoding='utf-8')
