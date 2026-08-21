@@ -89,5 +89,23 @@ class TeamOrchestrationRegressionTests(unittest.TestCase):
         self.assertIn("create_agent",actions);self.assertIn("use_agent",actions)
         self.assertEqual(len(agent_registry.list_agents()),before)
 
+    def test_state_of_that_task_asks_workers_for_small_summaries(self):
+        job=team_orchestrator.create_team_job("Review launch readiness",[self.alex,self.writer])
+        team_orchestrator._mutate(job["id"],lambda j:[h.update(status="working") for h in j["handoffs"]])
+        async def fake_status(current,handoff):return handoff["id"],f"{handoff['to_agent_name']} is checking their assigned launch items."
+        with patch.object(team_orchestrator,"_ask_worker_status",side_effect=fake_status):
+            result=route_role_command("What's the state of that task?")
+        self.assertEqual(result["card"]["id"],job["id"])
+        summaries={h["agent"]:h["summary"] for h in result["card"]["handoffs"]}
+        self.assertIn("Alex is checking",summaries["Alex"]);self.assertIn("Writer is checking",summaries["Writer"])
+        self.assertTrue(result["card"].get("status_checked_at"))
+
+    def test_worker_status_falls_back_truthfully_when_status_call_fails(self):
+        job=team_orchestrator.create_team_job("Review launch readiness",[self.alex])
+        handoff=job["handoffs"][0];handoff["status"]="working"
+        with patch("agentie.core.runner.run_agent",side_effect=RuntimeError("usage limit")):
+            hid,summary=asyncio.run(team_orchestrator._ask_worker_status(job,handoff))
+        self.assertEqual(hid,handoff["id"]);self.assertIn("Still working",summary);self.assertIn("no completed result",summary)
+
 
 if __name__=="__main__":unittest.main()
