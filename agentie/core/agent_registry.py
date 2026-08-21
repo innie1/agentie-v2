@@ -24,8 +24,10 @@ def _save(data: dict[str, Any]) -> None:
     AGENTS_FILE.parent.mkdir(parents=True, exist_ok=True);AGENTS_FILE.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
 def _clean(value: str, limit: int = 240) -> str:return " ".join(str(value or "").strip().split())[:limit]
 def _public(agent: dict[str, Any]) -> dict[str, Any]:
-    return {"id":agent.get("id"),"name":agent.get("name"),"role":agent.get("role"),"base":agent.get("base"),"purpose":agent.get("purpose", ""),"manager_id":agent.get("manager_id"),"status":agent.get("status","idle"),"memory_scope":agent.get("memory_scope"),"session_prefix":agent.get("session_prefix"),"skills":list(agent.get("skills") or []),"permissions":dict(agent.get("permissions") or {}),"created_at":agent.get("created_at"),"updated_at":agent.get("updated_at")}
-def list_agents() -> list[dict[str, Any]]:return [_public(item) for item in _load().get("agents", [])]
+    return {"id":agent.get("id"),"name":agent.get("name"),"role":agent.get("role"),"base":agent.get("base"),"purpose":agent.get("purpose", ""),"manager_id":agent.get("manager_id"),"status":agent.get("status","idle"),"pinned":bool(agent.get("pinned",False)),"pin_order":agent.get("pin_order"),"memory_scope":agent.get("memory_scope"),"session_prefix":agent.get("session_prefix"),"skills":list(agent.get("skills") or []),"permissions":dict(agent.get("permissions") or {}),"created_at":agent.get("created_at"),"updated_at":agent.get("updated_at")}
+def list_agents() -> list[dict[str, Any]]:
+    items=[_public(item) for item in _load().get("agents", [])]
+    return sorted(items,key=lambda a:(0 if a.get("pinned") else 1,int(a.get("pin_order") or 10**9) if a.get("pinned") else 10**9,str(a.get("created_at") or "")))
 def get_agent(agent_id_or_name: str) -> dict[str, Any] | None:
     key=_clean(agent_id_or_name,240).casefold()
     if not key:return None
@@ -43,8 +45,21 @@ def create_agent(name: str, role: str, base: str = "general", purpose: str = "",
         if not manager:raise ValueError("Manager agent was not found.")
         manager_id=str(manager["id"])
     now=datetime.now().astimezone().isoformat(timespec="seconds");agent_id="agt_"+uuid.uuid4().hex[:10]
-    item={"id":agent_id,"name":name,"role":role,"base":base,"purpose":_clean(purpose,800),"manager_id":manager_id,"status":"idle","memory_scope":f"agent:{agent_id}","session_prefix":f"agent:{agent_id}:","skills":sorted(set(str(x).strip() for x in (skills or []) if str(x).strip())),"permissions":permissions or {"delegate":base=="manager","shared_company_memory":"read"},"created_at":now,"updated_at":now}
+    item={"id":agent_id,"name":name,"role":role,"base":base,"purpose":_clean(purpose,800),"manager_id":manager_id,"status":"idle","pinned":False,"pin_order":None,"memory_scope":f"agent:{agent_id}","session_prefix":f"agent:{agent_id}:","skills":sorted(set(str(x).strip() for x in (skills or []) if str(x).strip())),"permissions":permissions or {"delegate":base=="manager","shared_company_memory":"read"},"created_at":now,"updated_at":now}
     agents.append(item);data["updated_at"]=now;_save(data);return {"created":True,"agent":_public(item)}
+
+def set_agent_pinned(agent_id_or_name:str,pinned:bool=True)->dict[str,Any]:
+    data=_load();agents=data.setdefault("agents",[]);key=_clean(agent_id_or_name).casefold();target=next((x for x in agents if str(x.get("id","")).casefold()==key or str(x.get("name","")).casefold()==key),None)
+    if not target:raise ValueError("Agent was not found.")
+    now=datetime.now().astimezone().isoformat(timespec="seconds")
+    if pinned:
+        if not target.get("pinned"):
+            orders=[int(x.get("pin_order") or 0) for x in agents if x.get("pinned")]
+            target["pin_order"]=(max(orders) if orders else 0)+1
+        target["pinned"]=True
+    else:
+        target["pinned"]=False;target["pin_order"]=None
+    target["updated_at"]=now;data["updated_at"]=now;_save(data);return _public(target)
 
 def update_agent_profile(agent_id_or_name:str,*,name:str|None=None,role:str|None=None,base:str|None=None)->dict[str,Any]:
     data=_load();agents=data.setdefault("agents",[]);key=_clean(agent_id_or_name).casefold();target=next((x for x in agents if str(x.get("id","")).casefold()==key or str(x.get("name","")).casefold()==key),None)
