@@ -98,8 +98,19 @@ def _candidate_title(content: str) -> str:
     return _clean_preview(first)[:100] or "Result"
 
 
+def _append_typed_candidates(out:list[dict[str,Any]],seen:set[str],items:list[dict[str,Any]],limit:int)->None:
+    for item in reversed(items):
+        content=result_content(item)
+        if not content:continue
+        fid=source_fingerprint(content)
+        if fid in seen:continue
+        seen.add(fid);clean=_clean_preview(content)
+        out.append({"id":fid,"title":_candidate_title(content),"summary":clean[:220]+("…" if len(clean)>220 else ""),"content":content,"route":str(item.get("type") or "result"),"created_at":item.get("at")})
+        if len(out)>=max(1,limit):return
+
+
 def list_result_candidates(session_id: str, limit: int = 8) -> list[dict[str, Any]]:
-    """Return substantive result-like outputs from this exact chat, newest first."""
+    """Return substantive result-like outputs from this exact chat, newest first; use global results only as fallback."""
     from agentie.core.memory_store import recent_messages
     seen=set();out=[]
     excluded={"local_artifact","local_pdf","project_handoff","capability_permission","observability","clarification"}
@@ -113,18 +124,11 @@ def list_result_candidates(session_id: str, limit: int = 8) -> list[dict[str, An
         if fid in seen:continue
         seen.add(fid);clean=_clean_preview(content)
         out.append({"id":fid,"title":_candidate_title(content),"summary":clean[:220]+("…" if len(clean)>220 else ""),"content":content,"route":route or "assistant","created_at":row.get("created_at"),"team_job_id":meta.get("team_job_id"),"project_id":meta.get("project_id")})
-        if len(out)>=max(1,limit):break
-    data=_load()
-    for bucket in (session_id,GLOBAL_RESULTS):
-        for item in reversed(data.get(bucket,[])):
-            content=result_content(item)
-            if not content:continue
-            fid=source_fingerprint(content)
-            if fid in seen:continue
-            seen.add(fid);clean=_clean_preview(content)
-            out.append({"id":fid,"title":_candidate_title(content),"summary":clean[:220]+("…" if len(clean)>220 else ""),"content":content,"route":str(item.get("type") or "result"),"created_at":item.get("at")})
-            if len(out)>=max(1,limit):return out
-    return out
+        if len(out)>=max(1,limit):return out
+    data=_load();_append_typed_candidates(out,seen,data.get(session_id,[]),limit)
+    if out:return out[:max(1,limit)]
+    _append_typed_candidates(out,seen,data.get(GLOBAL_RESULTS,[]),limit)
+    return out[:max(1,limit)]
 
 
 def resolve_candidate(session_id: str, candidate_id: str) -> str | None:
@@ -166,6 +170,9 @@ def resolve_result_reference(session_id: str, user_message: str) -> str | None:
     if selected:
         hit=resolve_candidate(session_id,selected.group(1))
         if hit:return hit
+    if re.search(r"\b(?:this|that|it|the previous answer|previous answer|last answer|above|what you just wrote|what you wrote)\b",text):
+        candidates=list_result_candidates(session_id,2)
+        if len(candidates)==1:return str(candidates[0].get("content") or "") or None
     if re.search(rf"\b{last30}\b.*\b{research_word}\b|\b{research_word}\b.*\b{last30}\b",text):return result_content(_last(session_id,{"last30days"}))
     if re.search(r"\b(?:team job|team result|collaboration|handoff result|agents? working)\b",text):return result_content(_last(session_id,{"team_job"}))
     if re.search(r"\b(?:research|research result|research findings|research report)\b",text):
