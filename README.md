@@ -67,6 +67,7 @@ Delete project Shepherd
 - Multi-step background jobs with progress and provider-call budgets.
 - Jobs keep their internal IDs for routing but show users human-readable NPC-generated titles in cards and job controls.
 - Compound requests such as `research X, then create a PDF/DOCX` are planned as dependent steps: research completes first, then the existing local artifact generator creates the requested file without another provider call.
+- A research step with no usable sources is treated as failed; dependent artifact steps are blocked and no failure-message PDF/DOCX is generated.
 - Completed/failed background jobs emit a one-time user-visible completion event through the existing local event polling system.
 - Completed/failed/partial delegated team jobs also emit a one-time completion event; retrying a failed worker resets that notification marker so the retried result can alert again.
 - Pause, resume and retry controls.
@@ -109,6 +110,7 @@ Agentie includes local tools and routing for capabilities such as:
 - If exactly one eligible result exists in the active agent chat, a referenced artifact request creates the file directly.
 - If several eligible research/results exist, Agentie returns a native result picker with a small single-select checkbox list so the user chooses the exact source instead of Agentie guessing.
 - Result choices are isolated to the active agent/session; selecting a result passes a stable internal fingerprint back to the normal artifact generator.
+- Error/fallback replies such as unresolved local-file messages and failed research messages are never eligible artifact sources.
 - Creating the same artifact format from the same source result again returns the already-created file card instead of generating a duplicate file.
 
 ### Skills, plugins and MCP
