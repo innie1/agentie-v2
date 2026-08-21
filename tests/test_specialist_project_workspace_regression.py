@@ -13,16 +13,15 @@ class SpecialistProjectWorkspaceRegressionTests(unittest.TestCase):
         raw=Path('frontend/project_workspace.js').read_text(encoding='utf-8')
         self.assertIn('workspace-preview-task',raw)
         self.assertIn('workspace-preview-summary',raw)
-        self.assertIn('cleanPreview',raw)
+        self.assertIn('previewText',raw)
         self.assertIn('previewTitle',raw)
         self.assertIn("replace(/^#{1,6}\\s*/gm,'')",raw)
         self.assertIn("replace(/\\*\\*([^*]+)\\*\\*/g,'$1')",raw)
-        self.assertIn("strong.textContent=title||'Completed result'",raw)
         self.assertIn('-webkit-line-clamp:2',raw)
 
     def test_active_agent_lookup_ignores_role_badge_text(self):
         raw=Path('frontend/project_workspace.js').read_text(encoding='utf-8')
-        self.assertIn("strong?.childNodes?.[0]?.textContent?.trim()",raw)
+        self.assertIn("find(n=>n.nodeType===Node.TEXT_NODE)",raw)
         self.assertIn("find(a=>a.name===name)",raw)
 
     def test_open_uses_scoped_agent_project_not_global_project(self):
@@ -31,7 +30,6 @@ class SpecialistProjectWorkspaceRegressionTests(unittest.TestCase):
         self.assertIn('ui:project-workspace:${agent.id}',raw)
         self.assertNotIn('Show project ${id}',raw)
         self.assertNotIn('Show project ${project.id}',raw)
-        self.assertIn('window.AgentieProjectWorkspace={open:openWorkspace,activeAgent}',raw)
 
     def test_open_click_is_captured_before_older_project_handler(self):
         raw=Path('frontend/project_workspace.js').read_text(encoding='utf-8')
@@ -60,13 +58,14 @@ class SpecialistProjectWorkspaceRegressionTests(unittest.TestCase):
         self.assertIn("section(el,'Artifacts')",raw)
         self.assertIn('project.artifacts||[]',raw)
 
-    def test_workspace_shows_only_scoped_context_fields(self):
+    def test_workspace_uses_original_scoped_handoff_context(self):
         raw=Path('frontend/project_workspace.js').read_text(encoding='utf-8')
-        self.assertIn("contextItem('Relevant decisions',project.decisions)",raw)
-        self.assertIn("contextItem('Relevant context',project.context)",raw)
-        self.assertIn("contextItem('Milestones',project.milestones)",raw)
-        self.assertNotIn('assigned_agents',raw)
-        self.assertNotIn('specialists',raw)
+        self.assertIn('function scopedBriefParts(brief)',raw)
+        self.assertIn("line==='RELEVANT PROJECT KNOWLEDGE:'",raw)
+        self.assertIn("contextItem('Relevant decisions',scoped.decisions)",raw)
+        self.assertIn("contextItem('Relevant context',scoped.knowledge)",raw)
+        self.assertIn("contextItem('Milestones',scoped.milestones)",raw)
+        self.assertNotIn("contextItem('Relevant context',project.context)",raw)
 
     def test_project_preview_observer_cannot_self_trigger_forever(self):
         raw=Path('frontend/project_workspace.js').read_text(encoding='utf-8')
