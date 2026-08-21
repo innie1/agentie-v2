@@ -27,7 +27,12 @@ def _push(event:dict[str,Any])->None:
 def poll_routine_events()->list[dict[str,Any]]:
     items=_load_events()
     if items:_save_events([])
-    try:items.extend(poll_job_completion_events())
+    try:
+        jobs=poll_job_completion_events();items.extend(jobs)
+        for event in jobs:
+            card=event.get("card") if isinstance(event,dict) else None
+            for artifact in (card.get("artifacts") or []) if isinstance(card,dict) else []:
+                if isinstance(artifact,dict):items.append({"message":f"Generated file: {artifact.get('document_name') or artifact.get('name') or 'artifact'}.","card":artifact})
     except Exception:pass
     try:items.extend(poll_team_completion_events())
     except Exception:pass
