@@ -77,13 +77,15 @@ def maybe_auto_delegate(message:str,session_id:str|None)->dict[str,Any]|None:
         task=str(pending.get("task") or "").strip();specialty=str(pending.get("specialty") or _specialty_for_agent(specialist))
         if not task:return {"message":"The pending handoff no longer has a task to run.","card":None}
         return _start_handoff(current,specialist,task,session_id,specialty,always=always)
-    # Explicit orchestration/registry commands are handled by their existing routers.
-    if re.match(r"^(delegate|hand off|handoff|have |ask |tell |create |make |add |delete |remove |show |list |retry )",lower):return None
     # Manager Autopilot is intentionally inserted into the existing handoff router,
     # so the main request pipeline and all existing cards/events remain unchanged.
+    # It gets first look at natural goals such as "Create a launch campaign", while
+    # its own guard excludes real registry/delegation/delete/list commands.
     from agentie.core.manager_autopilot import maybe_manager_autopilot
     autopilot=maybe_manager_autopilot(message,session_id)
     if autopilot is not None:return autopilot
+    # Explicit orchestration/registry commands are handled by their existing routers.
+    if re.match(r"^(delegate|hand off|handoff|have |ask |tell |create |make |add |delete |remove |show |list |retry )",lower):return None
     task_specialty,confidence=_specialty_for_task(message);current_specialty=_specialty_for_agent(current)
     if confidence<1 or task_specialty=="general" or task_specialty==current_specialty:return None
     specialist=best_specialist(message,current.get("id"))
