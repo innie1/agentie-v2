@@ -68,6 +68,7 @@ Delete project Shepherd
 - Jobs keep their internal IDs for routing but show users human-readable NPC-generated titles in cards and job controls.
 - Compound requests such as `research X, then create a PDF/DOCX` are planned as dependent steps: research completes first, then the existing local artifact generator creates the requested file without another provider call.
 - A research step with no usable sources is treated as failed; dependent artifact steps are blocked and no failure-message PDF/DOCX is generated.
+- Deep research retries a small set of DDGS search backends instead of depending on a single `auto` backend; if all attempts fail, the real retrieval error is preserved in the failed research step so the user can see why no sources were found.
 - Completed/failed background jobs emit a one-time user-visible completion event through the existing local event polling system.
 - Completed/failed/partial delegated team jobs also emit a one-time completion event; retrying a failed worker resets that notification marker so the retried result can alert again.
 - Pause, resume and retry controls.
