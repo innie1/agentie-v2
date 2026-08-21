@@ -5,6 +5,7 @@ from unittest.mock import patch
 
 from agentie.core import file_service,job_engine,memory_store,office_artifacts,reference_router,result_memory,routine_worker
 from agentie.core.office_artifacts import try_office_request
+from agentie.core.pdf_service import try_pdf_request
 
 
 class ArtifactResultWorkflowRegressionTests(unittest.TestCase):
@@ -46,6 +47,15 @@ class ArtifactResultWorkflowRegressionTests(unittest.TestCase):
         self.assertEqual(response['card']['format'],'docx')
         self.assertEqual(len(response['card']['items']),2)
         self.assertTrue(all(x.get('id') and x.get('title') for x in response['card']['items']))
+
+    def test_multiple_results_return_pdf_picker_too(self):
+        session='agent:agt_alex:main'
+        self._result(session,'Architecture report','Architecture content.')
+        self._result(session,'Security review','Security content.')
+        response=try_pdf_request(session,'make a PDF with this')
+        self.assertEqual(response['card']['type'],'artifact_source_picker')
+        self.assertEqual(response['card']['format'],'pdf')
+        self.assertEqual(len(response['card']['items']),2)
 
     def test_single_result_creates_directly_and_second_request_reuses_file(self):
         session='agent:agt_alex:main';self._result(session,'Architecture report','Architecture content.')
