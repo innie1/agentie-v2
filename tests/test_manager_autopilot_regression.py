@@ -72,6 +72,9 @@ class ManagerAutopilotRegressionTests(unittest.TestCase):
         self.assertIsNone(manager_autopilot.build_autopilot_plan(
             'Research church management apps and then create a PDF report.',self.ceo))
 
+    def test_simple_writing_request_is_not_expanded_into_autopilot(self):
+        self.assertIsNone(manager_autopilot.build_autopilot_plan('Write the launch post.',self.ceo))
+
     def test_natural_create_goal_reaches_autopilot_before_old_create_guard(self):
         session=f"{self.ceo['session_prefix']}main"
         sentinel={'message':'autopilot','card':{'type':'team_job'}}
