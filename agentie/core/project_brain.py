@@ -20,8 +20,7 @@ def get_project(key):
     with _LOCK:return next((dict(x) for x in reversed(_load()) if str(x.get("id","")).casefold()==k or str(x.get("name","")).casefold()==k),None)
 def latest_project(active_only=True):return next((x for x in list_projects() if not active_only or x.get("status")=="active"),None)
 def projects_for_agent(agent_id,limit=50):
-    aid=str(agent_id or "")
-    return [p for p in list_projects(limit) if aid and (p.get("owner_agent_id")==aid or aid in (p.get("assigned_agent_ids") or []))]
+    aid=str(agent_id or "");return [p for p in list_projects(limit) if aid and (p.get("owner_agent_id")==aid or aid in (p.get("assigned_agent_ids") or []))]
 def _kind(text):
     l=text.casefold()
     if any(x in l for x in ("novel","book","fiction","story")):return "novel"
@@ -48,11 +47,9 @@ def delete_project(pid):
     with _LOCK:
         items=_load();index=next((i for i,x in enumerate(items) if x.get("id")==key),None)
         if index is None:
-            tomb=find_deleted("project",key,store)
-            return {"already_deleted":True,"id":tomb.get("entity_id"),"name":tomb.get("name"),"deleted_at":tomb.get("deleted_at")} if tomb else None
+            tomb=find_deleted("project",key,store);return {"already_deleted":True,"id":tomb.get("entity_id"),"name":tomb.get("name"),"deleted_at":tomb.get("deleted_at")} if tomb else None
         deleted=items.pop(index);_save(items)
-    remember_deleted("project",str(deleted.get("id")),str(deleted.get("name") or ""),{"kind":deleted.get("kind")},store)
-    return deleted
+    remember_deleted("project",str(deleted.get("id")),str(deleted.get("name") or ""),{"kind":deleted.get("kind")},store);return deleted
 def assign_agents(pid,agents):
     with _LOCK:
         items=_load();p=next((x for x in items if x.get("id")==pid),None)
@@ -69,8 +66,7 @@ def set_agent_work(pid,agent,task,team_job_id=None,from_agent=None,status="queue
     with _LOCK:
         items=_load();p=next((x for x in items if x.get("id")==pid),None)
         if not p:return None
-        work=list(p.get("agent_work") or []);row=next((x for x in work if str(x.get("agent_id"))==aid),None);now=_now()
-        value={"agent_id":aid,"agent_name":name,"role":role,"task":str(task or "").strip(),"team_job_id":team_job_id,"from_agent":from_agent,"status":status,"scoped_brief":str(scoped_brief or "").strip(),"updated_at":now}
+        work=list(p.get("agent_work") or []);row=next((x for x in work if str(x.get("agent_id"))==aid),None);now=_now();value={"agent_id":aid,"agent_name":name,"role":role,"task":str(task or "").strip(),"team_job_id":team_job_id,"from_agent":from_agent,"status":status,"scoped_brief":str(scoped_brief or "").strip(),"updated_at":now}
         if row:row.update(value)
         else:work.append(value)
         p["agent_work"]=work;p["updated_at"]=now;_save(items);return dict(p)
@@ -91,8 +87,7 @@ def append_project_item(pid,section,value,metadata=None):
         if not p:return None
         p.setdefault(section,[]).append({"value":value,"at":_now(),**(metadata or {})});p["updated_at"]=_now();_save(items);return dict(p)
 def project_context(project,role,task,max_items=8):
-    role_l=str(role or "").casefold();parts=[f"PROJECT: {project.get('name')}",f"GOAL: {project.get('goal')}",f"YOUR ASSIGNMENT: {task}"]
-    skill=activate_project_skill(project.get("skill"))
+    role_l=str(role or "").casefold();parts=[f"PROJECT: {project.get('name')}",f"GOAL: {project.get('goal')}",f"YOUR ASSIGNMENT: {task}"];skill=activate_project_skill(project.get("skill"))
     if skill:parts.append(f"ACTIVATED SKILL — {skill['name']}:\n{skill['instructions']}")
     decisions=[str(x.get("value",x)) for x in project.get("decisions",[])[-max_items:]]
     if decisions:parts.append("DECISIONS:\n- "+"\n- ".join(decisions))
@@ -109,8 +104,7 @@ def record_handoff(pid,from_agent,to_agent,task,team_job_id=None):
     try:
         from agentie.core.agent_registry import get_agent
         agent=get_agent(to_agent);project=get_project(pid)
-        if agent and project:
-            assign_agents(pid,[agent]);brief=project_context(project,agent.get("role") or agent.get("base"),task);set_agent_work(pid,agent,task,team_job_id,from_agent,"queued",brief)
+        if agent and project:assign_agents(pid,[agent]);brief=project_context(project,agent.get("role") or agent.get("base"),task);set_agent_work(pid,agent,task,team_job_id,from_agent,"queued",brief)
     except Exception:pass
 def record_worker_result(pid,agent_name,role,task,result):
     compact=re.sub(r"\s+"," ",str(result or "")).strip();compact=compact if len(compact)<=900 else compact[:899].rstrip()+"…";append_project_item(pid,"summaries",compact,{"agent":agent_name,"role":role,"task":task});append_project_item(pid,"knowledge",compact,{"source_agent":agent_name,"audience":"all","task":task});update_agent_work_status(pid,agent_name,"completed",compact)
@@ -125,8 +119,7 @@ def _scoped_values(p,role,max_items=8):
 def project_card(p,viewer_agent_id=None):
     base={"type":"project","id":p["id"],"name":p["name"],"goal":p["goal"],"kind":p["kind"],"status":p["status"],"skill":p.get("skill"),"specialists":p.get("specialists",[]),"assigned_agents":p.get("assigned_agents",[]),"assigned_to_viewer":bool(viewer_agent_id and viewer_agent_id in (p.get("assigned_agent_ids") or [])),"updated_at":p.get("updated_at")}
     if viewer_agent_id:
-        work=next((dict(x) for x in (p.get("agent_work") or []) if str(x.get("agent_id"))==str(viewer_agent_id)),None);role=(work or {}).get("role") or "general";decisions,context,milestones=_scoped_values(p,role);task=(work or {}).get("task") or "Work on this project";display_goal=f"Your delegated task: {task}. Project goal: {p.get('goal','')}"
-        own_summary=(work or {}).get("latest_summary")
+        work=next((dict(x) for x in (p.get("agent_work") or []) if str(x.get("agent_id"))==str(viewer_agent_id)),None);role=(work or {}).get("role") or "general";decisions,context,milestones=_scoped_values(p,role);task=(work or {}).get("task") or "Work on this project";display_goal=f"Your delegated task: {task}. Project goal: {p.get('goal','')}";own_summary=(work or {}).get("latest_summary")
         return {**base,"goal":display_goal,"viewer_assignment":work,"goals":[f"Your delegated task: {task}"],"decisions":decisions,"context":context,"milestones":milestones,"summaries":[own_summary] if own_summary else []}
     return {**base,"goals":_item_values(p,"goals"),"decisions":_item_values(p,"decisions"),"context":_item_values(p,"knowledge"),"milestones":_item_values(p,"milestones"),"summaries":p.get("summaries",[])[-8:]}
 def _name_from_goal(goal,kind):
@@ -141,6 +134,13 @@ def _project_from_reference(text):
         guess=m.group(1).strip(' .?!');hit=get_project(guess)
         if hit:return hit
     return None
+def _delegated_task(detail,project_name):
+    value=re.sub(r"\s+"," ",str(detail or "")).strip(' .?!\"“”')
+    if not value:return f"Work on project {project_name}"
+    value=re.sub(re.escape(project_name),"",value,count=1,flags=re.I).strip(' .?!:;,-')
+    value=re.sub(r"^(?:project\s+|for\s+|on\s+|about\s+)","",value,flags=re.I).strip(' .?!:;,-')
+    value=re.sub(r"\b(?:for|on|about|of)\s*$","",value,flags=re.I).strip(' .?!:;,-')
+    return value or f"Work on project {project_name}"
 def _project_delegation(text):
     project=_project_from_reference(text)
     if not project:return None
@@ -148,16 +148,15 @@ def _project_delegation(text):
     from agentie.core.team_orchestrator import create_team_job,start_team_job,team_job_card
     patterns=[re.match(r"^(?:delegate|assign|give)\s+(?:(?:project\s+)?(.+?)\s+)?to\s+(.+?)[.!?]?$",text,re.I),re.match(r"^(?:have|ask|tell)\s+(.+?)\s+(?:to\s+)?work\s+together\s+(?:on|for)\s+(?:project\s+)?(.+?)[.!?]?$",text,re.I)]
     raw_agents=None;task=f"Work on project {project['name']}"
-    if patterns[0]:raw_agents=patterns[0].group(2);detail=(patterns[0].group(1) or "").strip();task=detail if detail and project['name'].casefold() not in detail.casefold() else task
-    elif patterns[1]:raw_agents=patterns[1].group(1);detail=patterns[1].group(2).strip();task=detail if detail.casefold()!=project['name'].casefold() else task
+    if patterns[0]:raw_agents=patterns[0].group(2);task=_delegated_task(patterns[0].group(1),project['name'])
+    elif patterns[1]:raw_agents=patterns[1].group(1);task=_delegated_task(patterns[1].group(2),project['name'])
     if not raw_agents:return None
     names=[x.strip(' .?!\"“”') for x in re.split(r"\s*,\s*|\s+and\s+",raw_agents,flags=re.I) if x.strip()];agents=[]
     for name in names:
         a=get_agent(name)
         if not a:return {"message":f"Agent {name} was not found.","card":None}
         if all(x['id']!=a['id'] for x in agents):agents.append(a)
-    assign_agents(project['id'],agents);job=create_team_job(task,agents,project_id=project['id']);start_team_job(job['id'])
-    return {"message":f"Assigned {project['name']} to {', '.join(a['name'] for a in agents)}. The project is now visible from each assigned agent's workspace.","card":team_job_card(job)}
+    assign_agents(project['id'],agents);job=create_team_job(task,agents,project_id=project['id']);start_team_job(job['id']);return {"message":f"Assigned {project['name']} to {', '.join(a['name'] for a in agents)}. Task: {task}. The project is now visible from each assigned agent's workspace.","card":team_job_card(job)}
 def _delete_picker():
     items=list_projects();return {"message":"Choose the project or projects you want to delete.","card":{"type":"project_delete_picker","items":[project_card(x) for x in items]}}
 def _delete_request(raw):
@@ -174,13 +173,9 @@ def _delete_request(raw):
     if not projects:
         if already:return {"message":("Already deleted: "+", ".join(str(x) for x in already)+"."),"card":{"type":"already_deleted","entity_type":"project","names":already}}
         return _delete_picker()
-    ids=[p['id'] for p in projects];names=[p['name'] for p in projects];action="delete_projects:"+",".join(ids)
-    approval=create_approval(action,"Permanently delete "+(", ".join(names))+" from Project Brain? Historical agent chat messages are not deleted.",{"kind":"project_delete","project_ids":ids,"project_names":names})
-    prefix=("Already deleted: "+", ".join(str(x) for x in already)+". " if already else "")
-    return {"message":prefix+"Project deletion requires approval.","card":{"type":"approvals","items":[approval]}}
+    ids=[p['id'] for p in projects];names=[p['name'] for p in projects];action="delete_projects:"+",".join(ids);approval=create_approval(action,"Permanently delete "+(", ".join(names))+" from Project Brain? Historical agent chat messages are not deleted.",{"kind":"project_delete","project_ids":ids,"project_names":names});prefix=("Already deleted: "+", ".join(str(x) for x in already)+". " if already else "");return {"message":prefix+"Project deletion requires approval.","card":{"type":"approvals","items":[approval]}}
 def route_project_command(message):
-    text=" ".join(message.strip().split());lower=text.casefold().strip(" .?!")
-    delegated=_project_delegation(text)
+    text=" ".join(message.strip().split());lower=text.casefold().strip(" .?!");delegated=_project_delegation(text)
     if delegated is not None:return delegated
     if lower in {"delete project","delete a project","remove project","delete projects","remove projects"}:return _delete_picker()
     m_delete=re.match(r"^(?:delete|remove)\s+projects?\s+(.+?)[.!?]?$",text,re.I)
@@ -225,6 +220,5 @@ def route_project_command(message):
     if long_term:
         goal=text;k=_kind(goal);signals=("novel","screenplay","book","build an app","build a website","start a business","lose weight","learn ","study ","for the next month","every day","daily","weekly")
         if k!="general" and any(s in lower for s in signals):
-            existing=latest_project();p=existing if existing and existing.get("goal","").casefold()==goal.casefold() else create_project(_name_from_goal(goal,k),goal,k);suggestions=PROJECT_TYPES[k]["suggestions"]
-            return {"message":f"I’ve treated this as a long-running {k} project so it doesn’t depend on one giant chat. I activated {p['skill']} and will delegate only role-relevant context. I’ll ask only for genuinely missing information; routines/reminders still require your approval.","card":{**project_card(p),"suggested_next_steps":suggestions,"proactive":True}}
+            existing=latest_project();p=existing if existing and existing.get("goal","").casefold()==goal.casefold() else create_project(_name_from_goal(goal,k),goal,k);suggestions=PROJECT_TYPES[k]["suggestions"];return {"message":f"I’ve treated this as a long-running {k} project so it doesn’t depend on one giant chat. I activated {p['skill']} and will delegate only role-relevant context. I’ll ask only for genuinely missing information; routines/reminders still require your approval.","card":{**project_card(p),"suggested_next_steps":suggestions,"proactive":True}}
     return None
