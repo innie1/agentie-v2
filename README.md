@@ -22,6 +22,7 @@ The project is Python-first with a FastAPI backend and a lightweight web UI. Age
 - Worker agents receive role-scoped project briefs instead of another agent's full private chat.
 - A project delegated to several agents remains one shared Project Brain and appears in every assigned agent's chat workspace.
 - Each assigned-agent project view includes that agent's delegated task, role-scoped context, work status and latest result without exposing another worker's private context.
+- Project handoff tasks and results are mirrored into the receiving specialist's normal `main` chat timeline, and the selected-agent UI reads that persisted timeline back as a live `Delegated work` feed.
 - Projects can be viewed as native project cards rather than raw JSON.
 - Users can rename a project, change its primary goal, and manually add project context, decisions, goals and milestones.
 - `Show projects` opens a selectable project list with checkboxes and per-project Open controls.
@@ -132,6 +133,8 @@ The current UI includes:
 - Visible persistent pin/unpin controls in the agent sidebar
 - Activity status dots while preserving the pinned-agent section above unpinned agents
 - Agent chat
+- Selected-agent `Delegated work` feed that polls persisted handoff tasks/results from that agent's own normal chat timeline
+- Native agent profile cards instead of raw internal profile JSON
 - Agent search/create controls
 - Agent information/instructions editing
 - Native cards for jobs and instructions
