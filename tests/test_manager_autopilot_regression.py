@@ -3,7 +3,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from agentie.core import agent_registry, manager_autopilot, team_orchestrator
+from agentie.core import agent_registry, manager_autopilot, specialty_router, team_orchestrator
 
 
 class ManagerAutopilotRegressionTests(unittest.TestCase):
@@ -71,6 +71,14 @@ class ManagerAutopilotRegressionTests(unittest.TestCase):
     def test_artifact_compound_requests_stay_on_existing_job_engine(self):
         self.assertIsNone(manager_autopilot.build_autopilot_plan(
             'Research church management apps and then create a PDF report.',self.ceo))
+
+    def test_natural_create_goal_reaches_autopilot_before_old_create_guard(self):
+        session=f"{self.ceo['session_prefix']}main"
+        sentinel={'message':'autopilot','card':{'type':'team_job'}}
+        with patch('agentie.core.manager_autopilot.maybe_manager_autopilot',return_value=sentinel) as routed:
+            result=specialty_router.maybe_auto_delegate('Create a launch campaign with research, content and verification.',session)
+        self.assertIs(result,sentinel)
+        routed.assert_called_once()
 
 
 if __name__=='__main__':unittest.main()
