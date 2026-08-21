@@ -46,6 +46,13 @@ def parse_search_payload(payload: str, query: str) -> list[Source]:
     return out
 
 
+def _search_error(payload: str) -> str | None:
+    try:data=json.loads(payload)
+    except Exception:return "Web search returned an unreadable response."
+    error=str(data.get("error") or "").strip()
+    return error or None
+
+
 def dedupe_sources(sources:list[Source],max_sources:int=18)->list[Source]:
     seen=set();out=[]
     for source in sources:
@@ -66,11 +73,17 @@ async def _call_tool(tool:Any,*args:Any,**kwargs:Any)->str:
     raise TypeError("Unsupported tool wrapper")
 
 
-async def collect_sources(question:str,breadth:int=5,max_sources:int=18)->tuple[list[str],list[Source]]:
-    queries=build_queries(question,breadth)
+async def collect_sources(question:str,breadth:int=5,max_sources:int=18)->tuple[list[str],list[Source],list[str]]:
+    queries=build_queries(question,breadth);errors=[]
     async def search(q:str)->list[Source]:
-        try:return parse_search_payload(await _call_tool(search_web,query=q,max_results=8),q)
-        except Exception:return []
+        try:
+            payload=await _call_tool(search_web,query=q,max_results=8)
+            error=_search_error(payload)
+            if error:errors.append(f"{q}: {error}")
+            return parse_search_payload(payload,q)
+        except Exception as exc:
+            errors.append(f"{q}: {exc}")
+            return []
     batches=await asyncio.gather(*(search(q) for q in queries));sources=dedupe_sources([s for b in batches for s in b],max_sources)
     chosen=[];domains={}
     for source in sources:
@@ -82,7 +95,7 @@ async def collect_sources(question:str,breadth:int=5,max_sources:int=18)->tuple[
         async with sem:
             try:source.text=(await _call_tool(browser_read_page,url=source.url))[:16000]
             except Exception:source.text=""
-    await asyncio.gather(*(read(s) for s in sources));return queries,sources
+    await asyncio.gather(*(read(s) for s in sources));return queries,sources,errors
 
 
 def context_pack(question:str,queries:list[str],sources:list[Source])->str:
@@ -103,9 +116,11 @@ Never invent a citation. Prefer primary/authoritative sources, distinguish fact 
 
 
 async def run_deep_research(question:str,runner,session_id:str,breadth:int=5,max_sources:int=18)->dict[str,Any]:
-    queries,sources=await collect_sources(question,breadth,max_sources)
-    if not sources:return {"question":question,"queries":queries,"sources":[],"report":"I couldn't retrieve usable web sources for this research task.","verification":{"passed":False,"unsupported_claims":0,"weak_claims":0,"citation_count":0}}
+    queries,sources,errors=await collect_sources(question,breadth,max_sources)
+    if not sources:
+        detail=(errors[-1].split(": ",1)[-1] if errors else "No search backend produced usable results.")
+        return {"question":question,"queries":queries,"sources":[],"errors":errors,"report":f"I couldn't retrieve usable web sources for this research task. {detail}","verification":{"passed":False,"unsupported_claims":0,"weak_claims":0,"citation_count":0}}
     draft=await runner(synthesis_prompt(question,queries,sources),"research",session_id)
     verification=verify_report(draft,sources)
     report=annotate_report(draft,verification)
-    return {"question":question,"queries":queries,"sources":[asdict(s)|{"text":""} for s in sources],"report":report,"verification":verification}
+    return {"question":question,"queries":queries,"sources":[asdict(s)|{"text":""} for s in sources],"errors":errors,"report":report,"verification":verification}
