@@ -107,6 +107,41 @@ class CompanyBrainDumpRegressionTests(unittest.TestCase):
         self.assertTrue(resolved["execution_result"]["deleted"])
         self.assertEqual(memory_store.list_memories("company", 50), [])
 
+    def test_exact_duplicate_is_not_saved_twice_without_user_approval(self):
+        company_knowledge.add_company_knowledge("Rent is ₦300000 yearly")
+        result = company_knowledge.route_company_knowledge_command("Brain dump: Rent is ₦300000 yearly.")
+        self.assertEqual(result["card"]["type"], "approvals")
+        self.assertEqual(len(memory_store.list_memories("company", 50)), 1)
+        approval = result["card"]["items"][0]
+        self.assertEqual(approval["metadata"]["kind"], "company_knowledge_duplicate_add")
+        self.assertIn("already exists", approval["reason"])
+        resolved = approval_tools.resolve_approval(approval["id"], True)
+        self.assertTrue(resolved["execution_result"]["added"])
+        self.assertTrue(resolved["execution_result"]["repeated"])
+        self.assertEqual(len(memory_store.list_memories("company", 50)), 2)
+
+    def test_reworded_duplicate_is_detected_locally(self):
+        company_knowledge.add_company_knowledge("We want to target students and offices")
+        result = company_knowledge.route_company_knowledge_command(
+            "Brain dump: Our target audience is students and offices."
+        )
+        self.assertEqual(result["card"]["type"], "approvals")
+        approval = result["card"]["items"][0]
+        self.assertEqual(approval["metadata"]["kind"], "company_knowledge_duplicate_add")
+        self.assertGreaterEqual(float(approval["metadata"]["similarity"]), 0.82)
+        self.assertEqual(len(memory_store.list_memories("company", 50)), 1)
+
+    def test_repeated_idea_inside_same_brain_dump_list_is_not_auto_duplicated(self):
+        result = company_knowledge.route_company_knowledge_command(
+            "Brain dump: We want to target students and offices. Our target audience is students and offices. We have one washing machine."
+        )
+        self.assertEqual(result["card"]["type"], "multi")
+        rows = memory_store.list_memories("company", 50)
+        self.assertEqual(len(rows), 2)
+        approvals = next(x["card"] for x in result["card"]["items"] if x["card"]["type"] == "approvals")
+        self.assertEqual(len(approvals["items"]), 1)
+        self.assertEqual(approvals["items"][0]["metadata"]["kind"], "company_knowledge_duplicate_add")
+
     def test_project_brain_dump_reuses_existing_project_knowledge(self):
         project = project_brain.create_project("Laundry", "Launch and grow a laundry business", "business")
         result = company_knowledge.route_company_knowledge_command(
@@ -136,12 +171,17 @@ class CompanyBrainDumpRegressionTests(unittest.TestCase):
         self.assertIn("company_knowledge", cards)
         self.assertIn("Update company knowledge ${item.id}", cards)
         self.assertIn("Delete company knowledge ${item.id}", cards)
+        self.assertNotIn("meta.textContent=`${item.id||''} · ${cats}", cards)
+        self.assertIn("Add anyway", cards)
+        self.assertIn("Keep existing only", cards)
         self.assertIn("c.type==='company_knowledge'", index)
         self.assertIn("data-company-edit", index)
         self.assertIn("data-company-delete", index)
+        self.assertNotIn("<small>${esc(x.id||'')} · ${esc((x.categories", index)
         self.assertLess(index.index("c.type==='company_knowledge'"), index.index("shell('Agentie result')"))
         self.assertIn('kind == "company_knowledge_delete"', approvals)
-        self.assertIn("delete_company_knowledge", approvals)
+        self.assertIn('kind == "company_knowledge_duplicate_add"', approvals)
+        self.assertIn("force_add_duplicate_company_knowledge", approvals)
 
 
 if __name__ == "__main__":
