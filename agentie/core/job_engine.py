@@ -7,6 +7,7 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Awaitable, Callable
+from agentie.core.npc_brain import job_title
 WORKSPACE=Path.cwd()/"workspace";DB_PATH=WORKSPACE/"agentie_jobs.sqlite3";_LOCK=threading.Lock();_RUNNING:dict[str,asyncio.Task]={};StepRunner=Callable[[str,str,str],Awaitable[str]]
 def _now():return datetime.now(timezone.utc).isoformat(timespec="seconds")
 def _connect():
@@ -144,4 +145,5 @@ def resume_unfinished(runner):
     with _LOCK,_connect() as c:rows=c.execute("SELECT id FROM jobs WHERE status IN ('queued','running') ORDER BY created_at").fetchall();c.execute("UPDATE job_steps SET status='queued',started_at=NULL WHERE status='running'")
     for r in rows:start_job(str(r["id"]),runner)
     return len(rows)
-def job_card(job):return {"type":"job_progress","id":job["id"],"goal":job["goal"],"status":job["status"],"completed_steps":job.get("completed_steps",0),"total_steps":job.get("total_steps",0),"provider_calls":job.get("provider_calls",0),"budget_provider_calls":job.get("budget_provider_calls",0),"final_output":job.get("final_output"),"error":job.get("error"),"steps":[{"id":s["id"],"title":s["title"],"specialist":s["specialist"],"status":s["status"],"attempts":s["attempts"],"error":s.get("error")} for s in job.get("steps",[])]}
+def job_card(job):
+    title=job_title(job.get("goal"));return {"type":"job_progress","id":job["id"],"title":title,"goal":title,"request":job.get("goal"),"status":job["status"],"completed_steps":job.get("completed_steps",0),"total_steps":job.get("total_steps",0),"provider_calls":job.get("provider_calls",0),"budget_provider_calls":job.get("budget_provider_calls",0),"final_output":job.get("final_output"),"error":job.get("error"),"steps":[{"id":s["id"],"title":s["title"],"specialist":s["specialist"],"status":s["status"],"attempts":s["attempts"],"error":s.get("error")} for s in job.get("steps",[])]}
