@@ -94,6 +94,25 @@ def _phase_names(goal: str) -> list[str]:
     return list(dict.fromkeys(phases))
 
 
+def _autopilot_worthy(goal: str) -> bool:
+    low = " ".join(str(goal or "").casefold().split())
+    if re.search(r"\b(pdf|docx|docs? file|word file|xlsx|spreadsheet|pptx|powerpoint)\b", low):
+        return False
+    # Building/implementing a software product is inherently multi-stage.
+    if re.search(r"\b(build|implement|develop|create)\b[^.]{0,90}\b(app|application|software|website|web app|api|backend|frontend|database)\b", low):
+        return True
+    # Explicit end-to-end or campaign/strategy work is intentionally orchestrated.
+    if re.search(r"\b(end[- ]to[- ]end|from research to|full workflow|complete workflow|launch campaign|marketing campaign|business strategy|product strategy)\b", low):
+        return True
+    action_hits = sum(bool(re.search(pattern, low)) for pattern in (
+        r"\b(research|compare|investigate)\b",
+        r"\b(build|implement|develop|code)\b",
+        r"\b(write|draft|create content|prepare content)\b",
+        r"\b(verify|review|test|check)\b",
+    ))
+    return action_hits >= 2
+
+
 def _phase_task(phase: str, goal: str) -> str:
     if phase == "research":
         return f"Research the evidence, requirements, alternatives, risks and useful current information needed for this goal. Return concise findings and recommendations for the next specialist. Goal: {goal}"
@@ -105,6 +124,8 @@ def _phase_task(phase: str, goal: str) -> str:
 
 
 def build_autopilot_plan(goal: str, manager: dict[str, Any]) -> dict[str, Any] | None:
+    if not _autopilot_worthy(goal):
+        return None
     phases = _phase_names(goal)
     if len(phases) < 2:
         return None
