@@ -22,6 +22,15 @@ class SpecialistProjectWorkspaceRegressionTests(unittest.TestCase):
         self.assertNotIn('Show project ${id}',raw)
         self.assertNotIn('Show project ${project.id}',raw)
 
+    def test_open_click_is_captured_before_older_project_handler(self):
+        raw=Path('frontend/project_workspace.js').read_text(encoding='utf-8')
+        self.assertIn("messages.addEventListener('click'",raw)
+        self.assertIn("button.textContent.trim()!=='Open'",raw)
+        self.assertIn("button.closest('.agent-projects-pinned .project-list-row')",raw)
+        self.assertIn('e.stopImmediatePropagation()',raw)
+        self.assertIn('openWorkspace(button)',raw)
+        self.assertIn('},true);',raw)
+
     def test_full_result_comes_from_that_agents_handoff_history(self):
         raw=Path('frontend/project_workspace.js').read_text(encoding='utf-8')
         self.assertIn('/handoff-chat',raw)
