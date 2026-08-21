@@ -20,6 +20,7 @@ from agentie.core.workflow_teaching import (
 
 _TEACH_TASK: asyncio.Task | None = None
 _LAST_URL = ""
+_PROBED_PAGE_IDS: set[int] = set()
 
 _TEACH_SCRIPT = r"""
 (() => {
@@ -32,22 +33,33 @@ _TEACH_SCRIPT = r"""
     if (window.__agentieTeachEvents.length > 200) window.__agentieTeachEvents.splice(0, 80);
   };
   const target = raw => raw && raw.closest ? (raw.closest('button,a,input,textarea,select,[role="button"],[contenteditable="true"]') || raw) : raw;
-  const label = raw => {
+  const text = value => String(value || '').replace(/\s+/g,' ').trim();
+  const fieldLabel = el => {
+    if (!el) return 'field';
+    const id = el.getAttribute?.('id') || '';
+    let linked = '';
+    if (id) {
+      try {
+        const escaped = window.CSS && CSS.escape ? CSS.escape(id) : id.replace(/["\\]/g,'\\$&');
+        linked = document.querySelector(`label[for="${escaped}"]`)?.innerText || '';
+      } catch (_) {}
+    }
+    const wrapping = el.closest?.('label')?.innerText || '';
+    return text(linked || el.getAttribute?.('aria-label') || el.getAttribute?.('placeholder') || el.getAttribute?.('name') || wrapping || id || el.getAttribute?.('title') || el.tagName || 'field').slice(0,180) || 'field';
+  };
+  const actionLabel = raw => {
     const el = target(raw);
     if (!el) return 'screen item';
-    const aria = el.getAttribute && el.getAttribute('aria-label');
-    const placeholder = el.getAttribute && el.getAttribute('placeholder');
-    const name = el.getAttribute && el.getAttribute('name');
-    const title = el.getAttribute && el.getAttribute('title');
-    const text = (el.innerText || el.value || aria || placeholder || title || name || el.id || el.tagName || 'screen item');
-    return String(text).replace(/\s+/g,' ').trim().slice(0,180) || 'screen item';
+    const tag = String(el.tagName || '').toLowerCase();
+    if (['input','textarea','select'].includes(tag)) return fieldLabel(el);
+    return text(el.innerText || el.getAttribute?.('aria-label') || el.getAttribute?.('title') || el.getAttribute?.('name') || el.id || el.tagName || 'screen item').slice(0,180) || 'screen item';
   };
   document.addEventListener('click', event => {
     const el = target(event.target);
     if (!el) return;
     const tag = String(el.tagName || '').toLowerCase();
     const clickable = ['button','a'].includes(tag) || el.getAttribute?.('role') === 'button' || !!el.onclick;
-    if (clickable) push({kind:'click',target:label(el)});
+    if (clickable) push({kind:'click',target:actionLabel(el)});
   }, true);
   document.addEventListener('change', event => {
     const el = target(event.target);
@@ -55,7 +67,7 @@ _TEACH_SCRIPT = r"""
     const tag = String(el.tagName || '').toLowerCase();
     if (!['input','textarea','select'].includes(tag)) return;
     const type = String(el.getAttribute?.('type') || '').toLowerCase();
-    push({kind:'fill',field:label(el),value:type === 'password' ? '' : String(el.value || ''),secret:type === 'password'});
+    push({kind:'fill',field:fieldLabel(el),value:type === 'password' ? '' : String(el.value || ''),secret:type === 'password'});
   }, true);
   document.addEventListener('keydown', event => {
     if (['Enter','Tab','Escape'].includes(event.key)) push({kind:'key',key:event.key});
@@ -93,13 +105,28 @@ def _teach_command(message: str) -> tuple[str, str | None] | None:
     return None
 
 
+def _reset_probe_state() -> None:
+    global _LAST_URL
+    _LAST_URL = ""
+    _PROBED_PAGE_IDS.clear()
+
+
 async def _install_probe(page) -> None:
+    page_id = id(page)
+    if page_id not in _PROBED_PAGE_IDS:
+        try:
+            # Register once per Playwright Page so future navigations reinstall the
+            # listener, without accumulating hundreds of init scripts while polling.
+            await page.add_init_script(script=_TEACH_SCRIPT)
+            _PROBED_PAGE_IDS.add(page_id)
+        except Exception:
+            pass
     try:
-        await page.add_init_script(script=_TEACH_SCRIPT)
-    except Exception:
-        pass
-    try:
-        await page.evaluate(_TEACH_SCRIPT)
+        # Current documents still need immediate installation. The JS itself is
+        # idempotent, so this cheap check does not duplicate DOM listeners.
+        installed = await page.evaluate("() => Boolean(window.__agentieTeachInstalled)")
+        if not installed:
+            await page.evaluate(_TEACH_SCRIPT)
     except Exception:
         pass
 
@@ -131,6 +158,7 @@ async def _poll_teaching() -> None:
             await asyncio.sleep(0.35)
     finally:
         _TEACH_TASK = None
+        _reset_probe_state()
 
 
 def _ensure_polling() -> None:
@@ -140,22 +168,21 @@ def _ensure_polling() -> None:
 
 
 async def _start(name: str, session_id: str | None) -> dict[str, Any]:
-    global _LAST_URL
     owner = _owner_from_session(session_id)
     item = start_recording(name, owner)
     try:
         page = await browser._ensure_page()
         if not browser._USING_WSL_CHROME:
-            cancel_recording()
+            cancel_recording();_reset_probe_state()
             return {"message": "Teach mode needs the visible browser inside Agentie Computer. Start the Computer/browser and try again.", "card": None}
-        _LAST_URL = ""
+        _reset_probe_state()
         await _install_probe(page)
         await _drain(page)
         _ensure_polling()
         card = workflow_card(active_recording() or item, "workflow_teach")
         return {"message": f"Teach mode is recording “{item['name']}”. Perform the workflow once in the visible browser, then say “Stop teaching”.", "card": card}
     except Exception as exc:
-        cancel_recording()
+        cancel_recording();_reset_probe_state()
         return {"message": f"Teach mode could not attach to the visible browser: {exc}", "card": None}
 
 
@@ -163,7 +190,7 @@ async def _stop() -> dict[str, Any]:
     page = browser._PAGE
     if page is not None and not page.is_closed():
         await _drain(page)
-    item = stop_recording()
+    item = stop_recording();_reset_probe_state()
     return {"message": f"Learned “{item['name']}” from {len(item.get('steps') or [])} browser step(s). You can now say “Run workflow {item['name']}”.", "card": workflow_card(item)}
 
 
@@ -175,7 +202,7 @@ async def _run(name: str, session_id: str | None) -> dict[str, Any]:
     blocked = [step for step in item.get("steps") or [] if (step.get("metadata") or {}).get("requires_input")]
     if blocked:
         fields = ", ".join(str((step.get("metadata") or {}).get("field") or "secret field") for step in blocked)
-        return {"message": f"This workflow contains a protected value ({fields}). Agentie intentionally did not save the secret. Re-teach that step using a non-secret value or complete the protected field manually before replay.", "card": workflow_card(item)}
+        return {"message": f"This workflow contains a protected value ({fields}). Agentie intentionally did not save the secret. Complete the protected field manually before replay or re-teach that step without a secret.", "card": workflow_card(item)}
     actions: list[str] = []
     try:
         page = await browser._ensure_page()
@@ -194,7 +221,7 @@ async def _run(name: str, session_id: str | None) -> dict[str, Any]:
             await browser._publish_frame(page, status="working", url=page.url, detail=result)
         mark_run(str(item.get("id")))
         await browser._publish_frame(page, status="done", url=page.url, detail=f"Workflow {item['name']} complete")
-        return {"message": f"Completed taught workflow “{item['name']}” locally.", "card": {**workflow_card(get_workflow(str(item.get('id'))) or item, "workflow_run"), "actions": actions, "url": page.url}}
+        return {"message": f"Completed taught workflow “{item['name']}” locally.", "card": {**workflow_card(get_workflow(str(item.get('id')), owner) or item, "workflow_run"), "actions": actions, "url": page.url}}
     except browser.BrowserApprovalRequired as exc:
         return {"message": "This taught workflow reached an action that needs your approval before it can continue.", "card": {"type": "browser_approval", "url": browser._PAGE.url if browser._PAGE else "", "step": exc.step, "approval": exc.approval, "command": f"Run workflow {item['name']}"}}
     except Exception as exc:
@@ -212,7 +239,7 @@ async def route_taught_workflow_request(message: str, session_id: str | None = N
         if action == "stop":
             return await _stop()
         if action == "cancel":
-            item = cancel_recording()
+            item = cancel_recording();_reset_probe_state()
             return {"message": f"Discarded teach recording “{item.get('name')}”." if item else "Teach mode was not recording anything.", "card": None}
         if action == "list":
             owner = _owner_from_session(session_id)
