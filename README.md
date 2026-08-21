@@ -27,6 +27,9 @@ The project is Python-first with a FastAPI backend and a lightweight web UI. Age
 - Multi-step background jobs with progress and provider-call budgets.
 - Pause, resume and retry controls.
 - Team jobs and handoffs between persistent agents.
+- Live team-status questions such as `what's the state of that task?` ask active workers for short progress summaries without interrupting their work sessions.
+- Team-status checks fall back to truthful backend state if a worker/provider cannot answer, rather than inventing progress.
+- Collaboration avatars remain visible while a team job is active and for 60 seconds after terminal completion/failure.
 - Approval gates for consequential actions such as permanent deletion.
 - Execution traces with routing, provider/model, latency, token usage and status information.
 
