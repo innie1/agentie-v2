@@ -37,7 +37,7 @@ def _chart(labels,values,title,accent):
 
 def create_pdf(content:str,filename:str|None=None,creator:str="Agentie",style_hint:str|None=None)->dict:
     if not content or not content.strip():raise ValueError('PDF content is empty.')
-    UPLOADS.mkdir(parents=True,exist_ok=True);path=unique_path(_clean_filename(filename,creator));style=choose_style(content,style_hint);title=document_title(content,'Report');styles=getSampleStyleSheet()
+    UPLOADS.mkdir(parents=True,exist_ok=True);style=choose_style(content,style_hint);title=document_title(content,'Report');path=unique_path(_clean_filename(filename or f"{title}.pdf",creator));styles=getSampleStyleSheet()
     title_style=ParagraphStyle('TitleX',parent=styles['Title'],fontName='Helvetica-Bold',fontSize=24,textColor=_c(style.accent),leading=28,alignment=TA_LEFT,spaceAfter=4)
     byline=ParagraphStyle('Byline',parent=styles['BodyText'],fontSize=8.5,textColor=_c(style.muted),spaceAfter=12)
     h1=ParagraphStyle('H1X',parent=styles['Heading1'],fontName='Helvetica-Bold',fontSize=16,textColor=_c(style.accent),leading=20,spaceBefore=12,spaceAfter=6)
