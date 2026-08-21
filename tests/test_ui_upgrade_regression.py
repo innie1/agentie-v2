@@ -1,3 +1,4 @@
+import re
 import unittest
 from pathlib import Path
 
@@ -9,7 +10,7 @@ class UIUpgradeRegressionTests(unittest.TestCase):
 
     def test_ui_upgrade_is_served_and_loaded(self):
         self.assertIn('UI_UPGRADE_JS=FRONTEND_DIR/"ui_upgrade.js"',self.main)
-        self.assertIn('<script src="/ui-upgrade.js?v=202"></script>',self.main)
+        self.assertRegex(self.main,r'<script src="/ui-upgrade\.js\?v=\d+"></script>')
         self.assertIn('@app.get("/ui-upgrade.js")',self.main)
 
     def test_sidebar_is_fixed_wider_and_chat_scrolls_independently(self):
