@@ -89,22 +89,24 @@ class TeamOrchestrationRegressionTests(unittest.TestCase):
         self.assertIn("create_agent",actions);self.assertIn("use_agent",actions)
         self.assertEqual(len(agent_registry.list_agents()),before)
 
-    def test_state_of_that_task_asks_workers_for_small_summaries(self):
+    def test_state_of_that_task_uses_backend_status_without_provider_calls(self):
         job=team_orchestrator.create_team_job("Review launch readiness",[self.alex,self.writer])
         team_orchestrator._mutate(job["id"],lambda j:[h.update(status="working") for h in j["handoffs"]])
-        async def fake_status(current,handoff):return handoff["id"],f"{handoff['to_agent_name']} is checking their assigned launch items."
-        with patch.object(team_orchestrator,"_ask_worker_status",side_effect=fake_status):
+        with patch("agentie.core.runner.run_agent",side_effect=AssertionError("status must stay local")) as provider:
             result=route_role_command("What's the state of that task?")
+        provider.assert_not_called()
         self.assertEqual(result["card"]["id"],job["id"])
+        self.assertEqual(result["card"].get("status_source"),"backend")
         summaries={h["agent"]:h["summary"] for h in result["card"]["handoffs"]}
-        self.assertIn("Alex is checking",summaries["Alex"]);self.assertIn("Writer is checking",summaries["Writer"])
+        self.assertIn("Still working",summaries["Alex"]);self.assertIn("Still working",summaries["Writer"])
         self.assertTrue(result["card"].get("status_checked_at"))
 
-    def test_worker_status_falls_back_truthfully_when_status_call_fails(self):
+    def test_worker_status_helper_is_provider_free_and_truthful(self):
         job=team_orchestrator.create_team_job("Review launch readiness",[self.alex])
         handoff=job["handoffs"][0];handoff["status"]="working"
-        with patch("agentie.core.runner.run_agent",side_effect=RuntimeError("usage limit")):
+        with patch("agentie.core.runner.run_agent",side_effect=AssertionError("must not be called")) as provider:
             hid,summary=asyncio.run(team_orchestrator._ask_worker_status(job,handoff))
+        provider.assert_not_called()
         self.assertEqual(hid,handoff["id"]);self.assertIn("Still working",summary);self.assertIn("no completed result",summary)
 
 
