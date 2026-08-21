@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any
 from agentie.core.agent_registry import create_agent,delete_agent,get_agent,hierarchy,list_agents,update_agent_manager,update_agent_profile
 from agentie.core.agent_prompt import instruction_card,learning_audit,set_manual_instructions
+from agentie.core.deletion_registry import find_deleted
 from agentie.core.team_orchestrator import route_team_command
 from agentie.tools.approval_tools import approval_is_granted,create_approval
 WORKSPACE=Path.cwd()/"workspace";ROLES=WORKSPACE/"agent_roles.json";BASE_AGENTS={"general","research","coding","manager","github"}
@@ -50,10 +51,7 @@ def _agent_creation_command(text):
         role=role_only.group(1).strip(' \"“”');purpose=(role_only.group(2) or "").strip(' \"“”');name=role.title();result=create_agent(name,role,_base_for_role(role),purpose=purpose);agent=result["agent"];return {"message":f"{'Created' if result['created'] else 'Found existing'} {agent['name']} agent.","card":{"type":"agent_profile",**agent}}
     return None
 def _manual_instruction_payload(agent_name,payload):
-    """Store only the instruction body, even if a UI/client accidentally nests the command itself."""
-    value=str(payload or "").strip()
-    nested=re.match(rf"^(?:set|update|change|edit)\s+(?:agent\s+)?{re.escape(str(agent_name))}(?:['’]s)?\s+(?:system\s+prompt|instructions|prompt)\s+(?:to|as)\s+(.+)$",value,re.I)
-    return (nested.group(1) if nested else value).strip()
+    value=str(payload or "").strip();nested=re.match(rf"^(?:set|update|change|edit)\s+(?:agent\s+)?{re.escape(str(agent_name))}(?:['’]s)?\s+(?:system\s+prompt|instructions|prompt)\s+(?:to|as)\s+(.+)$",value,re.I);return (nested.group(1) if nested else value).strip()
 def route_role_command(message):
     text=" ".join(message.strip().split());lower=text.lower().strip(" .?!");team=route_team_command(text)
     if team is not None:return team
@@ -86,11 +84,16 @@ def route_role_command(message):
         return {"message":f"Updated {agent['name']} to {agent['role']}.","card":{"type":"agent_profile",**agent}}
     delete_match=re.match(r"^(?:please\s+)?(?:delete|remove)\s+agent\s+(.+?)[.!?]?$",text,re.I)
     if delete_match:
-        target=get_agent(delete_match.group(1).strip(' .?!\"“”'))
-        if not target:return {"message":"Agent was not found.","card":None}
+        requested=delete_match.group(1).strip(' .?!\"“”');target=get_agent(requested)
+        if not target:
+            tomb=find_deleted("agent",requested,Path.cwd()/"workspace"/"deletions.json")
+            if tomb:return {"message":f"{tomb.get('name') or requested} was already deleted. No second delete action was performed.","card":{"type":"already_deleted","entity_type":"agent","names":[tomb.get('name') or requested],"deleted_at":tomb.get('deleted_at')}}
+            return {"message":"Agent was not found.","card":None}
         action=f"delete_agent:{target['id']}"
         if not approval_is_granted(action):approval=create_approval(action,f"Permanently delete {target['name']} and all of this agent's private memories, chats, semantic shards and agent-owned data.",{"kind":"agent_delete","agent_id":target["id"],"agent_name":target["name"]});return {"message":f"Deleting {target['name']} is permanent. Approve the deletion to continue.","card":{"type":"approvals","items":[approval]}}
-        result=delete_agent(target["id"]);p=result["purged"];return {"message":f"Deleted {target['name']} permanently, including {p.get('memories',0)} memories, {p.get('messages',0)} chat messages and {p.get('semantic_items',0)} semantic memory items.","card":{"type":"agent_deleted","id":target["id"],"name":target["name"],"purged":p}}
+        result=delete_agent(target["id"])
+        if result.get("already_deleted"):return {"message":f"{target['name']} was already deleted. No second delete action was performed.","card":{"type":"already_deleted","entity_type":"agent","names":[target['name']]}}
+        p=result["purged"];return {"message":f"Deleted {target['name']} permanently, including {p.get('memories',0)} memories, {p.get('messages',0)} chat messages and {p.get('semantic_items',0)} semantic memory items.","card":{"type":"agent_deleted","id":target["id"],"name":target["name"],"purged":p}}
     if lower in {"agents","show agents","list agents","show my agents","list my agents","agent directory","show agent directory"}:items=list_agents();return {"message":f"You have {len(items)} persistent agent(s).","card":{"type":"agents","items":items}}
     m=re.match(r"^(?:show|inspect|open)\s+(?:agent\s+)?(.+)$",text,re.I)
     if m and "roles" not in lower:
