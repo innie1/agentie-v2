@@ -1,4 +1,5 @@
 import os
+import threading
 import time
 
 from agents import Runner
@@ -12,6 +13,43 @@ from agentie.core.observability import current_trace_id, record_event, record_mo
 from agentie.core.role_store import resolve_role
 from agentie.models.provider import get_provider_info
 
+_PROVIDER_COOLDOWNS: dict[str, dict] = {}
+_PROVIDER_COOLDOWN_LOCK = threading.Lock()
+
+
+def _provider_key(info: dict) -> str:
+    return f"{info.get('provider','provider')}:{info.get('model','model')}".casefold()
+
+
+def provider_cooldown(info: dict | None = None) -> dict | None:
+    """Return active provider cooldown metadata without making any provider call."""
+    current = info or get_provider_info()
+    key = _provider_key(current)
+    now = time.time()
+    with _PROVIDER_COOLDOWN_LOCK:
+        item = _PROVIDER_COOLDOWNS.get(key)
+        if not item:
+            return None
+        if float(item.get("until") or 0) <= now:
+            _PROVIDER_COOLDOWNS.pop(key, None)
+            return None
+        return dict(item)
+
+
+def _start_provider_cooldown(info: dict, message: str) -> dict:
+    seconds = max(15, min(int(os.getenv("AGENTIE_PROVIDER_COOLDOWN_SECONDS", "90")), 900))
+    item = {
+        "provider": info.get("provider"),
+        "model": info.get("model"),
+        "message": message,
+        "started_at": time.time(),
+        "until": time.time() + seconds,
+        "seconds": seconds,
+    }
+    with _PROVIDER_COOLDOWN_LOCK:
+        _PROVIDER_COOLDOWNS[_provider_key(info)] = item
+    return dict(item)
+
 
 def _friendly_provider_error(exc: Exception) -> str | None:
     """Return a short user-facing message for known provider failures.
@@ -21,7 +59,7 @@ def _friendly_provider_error(exc: Exception) -> str | None:
     """
     text = str(exc or "")
     lower = text.lower()
-    if "429" in lower or "resource_exhausted" in lower or "quota exceeded" in lower or "rate limit" in lower:
+    if "429" in lower or "resource_exhausted" in lower or "quota exceeded" in lower or "rate limit" in lower or "usage limit" in lower:
         return "The AI model is temporarily at its usage limit. Please try again shortly."
     if "402" in lower or "requires more credits" in lower or "insufficient" in lower and "credit" in lower:
         return "The AI provider is out of credits right now. Add credits or switch providers to continue."
@@ -65,6 +103,20 @@ async def run_agent(message: str, agent_type: str = "general", session_id: str |
     role_info = resolve_role(agent_type)
     provider_info = get_provider_info()
     model_name = provider_info["model"]
+
+    # Once the provider reports a real quota/rate-limit failure, do not let every
+    # other background agent immediately spend another doomed request. Local/NPC
+    # work above still runs normally; only the remote-provider escalation stops.
+    cooldown = provider_cooldown(provider_info)
+    if cooldown:
+        remaining = max(1, int(float(cooldown.get("until") or 0) - time.time()))
+        friendly = str(cooldown.get("message") or "The AI model is temporarily at its usage limit. Please try again shortly.")
+        record_event("provider_cooldown", provider_info.get("provider") or "provider", metadata={"model":model_name,"remaining_seconds":remaining,"provider_calls":0})
+        if session_id:
+            set_context(session_id,"last_provider_failure",{"user_message":original_message,"error":friendly,"model":model_name,"trace_id":trace_id,"cooldown":True,"remaining_seconds":remaining})
+        if own_trace: finish_trace(trace_id, "failed", friendly)
+        raise RuntimeError(f"{friendly} Agentie is temporarily suppressing repeated provider calls for about {remaining} more second(s).")
+
     if session_id:
         add_message(session_id, "user", original_message, {"agent_type":agent_type,"runtime_role":role_info.get("name")})
     record_event("agent", str(role_info.get("name") or agent_type), metadata={"base":role_info.get("base"),"session_id":session_id})
@@ -96,6 +148,9 @@ async def run_agent(message: str, agent_type: str = "general", session_id: str |
         latency_ms = (time.perf_counter()-started)*1000
         record_model_error(model_name, exc, latency_ms, trace_id)
         friendly = _friendly_provider_error(exc)
+        if friendly and "usage limit" in friendly.casefold():
+            cooldown = _start_provider_cooldown(provider_info, friendly)
+            record_event("provider_cooldown_started", provider_info.get("provider") or "provider", metadata={"model":model_name,"seconds":cooldown.get("seconds"),"provider_calls":0})
         if session_id:
             set_context(session_id,"last_provider_failure",{
                 "user_message":original_message,
