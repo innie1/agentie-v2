@@ -27,6 +27,32 @@ def _normalized(text):
     value=str(text or "").casefold().strip();value=value.replace("what's","what is").replace("whats","what is")
     value=re.sub(r"[^a-z0-9 ]+"," ",value);return re.sub(r"\s+"," ",value).strip()
 
+def job_title(goal,max_words=8):
+    """Create a short human title locally for a job without spending a provider call."""
+    original=re.sub(r"\s+"," ",str(goal or "")).strip(" .?!:-")
+    if not original:return "Agent Job"
+    clean=re.sub(r"^(?:please\s+)?(?:delegate|start|run|do|perform|research|investigate|analy[sz]e|build|implement|create|make|write|generate|prepare|compare|find)\s+(?:this\s+|a\s+|an\s+|the\s+)?","",original,flags=re.I)
+    words=re.findall(r"[A-Za-z0-9][A-Za-z0-9.+#/-]*",clean)
+    stop={"a","an","the","and","then","to","for","of","on","in","with","using","please","this","that","it","job","task","write","create","make","generate","prepare","research","investigate","analyze","analyse","build","implement","compare","find"}
+    chosen=[]
+    for word in words:
+        if word.casefold() in stop:continue
+        chosen.append(word)
+        if len(chosen)>=max_words:break
+    low=original.casefold();suffix=None
+    if re.search(r"\b(slide deck|slides|presentation|pptx)\b",low):suffix="Presentation"
+    elif re.search(r"\b(pdf|report)\b",low):suffix="Report"
+    elif re.search(r"\b(docx|word document|document)\b",low):suffix="Document"
+    elif re.search(r"\b(test|tests|verify|verification|qa)\b",low):suffix="Verification"
+    acronyms={"ai":"AI","api":"API","ui":"UI","ux":"UX","pdf":"PDF","csv":"CSV","json":"JSON","github":"GitHub","sql":"SQL","seo":"SEO","mcp":"MCP"}
+    display=[]
+    for word in chosen:
+        key=word.casefold();display.append(acronyms.get(key,word if (word.isupper() and len(word)<=6) else word.capitalize()))
+    if suffix and suffix.casefold() not in {x.casefold() for x in display}:
+        if len(display)>=max_words:display=display[:max_words-1]
+        display.append(suffix)
+    return " ".join(display[:max_words]).strip() or "Agent Job"
+
 def role_profile(agent):
     role=_normalized(agent.get("role"));joined=" ".join(_normalized(agent.get(k)) for k in ("role","name","purpose","base"));best=(0,"general")
     for kind,p in ROLE_PROFILES.items():
