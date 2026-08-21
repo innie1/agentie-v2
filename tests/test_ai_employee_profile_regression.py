@@ -6,6 +6,7 @@ from unittest.mock import patch
 from PIL import Image
 
 from agentie.core import agent_prompt, agent_registry, role_store
+from agentie.core.npc_brain import try_npc_response
 
 
 class AIEmployeeProfileRegressionTests(unittest.TestCase):
@@ -28,13 +29,14 @@ class AIEmployeeProfileRegressionTests(unittest.TestCase):
             item.stop()
         self.temp.cleanup()
 
-    def test_employee_identity_fields_are_persistent_and_local(self):
+    def test_employee_identity_fields_are_generated_persistent_and_user_editable(self):
         agent = agent_registry.create_agent("Ben", "Sales & Outreach", "general")["agent"]
         self.assertEqual(agent["avatar_kind"], "default")
-        self.assertEqual(agent["personality"], "")
-        self.assertEqual(agent["goal"], "")
-        self.assertEqual(agent["responsibilities"], [])
+        self.assertTrue(agent["personality"])
+        self.assertTrue(agent["goal"])
+        self.assertGreaterEqual(len(agent["responsibilities"]), 3)
         self.assertEqual(agent["company_identity"], "")
+        self.assertIn("sales", agent["goal"].lower())
 
         role_store.route_role_command(f"Set agent {agent['id']} personality to Friendly, professional, proactive")
         role_store.route_role_command(f"Set agent {agent['id']} goal to Increase sales")
@@ -47,6 +49,35 @@ class AIEmployeeProfileRegressionTests(unittest.TestCase):
         self.assertEqual(updated["responsibilities"], ["Follow up leads", "Review pipeline", "Recommend next actions"])
         self.assertEqual(updated["company_identity"], "COAN Industries")
         self.assertEqual(result["card"]["type"], "agent_profile")
+
+    def test_creation_uses_local_role_specific_profile_and_does_not_invent_company(self):
+        manager = agent_registry.create_agent("Gemma", "Chief of Staff", "manager")["agent"]
+        self.assertIn("coordinate", manager["goal"].lower())
+        self.assertTrue(any("delegate" in item.lower() for item in manager["responsibilities"]))
+        self.assertEqual(manager["company_identity"], "")
+
+        researcher = agent_registry.create_agent("Mira", "Market Research Analyst", "research", purpose="Study laundry demand in Warri")["agent"]
+        self.assertIn("research", researcher["goal"].lower())
+        self.assertIn("laundry demand in Warri", researcher["goal"])
+        self.assertEqual(researcher["company_identity"], "")
+
+    def test_npc_explicit_statements_update_the_same_persistent_profile(self):
+        agent = agent_registry.create_agent("Ben", "Sales & Outreach", "general")["agent"]
+        response = try_npc_response(agent, "Your goal is Grow recurring sales in Nigeria")
+        self.assertEqual(response["routed_by"], "npc_brain")
+        self.assertTrue(any("employee profile goal" in x.lower() for x in response["learned"]))
+        updated = agent_registry.get_agent(agent["id"])
+        self.assertEqual(updated["goal"], "Grow recurring sales in Nigeria")
+
+        response = try_npc_response(updated, "Your responsibilities are Follow up leads | Review pipeline | Recommend next actions")
+        self.assertEqual(response["routed_by"], "npc_brain")
+        updated = agent_registry.get_agent(agent["id"])
+        self.assertEqual(updated["responsibilities"], ["Follow up leads", "Review pipeline", "Recommend next actions"])
+
+        response = try_npc_response(updated, "You work for COAN Industries")
+        self.assertEqual(response["routed_by"], "npc_brain")
+        updated = agent_registry.get_agent(agent["id"])
+        self.assertEqual(updated["company_identity"], "COAN Industries")
 
     def test_identity_is_used_by_generated_agent_prompt(self):
         agent = agent_registry.create_agent("Ben", "Sales & Outreach", "general")["agent"]
@@ -113,6 +144,23 @@ class AIEmployeeProfileRegressionTests(unittest.TestCase):
         self.assertNotIn("342.9K", profile)
         self.assertNotIn("Likes", profile)
         self.assertNotIn("Views", profile)
+
+    def test_profile_instructions_toggle_reuses_the_same_modal_and_profile_card(self):
+        text = Path("frontend/project_workspace.js").read_text(encoding="utf-8")
+        self.assertIn("__agentieProfileInstructionsToggle", text)
+        self.assertIn("const profileCard=modal.querySelector('.employee-profile-card')", text)
+        self.assertIn("profileCard.remove()", text)
+        self.assertIn("modal.appendChild(profileCard)", text)
+        self.assertIn("Generated system instructions", text)
+        self.assertIn("Save instructions", text)
+        self.assertIn("Set agent ${agent.id} instructions to ${manual}", text)
+        self.assertIn("e.stopImmediatePropagation()", text)
+
+    def test_top_avatar_refreshes_profile_before_opening_it(self):
+        text = Path("frontend/project_workspace.js").read_text(encoding="utf-8")
+        self.assertIn("Show agent ${agent.id}", text)
+        self.assertIn("openFreshProfile(agent)", text)
+        self.assertIn("window.openAgentProfile(fresh)", text)
 
 
 if __name__ == "__main__":
