@@ -156,6 +156,9 @@ The current UI includes:
 - Visible persistent pin/unpin controls in the agent sidebar
 - Activity status dots while preserving the pinned-agent section above unpinned agents
 - Agent chat
+- Agent replies reuse that agent's existing round sidebar orb beside the response instead of rendering anonymous assistant text.
+- Reply orbs visibly animate and show `Working` / `Queued` while a background job is active; terminal updates stop the animation for that job.
+- When the selected specialist is still working or queued on delegated/team work, the chat shows one live `<agent> is working…` / `<agent> is queued…` row with that same orb so background work is not silent.
 - Selected-agent `Delegated work` feed that polls persisted handoff tasks/results from that agent's own normal chat timeline
 - Compact assigned-project previews plus an expandable full specialist project workspace
 - Safe Markdown rendering for specialist results, including headings, lists, simple tables and fenced code blocks
