@@ -27,8 +27,21 @@ def _specialist(t):
     if re.search(r"\b(code|coding|python|javascript|typescript|bug|debug|implement|refactor|test|file|pdf|csv|json|yaml|zip)\b",x):return "coding"
     if re.search(r"\b(research|search|web|latest|sources?|compare|investigate|find out|news)\b",x):return "research"
     return "general"
+def _artifact_kind(text):
+    x=str(text or "").lower()
+    if re.search(r"\bpdf\b",x):return "pdf"
+    if re.search(r"\b(?:docx|docs? file|word document|word file)\b",x):return "docx"
+    if re.search(r"\b(?:xlsx|excel|spreadsheet)\b",x):return "xlsx"
+    if re.search(r"\b(?:pptx|powerpoint|presentation|slide deck|slides)\b",x):return "pptx"
+    return None
 def make_plan(goal):
-    clean=re.sub(r"\s+"," ",goal.strip());low=clean.lower();research=bool(re.search(r"\b(research|search|latest|compare|investigate|sources?|web|deep research|deep search|deeper search)\b",low));synthesis=bool(re.search(r"\b(report|summary|summarize|write|draft|document|pdf|presentation|research)\b",low));coding=bool(re.search(r"\b(code|build|implement|fix|debug|refactor|test)\b",low))
+    clean=re.sub(r"\s+"," ",goal.strip());low=clean.lower();research=bool(re.search(r"\b(research|search|latest|compare|investigate|sources?|web|deep research|deep search|deeper search)\b",low));synthesis=bool(re.search(r"\b(report|summary|summarize|write|draft|document|pdf|presentation|research)\b",low));coding=bool(re.search(r"\b(code|build|implement|fix|debug|refactor|test)\b",low));artifact=_artifact_kind(clean)
+    if research and artifact and re.search(r"\b(?:create|make|generate|export|save|turn|convert)\b",low):
+        marker=re.search(r"\b(?:and\s+then|then|and|afterwards?|after\s+that)\s+(?=(?:create|make|generate|export|save|turn|convert)\b)",clean,re.I)
+        research_instruction=(clean[:marker.start()] if marker else re.sub(r"\b(?:create|make|generate|export|save|turn|convert)\b[\s\S]*$","",clean,flags=re.I)).strip(" ,.;") or clean
+        artifact_instruction=(clean[marker.end():] if marker else f"Create a {artifact.upper()} file from the completed research result").strip(" ,.;")
+        if not re.match(r"^(?:create|make|generate|export|save|turn|convert)\b",artifact_instruction,re.I):artifact_instruction=f"Create {artifact_instruction}"
+        return [{"id":"s1","title":"Research","instruction":research_instruction,"specialist":"deep_research","depends_on":[]},{"id":"s2","title":f"Create {artifact.upper()} file","instruction":artifact_instruction,"specialist":f"artifact_{artifact}","depends_on":["s1"]}]
     if research and (synthesis or "deep search" in low or "deeper search" in low):return [{"id":"s1","title":"Deep research","instruction":clean,"specialist":"deep_research","depends_on":[]}]
     if coding and re.search(r"\b(test|verify|check)\b",low):return [{"id":"s1","title":"Implement","instruction":clean,"specialist":"coding","depends_on":[]},{"id":"s2","title":"Verify","instruction":"Verify the implementation, run appropriate checks, and report failures clearly.","specialist":"coding","depends_on":["s1"]}]
     sequential=bool(re.search(r"\bthen\b",clean,re.I));clauses=[x.strip(" .") for x in re.split(r"\s*(?:;|\bthen\b|\band then\b)\s*",clean,flags=re.I) if x.strip(" .")]
@@ -42,7 +55,7 @@ def create_job(session_id,goal,budget_provider_calls=8,preferred_role=None):
     init_db();jid=uuid.uuid4().hex[:10];now=_now();plan=make_plan(goal);budget=max(0,min(int(budget_provider_calls),50));preferred=str(preferred_role or "").strip().lower()
     if preferred:
         for step in plan:
-            if step["specialist"]!="deep_research":step["specialist"]=preferred
+            if step["specialist"]!="deep_research" and not str(step["specialist"]).startswith("artifact_"):step["specialist"]=preferred
     with _LOCK,_connect() as c:
         c.execute("INSERT INTO jobs(id,session_id,goal,status,created_at,updated_at,budget_provider_calls) VALUES(?,?,?,?,?,?,?)",(jid,session_id,goal,"queued",now,now,budget))
         for pos,s in enumerate(plan):c.execute("INSERT INTO job_steps(job_id,id,position,title,instruction,specialist,status,depends_on_json) VALUES(?,?,?,?,?,?,?,?)",(jid,s["id"],pos,s["title"],s["instruction"],s["specialist"],"queued",json.dumps(s.get("depends_on",[]))))
@@ -99,12 +112,34 @@ def cancel_job(jid):
     t=_RUNNING.get(jid)
     if t and not t.done():t.cancel()
     _event(jid,"cancel","Job cancelled by user.");return get_job(jid)
+def _create_artifact_step(job,step,by):
+    deps=[str(by[d].get("output") or "").strip() for d in step.get("depends_on",[]) if d in by and str(by[d].get("output") or "").strip()]
+    content="\n\n".join(deps).strip()
+    if not content:raise ValueError("Artifact step has no completed source result.")
+    kind=str(step.get("specialist") or "").removeprefix("artifact_")
+    from agentie.core.artifact_naming import creator_from_session
+    from agentie.core.result_memory import existing_artifact,remember_artifact
+    existing=existing_artifact(job["session_id"],kind,content)
+    if existing:card=existing;reused=True
+    else:
+        creator=creator_from_session(job["session_id"])
+        if kind=="pdf":
+            from agentie.core.pdf_service import create_pdf
+            card=create_pdf(content,None,creator,step.get("instruction"));
+        else:
+            from agentie.core.office_artifacts import create_docx,create_pptx,create_xlsx
+            card=create_docx(content,None,creator,step.get("instruction")) if kind=="docx" else create_xlsx(content,None,creator,step.get("instruction")) if kind=="xlsx" else create_pptx(content,None,creator,step.get("instruction"))
+        remember_artifact(job["session_id"],kind,content,card);reused=False
+    _event(job["id"],"artifact_created",("Reused existing " if reused else "Created ")+str(card.get("document_name") or card.get("name") or kind.upper()),{"step_id":step["id"],"kind":kind,"card":card,"reused":reused})
+    return ("Already created" if reused else "Created")+f" “{card.get('document_name') or card.get('name')}” as {card.get('name')}."
 async def _run_one(jid,step,runner):
-    if not _reserve(jid):_set_step(jid,step["id"],status="failed",error="Agent-call budget exhausted",finished_at=_now());return
+    local_artifact=str(step.get("specialist") or "").startswith("artifact_")
+    if not local_artifact and not _reserve(jid):_set_step(jid,step["id"],status="failed",error="Agent-call budget exhausted",finished_at=_now());return
     _set_step(jid,step["id"],status="running",started_at=_now(),attempts=int(step.get("attempts") or 0)+1);_event(jid,"step_started",f"{step['specialist']} started: {step['title']}",{"step_id":step["id"]})
-    job=get_job(jid);by={s["id"]:s for s in job["steps"]};deps=[f"Output from {d}:\n{by[d]['output']}" for d in step.get("depends_on",[]) if d in by and by[d].get("output")];instruction=step["instruction"]+("\n\nUse these completed dependency outputs:\n"+"\n\n".join(deps) if deps else "")
+    job=get_job(jid);by={s["id"]:s for s in job["steps"]};deps=[f"Output from {d}:\n{by[d]['output']}" for d in step.get("depends_on",[]) if d in by and by[d].get("output")];instruction=step["instruction"]+("\n\nUse these completed dependency outputs:\n"+"\n\n".join(deps) if deps and not local_artifact else "")
     try:
-        if step["specialist"]=="deep_research":
+        if local_artifact:output=_create_artifact_step(job,step,by)
+        elif step["specialist"]=="deep_research":
             from agentie.core.deep_research import run_deep_research
             result=await run_deep_research(instruction,runner,job["session_id"]);output=result["report"]
             _event(jid,"research_sources",f"Deep research collected {len(result['sources'])} sources.",{"queries":result["queries"],"sources":result["sources"]});_event(jid,"citation_verification","Citation verification completed.",result.get("verification") or {})
@@ -127,10 +162,10 @@ async def execute_job(jid,runner):
             for s in blocked:_set_step(jid,s["id"],status="failed",error="Dependency failed",finished_at=_now())
             if not run:
                 if blocked:continue
-                _set_job(jid,status="failed",error="No runnable steps");return
+                _set_job(jid,status="failed",error="No runnable steps");_event(jid,"job_failed","No runnable steps.");return
             await asyncio.gather(*[_run_one(jid,s,runner) for s in run])
         job=get_job(jid);bad=[s for s in job["steps"] if s["status"]=="failed"];outs=[s["output"] for s in job["steps"] if s.get("output")]
-        if bad:_set_job(jid,status="failed",final_output="\n\n".join(outs),error=f"{len(bad)} step(s) failed")
+        if bad:_set_job(jid,status="failed",final_output="\n\n".join(outs),error=f"{len(bad)} step(s) failed");_event(jid,"job_failed",f"Job finished with {len(bad)} failed step(s).")
         else:_set_job(jid,status="completed",final_output=(outs[-1] if len(outs)==1 else "\n\n---\n\n".join(outs)),error=None);_event(jid,"job_completed","Job completed successfully.")
     except asyncio.CancelledError:
         if get_job(jid)["status"]!="paused":_set_job(jid,status="cancelled")
@@ -146,4 +181,25 @@ def resume_unfinished(runner):
     for r in rows:start_job(str(r["id"]),runner)
     return len(rows)
 def job_card(job):
-    title=job_title(job.get("goal"));return {"type":"job_progress","id":job["id"],"title":title,"goal":title,"request":job.get("goal"),"status":job["status"],"completed_steps":job.get("completed_steps",0),"total_steps":job.get("total_steps",0),"provider_calls":job.get("provider_calls",0),"budget_provider_calls":job.get("budget_provider_calls",0),"final_output":job.get("final_output"),"error":job.get("error"),"steps":[{"id":s["id"],"title":s["title"],"specialist":s["specialist"],"status":s["status"],"attempts":s["attempts"],"error":s.get("error")} for s in job.get("steps",[])]}
+    title=job_title(job.get("goal"));artifacts=[]
+    try:artifacts=[e.get("metadata",{}).get("card") for e in job_events(job["id"],100) if e.get("kind")=="artifact_created" and isinstance(e.get("metadata",{}).get("card"),dict)]
+    except Exception:pass
+    return {"type":"job_progress","id":job["id"],"title":title,"goal":title,"request":job.get("goal"),"status":job["status"],"completed_steps":job.get("completed_steps",0),"total_steps":job.get("total_steps",0),"provider_calls":job.get("provider_calls",0),"budget_provider_calls":job.get("budget_provider_calls",0),"final_output":job.get("final_output"),"error":job.get("error"),"artifacts":artifacts,"steps":[{"id":s["id"],"title":s["title"],"specialist":s["specialist"],"status":s["status"],"attempts":s["attempts"],"error":s.get("error")} for s in job.get("steps",[])]}
+def poll_job_completion_events(limit=20):
+    """Return newly completed/failed jobs once so the existing local-event UI can alert the user."""
+    init_db();now=datetime.now(timezone.utc)
+    with _LOCK,_connect() as c:rows=c.execute("SELECT id,status,updated_at FROM jobs WHERE status IN ('completed','failed') ORDER BY updated_at DESC LIMIT ?",(max(1,limit*4),)).fetchall()
+    events=[]
+    for row in rows:
+        try:
+            age=(now-datetime.fromisoformat(str(row["updated_at"]))).total_seconds()
+            if age>86400:continue
+        except Exception:pass
+        jid=str(row["id"]);history=job_events(jid,120)
+        if any(e.get("kind")=="completion_notified" for e in history):continue
+        if not any(e.get("kind") in {"job_completed","job_failed"} for e in history):continue
+        job=get_job(jid);card=job_card(job);status=str(job.get("status"));title=card.get("title") or "Agent job"
+        events.append({"message":f"{title} {'completed successfully' if status=='completed' else 'failed'}.","card":card})
+        _event(jid,"completion_notified","Completion notification delivered.",{"status":status})
+        if len(events)>=limit:break
+    return list(reversed(events))
