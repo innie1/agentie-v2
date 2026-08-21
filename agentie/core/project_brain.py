@@ -94,15 +94,18 @@ def append_project_item(pid,section,value,metadata=None):
         items=_load();p=next((x for x in items if x.get("id")==pid),None)
         if not p:return None
         p.setdefault(section,[]).append({"value":value,"at":_now(),**(metadata or {})});p["updated_at"]=_now();_save(items);return dict(p)
-def project_context(project,role,task,max_items=8):
+def _knowledge_allowed(x,role_l,agent_name=None):
+    audience=str(x.get("audience") or "all").casefold();source=str(x.get("source_agent") or "").casefold();viewer=str(agent_name or "").casefold()
+    if source and not x.get("shared") and source!=viewer:return False
+    return audience in {"all",role_l} or any(w and w in role_l for w in audience.split(','))
+def project_context(project,role,task,max_items=8,agent_name=None):
     role_l=str(role or "").casefold();parts=[f"PROJECT: {project.get('name')}",f"GOAL: {project.get('goal')}",f"YOUR ASSIGNMENT: {task}"];skill=activate_project_skill(project.get("skill"))
     if skill:parts.append(f"ACTIVATED SKILL — {skill['name']}:\n{skill['instructions']}")
     decisions=[str(x.get("value",x)) for x in project.get("decisions",[])[-max_items:]]
     if decisions:parts.append("DECISIONS:\n- "+"\n- ".join(decisions))
     knowledge=[]
     for x in project.get("knowledge",[])[-max_items*2:]:
-        audience=str(x.get("audience") or "all").casefold()
-        if audience in {"all",role_l} or any(w in role_l for w in audience.split(',')):knowledge.append(str(x.get("value",x)))
+        if isinstance(x,dict) and _knowledge_allowed(x,role_l,agent_name):knowledge.append(str(x.get("value",x)))
     if knowledge:parts.append("RELEVANT PROJECT KNOWLEDGE:\n- "+"\n- ".join(knowledge[-max_items:]))
     milestones=[str(x.get("value",x)) for x in project.get("milestones",[])[-max_items:]]
     if milestones:parts.append("MILESTONES:\n- "+"\n- ".join(milestones))
@@ -112,22 +115,21 @@ def record_handoff(pid,from_agent,to_agent,task,team_job_id=None):
     try:
         from agentie.core.agent_registry import get_agent
         agent=get_agent(to_agent);project=get_project(pid)
-        if agent and project:assign_agents(pid,[agent]);brief=project_context(project,agent.get("role") or agent.get("base"),task);set_agent_work(pid,agent,task,team_job_id,from_agent,"queued",brief)
+        if agent and project:assign_agents(pid,[agent]);brief=project_context(project,agent.get("role") or agent.get("base"),task,agent_name=agent.get("name"));set_agent_work(pid,agent,task,team_job_id,from_agent,"queued",brief)
     except Exception:pass
 def record_worker_result(pid,agent_name,role,task,result):
-    compact=re.sub(r"\s+"," ",str(result or "")).strip();compact=compact if len(compact)<=900 else compact[:899].rstrip()+"…";append_project_item(pid,"summaries",compact,{"agent":agent_name,"role":role,"task":task});append_project_item(pid,"knowledge",compact,{"source_agent":agent_name,"audience":"all","task":task});update_agent_work_status(pid,agent_name,"completed",compact)
+    compact=re.sub(r"\s+"," ",str(result or "")).strip();compact=compact if len(compact)<=900 else compact[:899].rstrip()+"…";append_project_item(pid,"summaries",compact,{"agent":agent_name,"role":role,"task":task});update_agent_work_status(pid,agent_name,"completed",compact)
 def _item_values(p,section,limit=8):return [str(x.get("value",x)) if isinstance(x,dict) else str(x) for x in (p.get(section) or [])[-limit:]]
-def _scoped_values(p,role,max_items=8):
+def _scoped_values(p,role,max_items=8,viewer_name=None):
     role_l=str(role or "").casefold();decisions=_item_values(p,"decisions",max_items);milestones=_item_values(p,"milestones",max_items);knowledge=[]
     for x in (p.get("knowledge") or [])[-max_items*2:]:
         if not isinstance(x,dict):continue
-        audience=str(x.get("audience") or "all").casefold()
-        if audience in {"all",role_l} or any(w in role_l for w in audience.split(',')):knowledge.append(str(x.get("value",x)))
+        if _knowledge_allowed(x,role_l,viewer_name):knowledge.append(str(x.get("value",x)))
     return decisions,knowledge[-max_items:],milestones
 def project_card(p,viewer_agent_id=None):
     base={"type":"project","id":p["id"],"name":p["name"],"goal":p["goal"],"kind":p["kind"],"status":p["status"],"skill":p.get("skill"),"specialists":p.get("specialists",[]),"assigned_agents":p.get("assigned_agents",[]),"assigned_to_viewer":bool(viewer_agent_id and viewer_agent_id in (p.get("assigned_agent_ids") or [])),"updated_at":p.get("updated_at")}
     if viewer_agent_id:
-        work=next((dict(x) for x in (p.get("agent_work") or []) if str(x.get("agent_id"))==str(viewer_agent_id)),None);role=(work or {}).get("role") or "general";decisions,context,milestones=_scoped_values(p,role);task=(work or {}).get("task") or "Work on this project";display_goal=f"Your delegated task: {task}. Project goal: {p.get('goal','')}";own_summary=(work or {}).get("latest_summary")
+        work=next((dict(x) for x in (p.get("agent_work") or []) if str(x.get("agent_id"))==str(viewer_agent_id)),None);role=(work or {}).get("role") or "general";decisions,context,milestones=_scoped_values(p,role,viewer_name=(work or {}).get("agent_name"));task=(work or {}).get("task") or "Work on this project";display_goal=f"Your delegated task: {task}. Project goal: {p.get('goal','')}";own_summary=(work or {}).get("latest_summary")
         return {**base,"goal":display_goal,"viewer_assignment":work,"goals":[f"Your delegated task: {task}"],"decisions":decisions,"context":context,"milestones":milestones,"summaries":[own_summary] if own_summary else []}
     return {**base,"goals":_item_values(p,"goals"),"decisions":_item_values(p,"decisions"),"context":_item_values(p,"knowledge"),"milestones":_item_values(p,"milestones"),"summaries":p.get("summaries",[])[-8:]}
 def _name_from_goal(goal,kind):
