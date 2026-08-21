@@ -20,6 +20,8 @@ The project is Python-first with a FastAPI backend and a lightweight web UI. Age
 - Persistent long-running projects for apps, novels, screenplays, businesses, life goals and general work.
 - Project Brain stores goals, decisions, distilled shared context, milestones, artifacts, handoffs and compact specialist summaries.
 - Worker agents receive role-scoped project briefs instead of another agent's full private chat.
+- Completed specialist output remains attached to that worker by default and is not automatically promoted into shared Project Brain knowledge; downstream sharing must be explicit.
+- Legacy worker-result knowledge is filtered from other specialists' new handoff prompts unless it was explicitly marked shared.
 - A project delegated to several agents remains one shared Project Brain and appears in every assigned agent's chat workspace.
 - Each assigned-agent project view includes that agent's delegated task, role-scoped context, work status and latest result without exposing another worker's private context.
 - Assigned-project list rows stay compact: they show task/status plus a short, Markdown-clean result title/summary instead of squeezing a whole report or raw formatting tokens into the list.
@@ -64,6 +66,9 @@ Delete project Shepherd
 ### Jobs, approvals and orchestration
 - Multi-step background jobs with progress and provider-call budgets.
 - Jobs keep their internal IDs for routing but show users human-readable NPC-generated titles in cards and job controls.
+- Compound requests such as `research X, then create a PDF/DOCX` are planned as dependent steps: research completes first, then the existing local artifact generator creates the requested file without another provider call.
+- Completed/failed background jobs emit a one-time user-visible completion event through the existing local event polling system.
+- Completed/failed/partial delegated team jobs also emit a one-time completion event; retrying a failed worker resets that notification marker so the retried result can alert again.
 - Pause, resume and retry controls.
 - Team jobs and handoffs between persistent agents.
 - Persisted queued/working team handoffs are recovered after Agentie restarts; completed handoffs are not rerun.
@@ -100,7 +105,11 @@ Agentie includes local tools and routing for capabilities such as:
 - Research and browser workflows
 - Code execution and workspace operations
 - Professional DOCX, PDF, XLSX and PPTX artifacts that expose both a human document name and the downloadable filename.
-- Word-export references such as `make docs file with this` resolve the selected agent's latest specialist handoff result before falling back to an unrelated ordinary assistant reply.
+- Word-export references such as `make docs file with this` are supported alongside `docx`, `doc file`, `word file` and `word document` wording.
+- If exactly one eligible result exists in the active agent chat, a referenced artifact request creates the file directly.
+- If several eligible research/results exist, Agentie returns a native result picker with a small single-select checkbox list so the user chooses the exact source instead of Agentie guessing.
+- Result choices are isolated to the active agent/session; selecting a result passes a stable internal fingerprint back to the normal artifact generator.
+- Creating the same artifact format from the same source result again returns the already-created file card instead of generating a duplicate file.
 
 ### Skills, plugins and MCP
 - Real skill registry and role/skill routing infrastructure.
@@ -147,6 +156,7 @@ The current UI includes:
 - Selected-agent `Delegated work` feed that polls persisted handoff tasks/results from that agent's own normal chat timeline
 - Compact assigned-project previews plus an expandable full specialist project workspace
 - Safe Markdown rendering for specialist results, including headings, lists, simple tables and fenced code blocks
+- Native result-source picker cards for ambiguous DOCX/PDF/XLSX/PPTX creation requests
 - Specialist project preview observers are idempotent and animation-frame debounced so rendering a project result cannot lock the browser in a self-triggering DOM mutation loop.
 - Native agent profile cards instead of raw internal profile JSON
 - Agent search/create controls
@@ -178,7 +188,7 @@ agentie-v2/
 └── README.md
 ```
 
-Important core modules include `agent_registry.py`, `agent_prompt.py`, `npc_brain.py`, `job_engine.py`, `team_orchestrator.py`, `project_brain.py`, `memory_store.py`, `advanced_local_router.py`, `agent_access.py`, `skill_registry.py`, `native_last30days.py`, `external_skill_runtime.py`, `capability_router.py`, `browser_automation.py`, and `computer_session.py`.
+Important core modules include `agent_registry.py`, `agent_prompt.py`, `npc_brain.py`, `job_engine.py`, `team_orchestrator.py`, `project_brain.py`, `result_memory.py`, `memory_store.py`, `advanced_local_router.py`, `agent_access.py`, `skill_registry.py`, `native_last30days.py`, `external_skill_runtime.py`, `capability_router.py`, `browser_automation.py`, and `computer_session.py`.
 
 ## Local-first execution philosophy
 
