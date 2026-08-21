@@ -8,7 +8,7 @@ from typing import Any
 from agentie.core.agent_registry import get_agent,list_agents
 from agentie.core.result_memory import remember_global_result
 from agentie.core.memory_store import add_message
-from agentie.core.project_brain import latest_project,get_project,project_context,record_handoff,record_worker_result,route_project_command
+from agentie.core.project_brain import get_project,project_context,record_handoff,record_worker_result,route_project_command
 
 WORKSPACE=Path.cwd()/"workspace";TEAM_FILE=WORKSPACE/"team_jobs.json";_LOCK=threading.Lock();_RUNNING={}
 def _now():return datetime.now().astimezone().isoformat(timespec="seconds")
@@ -48,11 +48,16 @@ def _resolve_names(raw):
 def create_team_job(task,agents,requested_by="user",project_id=None):
     if not str(task).strip():raise ValueError("A team task is required.")
     if not agents:raise ValueError("At least one agent is required.")
-    project=get_project(project_id) if project_id else latest_project();jid="team_"+uuid.uuid4().hex[:10];now=_now()
+    project=get_project(project_id) if project_id else None;jid="team_"+uuid.uuid4().hex[:10];now=_now()
     hs=[]
     for a in agents:
-        scoped=project_context(project,a.get("role") or a.get("base"),task) if project else str(task)
-        h={"id":"ho_"+uuid.uuid4().hex[:8],"from":requested_by,"to_agent_id":a["id"],"to_agent_name":a["name"],"task":str(task).strip(),"context":{"task":str(task).strip(),"project_id":project.get("id") if project else None,"scoped_brief":scoped},"status":"queued","result":None,"error":None,"attempts":0,"progress_summary":None,"status_checked_at":None};hs.append(h)
+        task_text=str(task).strip()
+        if project:
+            scoped=project_context(project,a.get("role") or a.get("base"),task_text)
+            context={"task":task_text,"project_id":project.get("id"),"scoped_brief":scoped}
+        else:
+            context={"task":task_text}
+        h={"id":"ho_"+uuid.uuid4().hex[:8],"from":requested_by,"to_agent_id":a["id"],"to_agent_name":a["name"],"task":task_text,"context":context,"status":"queued","result":None,"error":None,"attempts":0,"progress_summary":None,"status_checked_at":None};hs.append(h)
     job={"id":jid,"task":str(task).strip(),"status":"queued","requested_by":requested_by,"project_id":project.get("id") if project else None,"agent_ids":[a["id"] for a in agents],"agent_names":[a["name"] for a in agents],"handoffs":hs,"created_at":now,"updated_at":now,"final_output":None}
     with _LOCK:items=_load();items.append(job);_save(items)
     if project:
