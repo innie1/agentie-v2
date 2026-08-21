@@ -98,27 +98,42 @@ def _candidate_title(content: str) -> str:
     return _clean_preview(first)[:100] or "Result"
 
 
+def _failed_result(route: str, content: str, kind: str = "") -> bool:
+    route_l=str(route or "").casefold();kind_l=str(kind or "").casefold();text=re.sub(r"\s+"," ",str(content or "").strip()).casefold()
+    if route_l in {"local_guard","error","failure","failed","fallback","local_fallback"}:return True
+    if kind_l in {"error","failure","failed","error_report"}:return True
+    markers=(
+        "i understood this as a local file request, but i couldn't resolve the file or action",
+        "i understood this as a local file request, but i couldn’t resolve the file or action",
+        "i couldn't retrieve usable web sources for this research task",
+        "i couldn’t retrieve usable web sources for this research task",
+        "agent run failed:",
+    )
+    return any(marker in text for marker in markers)
+
+
 def _append_typed_candidates(out:list[dict[str,Any]],seen:set[str],items:list[dict[str,Any]],limit:int)->None:
     for item in reversed(items):
         content=result_content(item)
-        if not content:continue
+        kind=str(item.get("type") or "result")
+        if not content or _failed_result("",content,kind):continue
         fid=source_fingerprint(content)
         if fid in seen:continue
         seen.add(fid);clean=_clean_preview(content)
-        out.append({"id":fid,"title":_candidate_title(content),"summary":clean[:220]+("…" if len(clean)>220 else ""),"content":content,"route":str(item.get("type") or "result"),"created_at":item.get("at")})
+        out.append({"id":fid,"title":_candidate_title(content),"summary":clean[:220]+("…" if len(clean)>220 else ""),"content":content,"route":kind,"created_at":item.get("at")})
         if len(out)>=max(1,limit):return
 
 
 def list_result_candidates(session_id: str, limit: int = 8) -> list[dict[str, Any]]:
-    """Return substantive result-like outputs from this exact chat, newest first; use global results only as fallback."""
+    """Return substantive successful outputs from this exact chat, newest first; use typed/global results only as fallback."""
     from agentie.core.memory_store import session_messages
     seen=set();out=[]
-    excluded={"local_artifact","local_pdf","project_handoff","capability_permission","observability","clarification"}
+    excluded={"local_artifact","local_pdf","project_handoff","capability_permission","observability","clarification","local_guard","error","failure","failed","fallback","local_fallback"}
     rows=session_messages(session_id,limit=100,newest_first=True)
     for row in rows:
         if row.get("role")!="assistant":continue
         content=str(row.get("content") or "");meta=row.get("metadata") or {};route=str(meta.get("routed_by") or "")
-        if not content.strip() or route in excluded:continue
+        if not content.strip() or route in excluded or _failed_result(route,content):continue
         if route!="project_handoff_result" and len(content.strip())<120:continue
         fid=source_fingerprint(content)
         if fid in seen:continue
