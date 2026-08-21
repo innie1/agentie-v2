@@ -44,14 +44,14 @@ def update_project(pid,**changes):
         p["updated_at"]=_now();_save(items);return dict(p)
 def delete_project(pid):
     """Delete a Project Brain once. Historical agent chats remain historical chat."""
-    key=str(pid or "").strip()
+    key=str(pid or "").strip();store=PROJECTS_FILE.parent/"deletions.json"
     with _LOCK:
         items=_load();index=next((i for i,x in enumerate(items) if x.get("id")==key),None)
         if index is None:
-            tomb=find_deleted("project",key)
+            tomb=find_deleted("project",key,store)
             return {"already_deleted":True,"id":tomb.get("entity_id"),"name":tomb.get("name"),"deleted_at":tomb.get("deleted_at")} if tomb else None
         deleted=items.pop(index);_save(items)
-    remember_deleted("project",str(deleted.get("id")),str(deleted.get("name") or ""),{"kind":deleted.get("kind")})
+    remember_deleted("project",str(deleted.get("id")),str(deleted.get("name") or ""),{"kind":deleted.get("kind")},store)
     return deleted
 def assign_agents(pid,agents):
     with _LOCK:
@@ -115,11 +115,19 @@ def record_handoff(pid,from_agent,to_agent,task,team_job_id=None):
 def record_worker_result(pid,agent_name,role,task,result):
     compact=re.sub(r"\s+"," ",str(result or "")).strip();compact=compact if len(compact)<=900 else compact[:899].rstrip()+"…";append_project_item(pid,"summaries",compact,{"agent":agent_name,"role":role,"task":task});append_project_item(pid,"knowledge",compact,{"source_agent":agent_name,"audience":"all","task":task});update_agent_work_status(pid,agent_name,"completed",compact)
 def _item_values(p,section,limit=8):return [str(x.get("value",x)) if isinstance(x,dict) else str(x) for x in (p.get(section) or [])[-limit:]]
+def _scoped_values(p,role,max_items=8):
+    role_l=str(role or "").casefold();decisions=_item_values(p,"decisions",max_items);milestones=_item_values(p,"milestones",max_items);knowledge=[]
+    for x in (p.get("knowledge") or [])[-max_items*2:]:
+        if not isinstance(x,dict):continue
+        audience=str(x.get("audience") or "all").casefold()
+        if audience in {"all",role_l} or any(w in role_l for w in audience.split(',')):knowledge.append(str(x.get("value",x)))
+    return decisions,knowledge[-max_items:],milestones
 def project_card(p,viewer_agent_id=None):
     base={"type":"project","id":p["id"],"name":p["name"],"goal":p["goal"],"kind":p["kind"],"status":p["status"],"skill":p.get("skill"),"specialists":p.get("specialists",[]),"assigned_agents":p.get("assigned_agents",[]),"assigned_to_viewer":bool(viewer_agent_id and viewer_agent_id in (p.get("assigned_agent_ids") or [])),"updated_at":p.get("updated_at")}
     if viewer_agent_id:
-        work=next((dict(x) for x in (p.get("agent_work") or []) if str(x.get("agent_id"))==str(viewer_agent_id)),None)
-        return {**base,"viewer_assignment":work,"goals":[],"decisions":[],"context":[],"milestones":[],"summaries":[]}
+        work=next((dict(x) for x in (p.get("agent_work") or []) if str(x.get("agent_id"))==str(viewer_agent_id)),None);role=(work or {}).get("role") or "general";decisions,context,milestones=_scoped_values(p,role);task=(work or {}).get("task") or "Work on this project";display_goal=f"Your delegated task: {task}. Project goal: {p.get('goal','')}"
+        own_summary=(work or {}).get("latest_summary")
+        return {**base,"goal":display_goal,"viewer_assignment":work,"goals":[f"Your delegated task: {task}"],"decisions":decisions,"context":context,"milestones":milestones,"summaries":[own_summary] if own_summary else []}
     return {**base,"goals":_item_values(p,"goals"),"decisions":_item_values(p,"decisions"),"context":_item_values(p,"knowledge"),"milestones":_item_values(p,"milestones"),"summaries":p.get("summaries",[])[-8:]}
 def _name_from_goal(goal,kind):
     clean=re.sub(r"^(i\s+(want|plan|need)\s+to\s+|i('m| am)\s+)","",goal.strip(),flags=re.I);clean=re.sub(r"\s+"," ",clean).strip(" .?!");return clean[:70] or f"{kind.title()} project"
@@ -154,12 +162,12 @@ def _delete_picker():
     items=list_projects();return {"message":"Choose the project or projects you want to delete.","card":{"type":"project_delete_picker","items":[project_card(x) for x in items]}}
 def _delete_request(raw):
     from agentie.tools.approval_tools import create_approval
-    bits=[x.strip() for x in re.split(r"\s*,\s*|\s*;\s*",str(raw or "")) if x.strip()];projects=[];already=[]
+    bits=[x.strip() for x in re.split(r"\s*,\s*|\s*;\s*",str(raw or "")) if x.strip()];projects=[];already=[];store=PROJECTS_FILE.parent/"deletions.json"
     for bit in bits:
         p=get_project(bit)
         if not p and bit.casefold().startswith("project "):p=get_project(bit[8:].strip())
         if not p:
-            tomb=find_deleted("project",bit) or (find_deleted("project",bit[8:].strip()) if bit.casefold().startswith("project ") else None)
+            tomb=find_deleted("project",bit,store) or (find_deleted("project",bit[8:].strip(),store) if bit.casefold().startswith("project ") else None)
             if tomb:already.append(tomb.get("name") or bit);continue
             return {"message":f"Project {bit} was not found.","card":None}
         if all(x['id']!=p['id'] for x in projects):projects.append(p)
