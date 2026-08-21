@@ -3,7 +3,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from agentie.core import agent_registry, manager_autopilot, specialty_router, team_orchestrator
+from agentie.core import agent_registry, manager_autopilot, reference_router, specialty_router, team_orchestrator
 
 
 class ManagerAutopilotRegressionTests(unittest.TestCase):
@@ -82,6 +82,36 @@ class ManagerAutopilotRegressionTests(unittest.TestCase):
             result=specialty_router.maybe_auto_delegate('Create a launch campaign with research, content and verification.',session)
         self.assertIs(result,sentinel)
         routed.assert_called_once()
+
+    def test_reference_router_prioritizes_autopilot_over_implicit_deep_research_job(self):
+        session=f"{self.ceo['session_prefix']}main"
+        prompt='Build a simple church management app for small Nigerian churches. Research competitors and requirements, create the technical implementation plan, then verify whether the plan is ready to build.'
+        sentinel={'message':'Manager Autopilot started','card':{'type':'team_job','autopilot':True}}
+        with patch('agentie.core.reference_router.get_context',return_value=None),patch('agentie.core.manager_autopilot.maybe_manager_autopilot',return_value=sentinel) as routed,patch('agentie.core.job_engine.create_job') as create:
+            result=reference_router._job_command(session,prompt)
+        self.assertEqual(result['routed_by'],'manager_autopilot')
+        self.assertTrue(result['card']['autopilot'])
+        routed.assert_called_once_with(prompt,session)
+        create.assert_not_called()
+
+    def test_reference_router_preserves_research_to_pdf_job_engine(self):
+        session=f"{self.ceo['session_prefix']}main"
+        prompt='Research Nigerian church management apps and after the research create a PDF with the research'
+        fake={'id':'abc123','goal':prompt,'status':'queued','completed_steps':0,'total_steps':2,'provider_calls':0,'budget_provider_calls':8,'final_output':None,'error':None,'steps':[]}
+        card={'type':'job_progress','id':'abc123','title':'Church Apps Report','goal':prompt}
+        with patch('agentie.core.reference_router.get_context',return_value=None),patch('agentie.core.reference_router.set_context'),patch('agentie.core.manager_autopilot.maybe_manager_autopilot',return_value=None) as routed,patch('agentie.core.job_engine.create_job',return_value=fake) as create,patch('agentie.core.job_engine.start_job'),patch('agentie.core.job_engine.job_card',return_value=card):
+            result=reference_router._job_command(session,prompt)
+        self.assertEqual(result['routed_by'],'job')
+        self.assertEqual(result['card']['type'],'job_progress')
+        routed.assert_called_once_with(prompt,session)
+        create.assert_called_once_with(session,prompt)
+
+    def test_reference_router_does_not_turn_simple_writing_into_background_job(self):
+        session=f"{self.ceo['session_prefix']}main"
+        with patch('agentie.core.reference_router.get_context',return_value=None),patch('agentie.core.manager_autopilot.maybe_manager_autopilot',return_value=None),patch('agentie.core.job_engine.create_job') as create:
+            result=reference_router._job_command(session,'Write the launch post.')
+        self.assertIsNone(result)
+        create.assert_not_called()
 
 
 if __name__=='__main__':unittest.main()
