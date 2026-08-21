@@ -71,9 +71,9 @@ def update_agent_manager(agent_id_or_name: str, manager_id_or_name: str | None) 
 
 def delete_agent(agent_id_or_name: str) -> dict[str, Any]:
     """Permanently delete an agent once; repeated calls return an already-deleted result."""
-    data=_load();agents=data.setdefault("agents",[]);key=_clean(agent_id_or_name).casefold();target=next((x for x in agents if str(x.get("id","")).casefold()==key or str(x.get("name","")).casefold()==key),None)
+    data=_load();agents=data.setdefault("agents",[]);key=_clean(agent_id_or_name).casefold();target=next((x for x in agents if str(x.get("id","")).casefold()==key or str(x.get("name","")).casefold()==key),None);deletion_file=WORKSPACE/"deletions.json"
     if not target:
-        tombstone=find_deleted("agent",key)
+        tombstone=find_deleted("agent",key,deletion_file)
         if tombstone:return {"deleted":False,"already_deleted":True,"agent":{"id":tombstone.get("entity_id"),"name":tombstone.get("name")},"deleted_at":tombstone.get("deleted_at")}
         raise ValueError("Agent was not found.")
     public=_public(target);agent_id=str(target["id"]);now=datetime.now().astimezone().isoformat(timespec="seconds")
@@ -86,7 +86,7 @@ def delete_agent(agent_id_or_name: str) -> dict[str, Any]:
     removed=0
     for path in (WORKSPACE/"agents"/agent_id,WORKSPACE/"agent_data"/agent_id):
         if path.exists():shutil.rmtree(path,ignore_errors=True);removed+=1
-    remember_deleted("agent",agent_id,public.get("name"),{"role":public.get("role")})
+    remember_deleted("agent",agent_id,public.get("name"),{"role":public.get("role")},deletion_file)
     return {"deleted":True,"already_deleted":False,"agent":public,"purged":{**purged,"instruction_profiles":instruction_profiles,"directories":removed}}
 def hierarchy() -> list[dict[str, Any]]:
     items=list_agents();by_manager:dict[str|None,list[dict[str,Any]]]={}
