@@ -116,7 +116,10 @@ def _create_artifact_step(job,step,by):
     deps=[str(by[d].get("output") or "").strip() for d in step.get("depends_on",[]) if d in by and str(by[d].get("output") or "").strip()]
     content="\n\n".join(deps).strip()
     if not content:raise ValueError("Artifact step has no completed source result.")
-    kind=str(step.get("specialist") or "").removeprefix("artifact_")
+    kind=str(step.get("specialist") or "").removeprefix("artifact_");title=job_title(job.get("goal"));artifact_content=content
+    first=next((line.strip() for line in content.splitlines() if line.strip()),"")
+    if first.casefold()!=f"# {title}".casefold():artifact_content=f"# {title}\n\n{content}"
+    filename=f"{title}.{kind}"
     from agentie.core.artifact_naming import creator_from_session
     from agentie.core.result_memory import existing_artifact,remember_artifact
     existing=existing_artifact(job["session_id"],kind,content)
@@ -125,10 +128,10 @@ def _create_artifact_step(job,step,by):
         creator=creator_from_session(job["session_id"])
         if kind=="pdf":
             from agentie.core.pdf_service import create_pdf
-            card=create_pdf(content,None,creator,step.get("instruction"));
+            card=create_pdf(artifact_content,filename,creator,step.get("instruction"));
         else:
             from agentie.core.office_artifacts import create_docx,create_pptx,create_xlsx
-            card=create_docx(content,None,creator,step.get("instruction")) if kind=="docx" else create_xlsx(content,None,creator,step.get("instruction")) if kind=="xlsx" else create_pptx(content,None,creator,step.get("instruction"))
+            card=create_docx(artifact_content,filename,creator,step.get("instruction")) if kind=="docx" else create_xlsx(artifact_content,filename,creator,step.get("instruction")) if kind=="xlsx" else create_pptx(artifact_content,filename,creator,step.get("instruction"))
         remember_artifact(job["session_id"],kind,content,card);reused=False
     _event(job["id"],"artifact_created",("Reused existing " if reused else "Created ")+str(card.get("document_name") or card.get("name") or kind.upper()),{"step_id":step["id"],"kind":kind,"card":card,"reused":reused})
     return ("Already created" if reused else "Created")+f" “{card.get('document_name') or card.get('name')}” as {card.get('name')}."
