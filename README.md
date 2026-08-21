@@ -67,6 +67,7 @@ Delete project Shepherd
 - Multi-step background jobs with progress and provider-call budgets.
 - Jobs keep their internal IDs for routing but show users human-readable NPC-generated titles in cards and job controls.
 - Compound requests such as `research X, then create a PDF/DOCX` are planned as dependent steps: research completes first, then the existing local artifact generator creates the requested file without another provider call.
+- Compound-job artifacts inherit the parent job's human NPC title as the document title and requested filename, so an internal section heading such as `Executive Summary` cannot become the artifact name.
 - A research step with no usable sources is treated as failed; dependent artifact steps are blocked and no failure-message PDF/DOCX is generated.
 - Deep research retries a small set of DDGS search backends instead of depending on a single `auto` backend; if all attempts fail, the real retrieval error is preserved in the failed research step so the user can see why no sources were found.
 - Internal deep-research synthesis runs outside the owning persistent agent's normal conversation/NPC session, preventing chat preferences or local acknowledgement replies from replacing the gathered research report.
