@@ -20,7 +20,11 @@ def get_project(key):
     with _LOCK:return next((dict(x) for x in reversed(_load()) if str(x.get("id","")).casefold()==k or str(x.get("name","")).casefold()==k),None)
 def latest_project(active_only=True):return next((x for x in list_projects() if not active_only or x.get("status")=="active"),None)
 def projects_for_agent(agent_id,limit=50):
-    aid=str(agent_id or "");return [p for p in list_projects(limit) if aid and (p.get("owner_agent_id")==aid or aid in (p.get("assigned_agent_ids") or []))]
+    aid=str(agent_id or "");candidates=[p for p in list_projects(limit) if aid and (p.get("owner_agent_id")==aid or aid in (p.get("assigned_agent_ids") or []))];chosen={}
+    for p in candidates:
+        key=str(p.get("name") or p.get("id") or "").casefold().strip();has_work=1 if any(str(x.get("agent_id"))==aid for x in (p.get("agent_work") or []) if isinstance(x,dict)) else 0;score=(has_work,str(p.get("updated_at") or ""))
+        if key not in chosen or score>chosen[key][0]:chosen[key]=(score,p)
+    return [row[1] for row in sorted(chosen.values(),key=lambda x:str(x[1].get("updated_at") or ""),reverse=True)]
 def _kind(text):
     l=text.casefold()
     if any(x in l for x in ("novel","book","fiction","story")):return "novel"
@@ -30,10 +34,14 @@ def _kind(text):
     if any(x in l for x in ("lose weight","fitness","habit","learn ","study ","personal goal","life project")):return "life"
     return "general"
 def create_project(name,goal,kind=None,owner_agent_id=None):
-    k=kind or _kind(f"{name} {goal}");p=PROJECT_TYPES.get(k,PROJECT_TYPES["general"]);now=_now();assigned=[owner_agent_id] if owner_agent_id else []
-    item={"id":"proj_"+uuid.uuid4().hex[:10],"name":name.strip()[:120],"goal":goal.strip()[:4000],"kind":k,"status":"active","owner_agent_id":owner_agent_id,"assigned_agent_ids":assigned,"assigned_agents":[],"agent_work":[],"skill":p["skill"],"specialists":p["specialists"],"goals":[goal.strip()[:1000]],"decisions":[],"knowledge":[],"milestones":[],"artifacts":[],"handoffs":[],"summaries":[],"created_at":now,"updated_at":now}
-    with _LOCK:items=_load();items.append(item);_save(items)
-    return item
+    clean_name=str(name or "").strip()[:120];clean_goal=str(goal or "").strip()[:4000]
+    with _LOCK:
+        items=_load();existing=next((x for x in reversed(items) if str(x.get("name","")).casefold()==clean_name.casefold() and x.get("status")=="active"),None)
+        if existing:
+            if owner_agent_id and owner_agent_id not in (existing.get("assigned_agent_ids") or []):existing.setdefault("assigned_agent_ids",[]).append(owner_agent_id);existing["updated_at"]=_now();_save(items)
+            return dict(existing)
+        k=kind or _kind(f"{clean_name} {clean_goal}");preset=PROJECT_TYPES.get(k,PROJECT_TYPES["general"]);now=_now();assigned=[owner_agent_id] if owner_agent_id else []
+        item={"id":"proj_"+uuid.uuid4().hex[:10],"name":clean_name,"goal":clean_goal,"kind":k,"status":"active","owner_agent_id":owner_agent_id,"assigned_agent_ids":assigned,"assigned_agents":[],"agent_work":[],"skill":preset["skill"],"specialists":preset["specialists"],"goals":[clean_goal[:1000]],"decisions":[],"knowledge":[],"milestones":[],"artifacts":[],"handoffs":[],"summaries":[],"created_at":now,"updated_at":now};items.append(item);_save(items);return dict(item)
 def update_project(pid,**changes):
     with _LOCK:
         items=_load();p=next((x for x in items if x.get("id")==pid),None)
@@ -215,7 +223,9 @@ def route_project_command(message):
         return {"message":f"{p['name']} is {p['status']}. It has {len(p.get('summaries',[]))} specialist update(s) and {len(p.get('milestones',[]))} milestone(s).","card":project_card(p)}
     m=re.match(r"^(create|start|make)\s+(a\s+)?project(\s+called|\s+named)?\s+(.+?)\s+(to|for|about)\s+(.+)$",text,re.I)
     if m:
-        p=create_project(m.group(4).strip(' \"“”'),m.group(6).strip());return {"message":f"Created project {p['name']}. I’ll keep specialist work separated and store only useful project summaries here.","card":project_card(p)}
+        name=m.group(4).strip(' \"“”');existing=get_project(name)
+        if existing and existing.get("status")=="active":return {"message":f"Project {existing['name']} already exists. I reused the existing Project Brain instead of creating a duplicate.","card":project_card(existing)}
+        p=create_project(name,m.group(6).strip());return {"message":f"Created project {p['name']}. I’ll keep specialist work separated and store only useful project summaries here.","card":project_card(p)}
     long_term=re.match(r"^(i\s+(want|plan|need)\s+to|i('m| am)\s+)(.+)$",text,re.I)
     if long_term:
         goal=text;k=_kind(goal);signals=("novel","screenplay","book","build an app","build a website","start a business","lose weight","learn ","study ","for the next month","every day","daily","weekly")
