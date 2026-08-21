@@ -193,12 +193,8 @@ async def _launch_computer_fallback(task: str) -> dict[str, Any]:
         return {"message":"I couldn’t determine which website the Computer should use for that task.","card":None}
     from agentie.core.wsl_desktop import ensure_started as ensure_wsl_desktop, _run_wsl
     try:
-        # Start the real desktop first. This path is bounded and runs off the event loop,
-        # so the chat cannot sit forever on an unexplained "Agentie is working" state.
         info=await asyncio.wait_for(asyncio.to_thread(ensure_wsl_desktop),timeout=40)
         try:
-            # XFCE notifyd can inherit a stale WSLg/Wayland environment and display a
-            # modal protocol warning over KasmVNC. It is not required by Agentie.
             await asyncio.to_thread(_run_wsl,"pkill -u \"$(id -u)\" -f xfce4-notifyd >/dev/null 2>&1 || true",8)
         except Exception:
             pass
@@ -210,15 +206,9 @@ async def _launch_computer_fallback(task: str) -> dict[str, Any]:
                 navigated_url=page.url
                 await _publish_frame(page,status="ready",url=page.url,detail=f"Computer ready for: {task[:160]}")
             except Exception:
-                # The desktop is still useful even when CDP navigation is temporarily
-                # unavailable; never hide a ready Computer behind a browser timeout.
                 navigated_url=None
         _set_live_state(active=True,status="ready",url=navigated_url or str(candidate["url"]),detail=f"Computer fallback ready for {candidate['service']}")
-        message=(
-            f"Agentie Computer is open on {candidate['service']} and the task is staged there."
-            if navigated_url else
-            f"Agentie Computer is ready for {candidate['service']}. Chrome automation is not ready yet, but the visible desktop is available and the task is staged there."
-        )
+        message=(f"Agentie Computer is open on {candidate['service']} and the task is staged there." if navigated_url else f"Agentie Computer is ready for {candidate['service']}. Chrome automation is not ready yet, but the visible desktop is available and the task is staged there.")
         return {"message":message,"card":_desktop_fallback_card(info,candidate,task,navigated_url=navigated_url)}
     except asyncio.TimeoutError:
         _set_live_state(active=False,status="error",url=str(candidate["url"]),detail="Computer fallback timed out",error="Desktop startup timed out")
@@ -249,15 +239,19 @@ async def capture_website(url: str, *, track_change: bool=False)->dict[str,Any]:
     excerpt=text[:900];_set_live_state(active=False,status="done",url=page.url,detail="Browser task complete")
     return {"message":f"Checked {url}. The page has meaningfully changed since the previous check." if track_change and changed and previous else f"Checked {url}. No meaningful change was detected." if track_change and previous else f"Captured a screenshot of {url}.","card":_card(url,title,filename,changed,similarity,excerpt),"status":status,"changed":changed,"first_check":previous is None if track_change else True}
 
-async def route_browser_request(message: str)->dict[str,Any]|None:
+async def route_browser_request(message: str, session_id: str | None = None)->dict[str,Any]|None:
     text=" ".join(str(message or "").strip().split())
-    if not text or _scheduled_request(text):return None
+    if not text:return None
+    # Teach-by-demonstration is a browser-local control path. It is evaluated
+    # before generic browser routing so recording/listing/replay never consumes
+    # an AI-provider call.
+    from agentie.core.workflow_browser_runtime import route_taught_workflow_request
+    taught=await route_taught_workflow_request(text,session_id)
+    if taught is not None:return taught
+    if _scheduled_request(text):return None
     if text.casefold().startswith(_COMPUTER_PREFIX):
         return await _launch_computer_fallback(text[len(_COMPUTER_PREFIX):].strip())
     from agentie.core.desktop_runtime import route_desktop_request
-    # WSL startup/shutdown is intentionally synchronous because it shells out to
-    # wsl.exe. Run desktop routing in a worker thread so FastAPI's event loop
-    # remains free for Plugins/MCP/Skills, uploads, health, and other requests.
     desktop=await asyncio.to_thread(route_desktop_request,text)
     if desktop is not None:return desktop
     from agentie.core.browser_automation import browser_session_command
