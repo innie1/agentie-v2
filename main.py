@@ -112,7 +112,7 @@ async def startup_event():start_routine_worker()
 @app.get("/")
 async def chat_ui():
     if not FRONTEND_FILE.exists():raise HTTPException(404,"Frontend not found.")
-    html=FRONTEND_FILE.read_text(encoding="utf-8")+'\n<script src="/cards.js?v=201"></script>\n<script src="/events.js?v=201"></script>\n<script src="/upload.js?v=201"></script>\n<script src="/plugins.js?v=201"></script>\n<script src="/plugin-access.js?v=203"></script>\n<script src="/browser-screen.js?v=201"></script>\n<script src="/ui-upgrade.js?v=202"></script>\n';return HTMLResponse(html,headers={"Cache-Control":"no-store, no-cache, must-revalidate, max-age=0"})
+    html=FRONTEND_FILE.read_text(encoding="utf-8")+'\n<script src="/cards.js?v=201"></script>\n<script src="/events.js?v=201"></script>\n<script src="/upload.js?v=201"></script>\n<script src="/plugins.js?v=201"></script>\n<script src="/plugin-access.js?v=203"></script>\n<script src="/browser-screen.js?v=201"></script>\n<script src="/ui-upgrade.js?v=203"></script>\n';return HTMLResponse(html,headers={"Cache-Control":"no-store, no-cache, must-revalidate, max-age=0"})
 @app.get("/cards.js")
 async def cards_js():return Response(CARDS_JS.read_text(encoding="utf-8"),media_type="application/javascript",headers={"Cache-Control":"no-store"})
 @app.get("/events.js")
@@ -126,7 +126,7 @@ async def plugin_access_js():return Response(PLUGIN_ACCESS_JS.read_text(encoding
 @app.get("/browser-screen.js")
 async def browser_screen_js():return Response(BROWSER_SCREEN_JS.read_text(encoding="utf-8"),media_type="application/javascript",headers={"Cache-Control":"no-store"})
 @app.get("/ui-upgrade.js")
-async def ui_upgrade_js():return Response(UI_UPGRADE_JS.read_text(encoding="utf-8"),media_type="application/javascript",headers={"Cache-Control":"no-store"})
+async def ui_upgrade_js():return Response(UI_UPGRADE_JS.read_text(encoding="utf-8")+"\n"+(FRONTEND_DIR/"project_workspace.js").read_text(encoding="utf-8"),media_type="application/javascript",headers={"Cache-Control":"no-store"})
 @app.get("/plugins/state")
 async def plugins_state():
     state=plugin_state();state["plugins"]=list_skills();state["agents"]=list_agents();registered={str(x.get("name") or "").lower() for x in state.get("mcp_servers",[])};state["mcp_presets"]=[{**item,"installed":item["id"].lower() in registered} for item in mcp_presets()];return state
