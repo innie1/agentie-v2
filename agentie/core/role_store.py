@@ -3,7 +3,7 @@ import json,re
 from datetime import datetime
 from pathlib import Path
 from typing import Any
-from agentie.core.agent_registry import create_agent,delete_agent,get_agent,hierarchy,list_agents,set_agent_pinned,update_agent_manager,update_agent_profile
+from agentie.core.agent_registry import create_agent,delete_agent,get_agent,hierarchy,list_agents,set_agent_avatar,set_agent_pinned,update_agent_manager,update_agent_profile
 from agentie.core.agent_prompt import instruction_card,learning_audit,set_manual_instructions
 from agentie.core.deletion_registry import find_deleted
 from agentie.core.team_orchestrator import route_team_command
@@ -52,6 +52,7 @@ def _agent_creation_command(text):
     return None
 def _manual_instruction_payload(agent_name,payload):
     value=str(payload or "").strip();nested=re.match(rf"^(?:set|update|change|edit)\s+(?:agent\s+)?{re.escape(str(agent_name))}(?:['’]s)?\s+(?:system\s+prompt|instructions|prompt)\s+(?:to|as)\s+(.+)$",value,re.I);return (nested.group(1) if nested else value).strip()
+def _profile_response(agent,message):return {"message":message,"card":{"type":"agent_profile",**agent}}
 def route_role_command(message):
     text=" ".join(message.strip().split());lower=text.lower().strip(" .?!");team=route_team_command(text)
     if team is not None:return team
@@ -78,6 +79,36 @@ def route_role_command(message):
         agent=get_agent(edit.group(1).strip())
         if not agent:return {"message":"Agent was not found.","card":None}
         payload=_manual_instruction_payload(agent['name'],edit.group(2));set_manual_instructions(agent,payload);return {"message":f"Updated {agent['name']}'s user instructions.","card":instruction_card(agent)}
+    avatar_file=re.match(r"^(?:set|update|change)\s+(?:agent\s+)?(.+?)(?:['’]s)?\s+avatar\s+file\s+(?:to|as)\s+(.+?)[.!?]?$",text,re.I)
+    if avatar_file:
+        try:agent=set_agent_avatar(avatar_file.group(1).strip(),"uploaded",avatar_file.group(2).strip(' \"“”'))
+        except ValueError as exc:return {"message":str(exc),"card":None}
+        return _profile_response(agent,f"Updated {agent['name']}'s avatar.")
+    avatar_mode=re.match(r"^(?:set|update|change)\s+(?:agent\s+)?(.+?)(?:['’]s)?\s+avatar\s+(?:to|as)\s+(default|generated)[.!?]?$",text,re.I)
+    if avatar_mode:
+        try:agent=set_agent_avatar(avatar_mode.group(1).strip(),avatar_mode.group(2).lower())
+        except ValueError as exc:return {"message":str(exc),"card":None}
+        return _profile_response(agent,f"Updated {agent['name']}'s avatar.")
+    responsibilities=re.match(r"^(?:set|update|change|edit)\s+(?:agent\s+)?(.+?)(?:['’]s)?\s+responsibilities\s+(?:to|as)\s+(.+)$",text,re.I)
+    if responsibilities:
+        values=[x.strip() for x in re.split(r"\s*[|;]\s*",responsibilities.group(2)) if x.strip()]
+        try:agent=update_agent_profile(responsibilities.group(1).strip(),responsibilities=values)
+        except ValueError as exc:return {"message":str(exc),"card":None}
+        return _profile_response(agent,f"Updated {agent['name']}'s responsibilities.")
+    field_edit=re.match(r"^(?:set|update|change|edit)\s+(?:agent\s+)?(.+?)(?:['’]s)?\s+(personality|goal|company identity)\s+(?:to|as)\s+(.+)$",text,re.I)
+    if field_edit:
+        target=field_edit.group(1).strip();field=field_edit.group(2).lower();value=field_edit.group(3).strip()
+        kwargs={"personality":value} if field=="personality" else {"goal":value} if field=="goal" else {"company_identity":value}
+        try:agent=update_agent_profile(target,**kwargs)
+        except ValueError as exc:return {"message":str(exc),"card":None}
+        label="company identity" if field=="company identity" else field
+        return _profile_response(agent,f"Updated {agent['name']}'s {label}.")
+    field_clear=re.match(r"^(?:clear|remove)\s+(?:agent\s+)?(.+?)(?:['’]s)?\s+(personality|goal|company identity|responsibilities)[.!?]?$",text,re.I)
+    if field_clear:
+        target=field_clear.group(1).strip();field=field_clear.group(2).lower();kwargs={"responsibilities":[]} if field=="responsibilities" else {"company_identity":""} if field=="company identity" else {field:""}
+        try:agent=update_agent_profile(target,**kwargs)
+        except ValueError as exc:return {"message":str(exc),"card":None}
+        return _profile_response(agent,f"Cleared {agent['name']}'s {field}.")
     rename=re.match(r"^(?:rename|change (?:the )?name of)\s+(?:agent\s+)?(.+?)\s+(?:to|as)\s+(.+?)[.!?]?$",text,re.I)
     if rename:
         try:agent=update_agent_profile(rename.group(1).strip(),name=rename.group(2).strip())
