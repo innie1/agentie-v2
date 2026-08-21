@@ -11,29 +11,7 @@ _JOB_SIGNAL_RE=re.compile(r"\b(delegate|research|investigate|compare|analy[sz]e|
 _JOBS_RESUMED=False
 
 _SMALLTALK={
-    'hi':'Hi. What would you like me to do?',
-    'hello':'Hello. What can I help with?',
-    'hey':'Hey. What can I help with?',
-    'good morning':'Good morning. What would you like to work on?',
-    'good afternoon':'Good afternoon. What would you like to work on?',
-    'good evening':'Good evening. What would you like to work on?',
-    'how are you':'I’m doing well and ready to help.',
-    'how is it going':'I’m ready to help. What are we working on?',
-    'what is up':'I’m here and ready. What do you need?',
-    'thanks':'You’re welcome.',
-    'thank you':'You’re welcome.',
-    'okay':'Okay.',
-    'ok':'Okay.',
-    'alright':'Alright.',
-    'cool':'Glad that works.',
-    'nice':'Glad that works.',
-    'yes':'Got it.',
-    'no':'Okay.',
-    'bye':'See you later.',
-    'goodbye':'See you later.',
-    'good night':'Good night.',
-    'who are you':'I’m Agentie, your local-first agent workspace assistant.',
-    'what can you do':'I can use local tools, work with your agents, manage tasks and timers, and route work to specialists when needed.',
+    'hi':'Hi. What would you like me to do?','hello':'Hello. What can I help with?','hey':'Hey. What can I help with?','good morning':'Good morning. What would you like to work on?','good afternoon':'Good afternoon. What would you like to work on?','good evening':'Good evening. What would you like to work on?','how are you':'I’m doing well and ready to help.','how is it going':'I’m ready to help. What are we working on?','what is up':'I’m here and ready. What do you need?','thanks':'You’re welcome.','thank you':'You’re welcome.','okay':'Okay.','ok':'Okay.','alright':'Alright.','cool':'Glad that works.','nice':'Glad that works.','yes':'Got it.','no':'Okay.','bye':'See you later.','goodbye':'See you later.','good night':'Good night.','who are you':'I’m Agentie, your local-first agent workspace assistant.','what can you do':'I can use local tools, work with your agents, manage tasks and timers, and route work to specialists when needed.',
 }
 
 def _seconds(m):
@@ -57,12 +35,7 @@ def _ensure_jobs_resumed():
     except Exception:pass
 
 def _normalize_smalltalk(text):
-    value=text.lower().strip();value=value.replace("what's","what is").replace("whats","what is").replace("how's","how is")
-    value=re.sub(r"[^a-z0-9 ]+"," ",value);value=re.sub(r"\s+"," ",value).strip()
-    aliases={'hiya':'hi','helo':'hello','helllo':'hello','hii':'hi','thx':'thanks','thanx':'thanks','ty':'thank you','k':'ok','kk':'ok','alrighty':'alright','wassup':'what is up','sup':'what is up','goodnight':'good night'}
-    if value in aliases:return aliases[value]
-    return value
-
+    value=text.lower().strip();value=value.replace("what's","what is").replace("whats","what is").replace("how's","how is");value=re.sub(r"[^a-z0-9 ]+"," ",value);value=re.sub(r"\s+"," ",value).strip();aliases={'hiya':'hi','helo':'hello','helllo':'hello','hii':'hi','thx':'thanks','thanx':'thanks','ty':'thank you','k':'ok','kk':'ok','alrighty':'alright','wassup':'what is up','sup':'what is up','goodnight':'good night'};return aliases.get(value,value)
 def _local_smalltalk(message):
     normalized=_normalize_smalltalk(message)
     if not normalized or len(normalized.split())>8:return None
@@ -74,16 +47,13 @@ def _local_smalltalk(message):
     return None
 
 def _remaining_timer_seconds(card):
-    try:
-        due=datetime.fromisoformat(str(card.get('due_at') or ''));now=datetime.now(due.tzinfo) if due.tzinfo else datetime.now();return max(0.0,(due-now).total_seconds())
+    try:due=datetime.fromisoformat(str(card.get('due_at') or ''));now=datetime.now(due.tzinfo) if due.tzinfo else datetime.now();return max(0.0,(due-now).total_seconds())
     except Exception:return max(0.0,float(card.get('duration_seconds') or 0))
-
 def _direct_role_command(message):
     try:
         from agentie.core.role_store import route_role_command
         return route_role_command(message)
     except Exception:return None
-
 def _direct_timer_create(message):
     text=' '.join(message.strip().split());patterns=[re.compile(r"^(?:please\s+)?(?:(?:set|start|make|give me)\s+)?(?:a\s+)?timer(?:\s+for)?\s+(\d+(?:\.\d+)?)\s*(seconds?|secs?|sec|s|minutes?|mins?|min|m|hours?|hrs?|hr|h)(?:\s+(?:to|for|because|so i can|so that i can)\s+(.+))?$",re.I),re.compile(r"^(?:please\s+)?(?:(?:set|start|make|give me)\s+)?(?:a\s+)?(\d+(?:\.\d+)?)\s*[- ]?\s*(seconds?|secs?|sec|s|minutes?|mins?|min|m|hours?|hrs?|hr|h)\s+timer(?:\s+(?:to|for|because|so i can|so that i can)\s+(.+))?$",re.I)]
     m=next((p.match(text) for p in patterns if p.match(text)),None)
@@ -150,6 +120,8 @@ def _looks_like_background_job(message):
 def _job_command(session_id,message):
     from agentie.core.job_engine import cancel_job,create_job,get_job,job_card,job_events,list_jobs,pause_job,resume_job,start_job
     text=re.sub(r"\s+"," ",message.strip());low=text.lower().strip(' .?!');active_id=str(get_context(session_id,'active_job_id','') or '')
+    def card_and_title(job):
+        card=job_card(job);return card,str(card.get('title') or card.get('goal') or 'Agent job')
     if low in {'show my active jobs','show active jobs','list active jobs','my active jobs','show my jobs','list my jobs'}:
         jobs=[j for j in list_jobs(session_id,50) if j.get('status') not in {'completed','cancelled'}];return {'message':f"You have {len(jobs)} active or resumable job(s).",'card':{'type':'jobs','items':[job_card(j) for j in jobs]},'routed_by':'job'}
     m=re.match(r"^(?:show |check )?(?:job )?(?:status|progress)(?: (?:for|of))?\s*([a-f0-9]{6,12})?$",low)
@@ -158,41 +130,42 @@ def _job_command(session_id,message):
         if not jid:return {'message':'Which job should I check?','card':None,'routed_by':'job'}
         try:j=get_job(jid)
         except KeyError:return {'message':"I couldn't find that job.",'card':None,'routed_by':'job'}
-        set_context(session_id,'active_job_id',jid);return {'message':f"Job {jid}: {j['status']}.",'card':job_card(j),'routed_by':'job'}
+        card,title=card_and_title(j);set_context(session_id,'active_job_id',jid);return {'message':f"{title}: {j['status']}.",'card':card,'routed_by':'job'}
     m=re.match(r"^(?:pause|hold)\s+(?:(?:that|this|the)\s+)?job(?:\s+([a-f0-9]{6,12}))?$",low)
     if m:
         jid=m.group(1) or active_id
         if not jid:return {'message':'Which job should I pause?','card':None,'routed_by':'job'}
         try:j=pause_job(jid)
         except KeyError:return {'message':"I couldn't find that job.",'card':None,'routed_by':'job'}
-        if j['status']=='failed':message=f"Job {jid} has already failed. It is saved and can be resumed/retried later."
-        elif j['status']=='completed':message=f"Job {jid} is already completed."
-        else:message=f"Job {jid} paused."
-        return {'message':message,'card':job_card(j),'routed_by':'job'}
+        card,title=card_and_title(j)
+        if j['status']=='failed':message=f"{title} has already failed. It is saved and can be resumed/retried later."
+        elif j['status']=='completed':message=f"{title} is already completed."
+        else:message=f"{title} paused."
+        return {'message':message,'card':card,'routed_by':'job'}
     m=re.match(r"^(?:resume|retry|continue)\s+(?:(?:that|this|the)\s+)?job(?:\s+([a-f0-9]{6,12}))?$",low)
     if m:
         jid=m.group(1) or active_id
         if not jid:return {'message':'Which job should I resume?','card':None,'routed_by':'job'}
         try:j=resume_job(jid,_job_step_runner)
         except KeyError:return {'message':"I couldn't find that job.",'card':None,'routed_by':'job'}
-        set_context(session_id,'active_job_id',jid);return {'message':f"Job {jid} resumed from its saved state.",'card':job_card(j),'routed_by':'job'}
+        card,title=card_and_title(j);set_context(session_id,'active_job_id',jid);return {'message':f"{title} resumed from its saved state.",'card':card,'routed_by':'job'}
     m=re.match(r"^(?:cancel|stop)\s+(?:the\s+)?job(?:\s+([a-f0-9]{6,12}))?$",low)
     if m:
         jid=m.group(1) or active_id
         if not jid:return {'message':'Which job should I cancel?','card':None,'routed_by':'job'}
         try:j=cancel_job(jid)
         except KeyError:return {'message':"I couldn't find that job.",'card':None,'routed_by':'job'}
-        return {'message':f'Job {jid} cancelled.','card':job_card(j),'routed_by':'job'}
+        card,title=card_and_title(j);return {'message':f'{title} cancelled.','card':card,'routed_by':'job'}
     m=re.match(r"^(?:show )?(?:job )?trace(?:\s+([a-f0-9]{6,12}))?$",low)
     if m:
         jid=m.group(1) or active_id
         if not jid:return {'message':'Which job trace should I show?','card':None,'routed_by':'job'}
-        try:events=job_events(jid)
+        try:events=job_events(jid);j=get_job(jid)
         except Exception:return {'message':"I couldn't read that job trace.",'card':None,'routed_by':'job'}
-        return {'message':f'Trace for job {jid}.','card':{'type':'job_trace','id':jid,'events':events},'routed_by':'job'}
+        card,title=card_and_title(j);return {'message':f'Trace for {title}.','card':{'type':'job_trace','id':jid,'title':title,'events':events},'routed_by':'job'}
     explicit=re.match(r"^(?:delegate|start (?:a )?(?:background )?job(?: to)?|run (?:this )?as a job)\s*[:\-]?\s*(.+)$",text,re.I);goal=explicit.group(1).strip() if explicit else text
     if explicit or _looks_like_background_job(text):
-        j=create_job(session_id,goal);set_context(session_id,'active_job_id',j['id']);start_job(j['id'],_job_step_runner);card=job_card(j);set_context(session_id,'active_object',{'type':'job_progress','card':card});return {'message':f"Started job {j['id']} with {j['total_steps']} planned step(s). You can keep chatting while it runs.",'card':card,'routed_by':'job'}
+        j=create_job(session_id,goal);set_context(session_id,'active_job_id',j['id']);start_job(j['id'],_job_step_runner);card,title=card_and_title(j);set_context(session_id,'active_object',{'type':'job_progress','card':card});return {'message':f"Started “{title}” with {j['total_steps']} planned step(s). You can keep chatting while it runs.",'card':card,'routed_by':'job'}
     return None
 
 def remember_active_from_card(session_id,card):
