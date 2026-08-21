@@ -7,7 +7,7 @@ from fastapi import FastAPI,File,HTTPException,Request,UploadFile
 from fastapi.responses import FileResponse,HTMLResponse,Response
 from pydantic import BaseModel,Field
 from agentie.core.agent_access import access_snapshot,guard_agent_capability,set_mcp_access,set_skill_access
-from agentie.core.agent_registry import list_agents
+from agentie.core.agent_registry import get_agent,list_agents
 from agentie.core.attachment_reasoner import reason_about_documents
 from agentie.core.browser_monitor import LIVE_FRAME_FILE,SNAPSHOT_DIR,get_live_state,request_browser_stop,route_browser_request
 from agentie.core.capability_preflight import route_capability_preflight
@@ -18,7 +18,7 @@ from agentie.core.file_service import MAX_FILE_BYTES,resolve_upload,run_action,s
 from agentie.core.local_router import route_local_actions
 from agentie.core.mcp_catalog import presets as mcp_presets
 from agentie.core.mcp_client import plugin_state,route_mcp_command
-from agentie.core.memory_store import add_message
+from agentie.core.memory_store import add_message,recent_messages
 from agentie.core.observability import finish_trace,get_trace,record_event,record_route,recent_traces,start_trace,summary_card,trace_card
 from agentie.core.office_artifacts import try_office_request
 from agentie.core.pdf_service import try_pdf_request
@@ -141,6 +141,16 @@ async def plugin_agent_access_update(agent_id:str,request:AgentAccessUpdate):
         else:set_mcp_access(agent_id,request.capability_id,bool(request.allowed))
         return access_snapshot(agent_id)
     except ValueError as exc:raise HTTPException(400,str(exc)) from exc
+@app.get("/agents/{agent_id}/handoff-chat")
+async def agent_handoff_chat(agent_id:str):
+    agent=get_agent(agent_id)
+    if not agent:raise HTTPException(404,"Agent not found.")
+    session=f"{agent['session_prefix']}main";items=[]
+    for item in recent_messages(session,limit=50,max_chars=100000):
+        metadata=item.get("metadata") or {};route=str(metadata.get("routed_by") or "")
+        if route not in {"project_handoff","project_handoff_result"}:continue
+        items.append({"role":item.get("role"),"content":item.get("content"),"created_at":item.get("created_at"),"team_job_id":metadata.get("team_job_id"),"project_id":metadata.get("project_id"),"failed":bool(metadata.get("failed"))})
+    return {"agent_id":agent["id"],"agent_name":agent["name"],"items":items}
 @app.get("/health")
 async def health():return {"status":"ok","service":"agentie-v2","version":"1.10.1"}
 @app.get("/web-snapshots/{filename}")
