@@ -3,6 +3,7 @@ import json,re,threading,uuid
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+from agentie.core.deletion_registry import find_deleted,remember_deleted
 from agentie.core.project_skills import activate as activate_project_skill
 
 WORKSPACE=Path.cwd()/"workspace";PROJECTS_FILE=WORKSPACE/"projects.json";_LOCK=threading.Lock()
@@ -31,7 +32,7 @@ def _kind(text):
     return "general"
 def create_project(name,goal,kind=None,owner_agent_id=None):
     k=kind or _kind(f"{name} {goal}");p=PROJECT_TYPES.get(k,PROJECT_TYPES["general"]);now=_now();assigned=[owner_agent_id] if owner_agent_id else []
-    item={"id":"proj_"+uuid.uuid4().hex[:10],"name":name.strip()[:120],"goal":goal.strip()[:4000],"kind":k,"status":"active","owner_agent_id":owner_agent_id,"assigned_agent_ids":assigned,"assigned_agents":[],"skill":p["skill"],"specialists":p["specialists"],"goals":[goal.strip()[:1000]],"decisions":[],"knowledge":[],"milestones":[],"artifacts":[],"handoffs":[],"summaries":[],"created_at":now,"updated_at":now}
+    item={"id":"proj_"+uuid.uuid4().hex[:10],"name":name.strip()[:120],"goal":goal.strip()[:4000],"kind":k,"status":"active","owner_agent_id":owner_agent_id,"assigned_agent_ids":assigned,"assigned_agents":[],"agent_work":[],"skill":p["skill"],"specialists":p["specialists"],"goals":[goal.strip()[:1000]],"decisions":[],"knowledge":[],"milestones":[],"artifacts":[],"handoffs":[],"summaries":[],"created_at":now,"updated_at":now}
     with _LOCK:items=_load();items.append(item);_save(items)
     return item
 def update_project(pid,**changes):
@@ -42,11 +43,16 @@ def update_project(pid,**changes):
             if k in {"name","goal","status","owner_agent_id"}:p[k]=v
         p["updated_at"]=_now();_save(items);return dict(p)
 def delete_project(pid):
-    """Delete the Project Brain record. Historical agent chats remain historical chat."""
+    """Delete a Project Brain once. Historical agent chats remain historical chat."""
+    key=str(pid or "").strip()
     with _LOCK:
-        items=_load();index=next((i for i,x in enumerate(items) if x.get("id")==pid),None)
-        if index is None:return None
-        deleted=items.pop(index);_save(items);return deleted
+        items=_load();index=next((i for i,x in enumerate(items) if x.get("id")==key),None)
+        if index is None:
+            tomb=find_deleted("project",key)
+            return {"already_deleted":True,"id":tomb.get("entity_id"),"name":tomb.get("name"),"deleted_at":tomb.get("deleted_at")} if tomb else None
+        deleted=items.pop(index);_save(items)
+    remember_deleted("project",str(deleted.get("id")),str(deleted.get("name") or ""),{"kind":deleted.get("kind")})
+    return deleted
 def assign_agents(pid,agents):
     with _LOCK:
         items=_load();p=next((x for x in items if x.get("id")==pid),None)
@@ -57,6 +63,27 @@ def assign_agents(pid,agents):
             if aid and aid not in ids:ids.append(aid)
             if aid and aid not in known:rows.append({"id":aid,"name":a.get("name"),"role":a.get("role")});known.add(aid)
         p["assigned_agent_ids"]=ids;p["assigned_agents"]=rows;p["updated_at"]=_now();_save(items);return dict(p)
+def set_agent_work(pid,agent,task,team_job_id=None,from_agent=None,status="queued",scoped_brief=None):
+    aid=str(agent.get("id") or "");name=str(agent.get("name") or "");role=str(agent.get("role") or agent.get("base") or "general")
+    if not aid:return None
+    with _LOCK:
+        items=_load();p=next((x for x in items if x.get("id")==pid),None)
+        if not p:return None
+        work=list(p.get("agent_work") or []);row=next((x for x in work if str(x.get("agent_id"))==aid),None);now=_now()
+        value={"agent_id":aid,"agent_name":name,"role":role,"task":str(task or "").strip(),"team_job_id":team_job_id,"from_agent":from_agent,"status":status,"scoped_brief":str(scoped_brief or "").strip(),"updated_at":now}
+        if row:row.update(value)
+        else:work.append(value)
+        p["agent_work"]=work;p["updated_at"]=now;_save(items);return dict(p)
+def update_agent_work_status(pid,agent_id_or_name,status,summary=None):
+    key=str(agent_id_or_name or "").casefold();now=_now()
+    with _LOCK:
+        items=_load();p=next((x for x in items if x.get("id")==pid),None)
+        if not p:return None
+        row=next((x for x in (p.get("agent_work") or []) if str(x.get("agent_id","")).casefold()==key or str(x.get("agent_name","")).casefold()==key),None)
+        if not row:return dict(p)
+        row["status"]=status;row["updated_at"]=now
+        if summary:row["latest_summary"]=str(summary)[:900]
+        p["updated_at"]=now;_save(items);return dict(p)
 def append_project_item(pid,section,value,metadata=None):
     if section not in {"goals","decisions","knowledge","milestones","artifacts","handoffs","summaries"}:raise ValueError("Unsupported project section.")
     with _LOCK:
@@ -81,13 +108,19 @@ def record_handoff(pid,from_agent,to_agent,task,team_job_id=None):
     append_project_item(pid,"handoffs",{"from":from_agent,"to":to_agent,"task":task,"team_job_id":team_job_id})
     try:
         from agentie.core.agent_registry import get_agent
-        agent=get_agent(to_agent)
-        if agent:assign_agents(pid,[agent])
+        agent=get_agent(to_agent);project=get_project(pid)
+        if agent and project:
+            assign_agents(pid,[agent]);brief=project_context(project,agent.get("role") or agent.get("base"),task);set_agent_work(pid,agent,task,team_job_id,from_agent,"queued",brief)
     except Exception:pass
 def record_worker_result(pid,agent_name,role,task,result):
-    compact=re.sub(r"\s+"," ",str(result or "")).strip();compact=compact if len(compact)<=900 else compact[:899].rstrip()+"…";append_project_item(pid,"summaries",compact,{"agent":agent_name,"role":role,"task":task});append_project_item(pid,"knowledge",compact,{"source_agent":agent_name,"audience":"all","task":task})
+    compact=re.sub(r"\s+"," ",str(result or "")).strip();compact=compact if len(compact)<=900 else compact[:899].rstrip()+"…";append_project_item(pid,"summaries",compact,{"agent":agent_name,"role":role,"task":task});append_project_item(pid,"knowledge",compact,{"source_agent":agent_name,"audience":"all","task":task});update_agent_work_status(pid,agent_name,"completed",compact)
 def _item_values(p,section,limit=8):return [str(x.get("value",x)) if isinstance(x,dict) else str(x) for x in (p.get(section) or [])[-limit:]]
-def project_card(p,viewer_agent_id=None):return {"type":"project","id":p["id"],"name":p["name"],"goal":p["goal"],"kind":p["kind"],"status":p["status"],"skill":p.get("skill"),"specialists":p.get("specialists",[]),"assigned_agents":p.get("assigned_agents",[]),"assigned_to_viewer":bool(viewer_agent_id and viewer_agent_id in (p.get("assigned_agent_ids") or [])),"goals":_item_values(p,"goals"),"decisions":_item_values(p,"decisions"),"context":_item_values(p,"knowledge"),"milestones":_item_values(p,"milestones"),"summaries":p.get("summaries",[])[-8:],"updated_at":p.get("updated_at")}
+def project_card(p,viewer_agent_id=None):
+    base={"type":"project","id":p["id"],"name":p["name"],"goal":p["goal"],"kind":p["kind"],"status":p["status"],"skill":p.get("skill"),"specialists":p.get("specialists",[]),"assigned_agents":p.get("assigned_agents",[]),"assigned_to_viewer":bool(viewer_agent_id and viewer_agent_id in (p.get("assigned_agent_ids") or [])),"updated_at":p.get("updated_at")}
+    if viewer_agent_id:
+        work=next((dict(x) for x in (p.get("agent_work") or []) if str(x.get("agent_id"))==str(viewer_agent_id)),None)
+        return {**base,"viewer_assignment":work,"goals":[],"decisions":[],"context":[],"milestones":[],"summaries":[]}
+    return {**base,"goals":_item_values(p,"goals"),"decisions":_item_values(p,"decisions"),"context":_item_values(p,"knowledge"),"milestones":_item_values(p,"milestones"),"summaries":p.get("summaries",[])[-8:]}
 def _name_from_goal(goal,kind):
     clean=re.sub(r"^(i\s+(want|plan|need)\s+to\s+|i('m| am)\s+)","",goal.strip(),flags=re.I);clean=re.sub(r"\s+"," ",clean).strip(" .?!");return clean[:70] or f"{kind.title()} project"
 def _project_from_reference(text):
@@ -105,10 +138,7 @@ def _project_delegation(text):
     if not project:return None
     from agentie.core.agent_registry import get_agent
     from agentie.core.team_orchestrator import create_team_job,start_team_job,team_job_card
-    patterns=[
-        re.match(r"^(?:delegate|assign|give)\s+(?:(?:project\s+)?(.+?)\s+)?to\s+(.+?)[.!?]?$",text,re.I),
-        re.match(r"^(?:have|ask|tell)\s+(.+?)\s+(?:to\s+)?work\s+together\s+(?:on|for)\s+(?:project\s+)?(.+?)[.!?]?$",text,re.I),
-    ]
+    patterns=[re.match(r"^(?:delegate|assign|give)\s+(?:(?:project\s+)?(.+?)\s+)?to\s+(.+?)[.!?]?$",text,re.I),re.match(r"^(?:have|ask|tell)\s+(.+?)\s+(?:to\s+)?work\s+together\s+(?:on|for)\s+(?:project\s+)?(.+?)[.!?]?$",text,re.I)]
     raw_agents=None;task=f"Work on project {project['name']}"
     if patterns[0]:raw_agents=patterns[0].group(2);detail=(patterns[0].group(1) or "").strip();task=detail if detail and project['name'].casefold() not in detail.casefold() else task
     elif patterns[1]:raw_agents=patterns[1].group(1);detail=patterns[1].group(2).strip();task=detail if detail.casefold()!=project['name'].casefold() else task
@@ -124,16 +154,22 @@ def _delete_picker():
     items=list_projects();return {"message":"Choose the project or projects you want to delete.","card":{"type":"project_delete_picker","items":[project_card(x) for x in items]}}
 def _delete_request(raw):
     from agentie.tools.approval_tools import create_approval
-    bits=[x.strip() for x in re.split(r"\s*,\s*|\s*;\s*",str(raw or "")) if x.strip()];projects=[]
+    bits=[x.strip() for x in re.split(r"\s*,\s*|\s*;\s*",str(raw or "")) if x.strip()];projects=[];already=[]
     for bit in bits:
         p=get_project(bit)
         if not p and bit.casefold().startswith("project "):p=get_project(bit[8:].strip())
-        if not p:return {"message":f"Project {bit} was not found.","card":None}
+        if not p:
+            tomb=find_deleted("project",bit) or (find_deleted("project",bit[8:].strip()) if bit.casefold().startswith("project ") else None)
+            if tomb:already.append(tomb.get("name") or bit);continue
+            return {"message":f"Project {bit} was not found.","card":None}
         if all(x['id']!=p['id'] for x in projects):projects.append(p)
-    if not projects:return _delete_picker()
+    if not projects:
+        if already:return {"message":("Already deleted: "+", ".join(str(x) for x in already)+"."),"card":{"type":"already_deleted","entity_type":"project","names":already}}
+        return _delete_picker()
     ids=[p['id'] for p in projects];names=[p['name'] for p in projects];action="delete_projects:"+",".join(ids)
     approval=create_approval(action,"Permanently delete "+(", ".join(names))+" from Project Brain? Historical agent chat messages are not deleted.",{"kind":"project_delete","project_ids":ids,"project_names":names})
-    return {"message":"Project deletion requires approval.","card":{"type":"approvals","items":[approval]}}
+    prefix=("Already deleted: "+", ".join(str(x) for x in already)+". " if already else "")
+    return {"message":prefix+"Project deletion requires approval.","card":{"type":"approvals","items":[approval]}}
 def route_project_command(message):
     text=" ".join(message.strip().split());lower=text.casefold().strip(" .?!")
     delegated=_project_delegation(text)
@@ -150,7 +186,7 @@ def route_project_command(message):
     if m_goal:
         p=get_project(m_goal.group(1).strip())
         if not p:return {"message":"Project was not found.","card":None}
-        goal=m_goal.group(2).strip();updated=update_project(p['id'],goal=goal);append_project_item(p['id'],"goals",goal,{"source":"manual"});updated=get_project(p['id']);return {"message":f"Updated {updated['name']}'s goal.","card":project_card(updated)}
+        goal=m_goal.group(2).strip();update_project(p['id'],goal=goal);append_project_item(p['id'],"goals",goal,{"source":"manual"});updated=get_project(p['id']);return {"message":f"Updated {updated['name']}'s goal.","card":project_card(updated)}
     m_add=re.match(r"^add\s+(?:to\s+)?project\s+(.+?)\s+(context|decision|milestone|goal)\s*:\s*(.+)$",text,re.I)
     if not m_add:m_add=re.match(r"^add\s+(context|decision|milestone|goal)\s+to\s+project\s+(.+?)\s*:\s*(.+)$",text,re.I)
     if m_add:
