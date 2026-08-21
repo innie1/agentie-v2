@@ -8,13 +8,15 @@ from agentie.core.office_artifacts import _DOCX_RE,_resolve_content
 
 class SpecialistExportRegressionTests(unittest.TestCase):
     def setUp(self):
-        self.temp=tempfile.TemporaryDirectory()
+        self.temp=tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
         self.old_workspace=memory_store.WORKSPACE
         self.old_db=memory_store.DB_PATH
         memory_store.WORKSPACE=Path(self.temp.name)
         memory_store.DB_PATH=Path(self.temp.name)/'memory.sqlite3'
 
     def tearDown(self):
+        try:memory_store._SEMANTIC_POOL.submit(lambda:None).result(timeout=15)
+        except Exception:pass
         memory_store.WORKSPACE=self.old_workspace
         memory_store.DB_PATH=self.old_db
         self.temp.cleanup()
