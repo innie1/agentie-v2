@@ -1,7 +1,8 @@
+import asyncio
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import AsyncMock,patch
 
 from agentie.core import file_service,job_engine,memory_store,office_artifacts,reference_router,result_memory,routine_worker
 from agentie.core.office_artifacts import try_office_request
@@ -74,6 +75,13 @@ class ArtifactResultWorkflowRegressionTests(unittest.TestCase):
         candidate=next(x for x in result_memory.list_result_candidates(session) if x['content']==a)
         self.assertEqual(result_memory.resolve_result_reference(session,f'create docx from result {candidate["id"]}'),a)
 
+    def test_local_guard_error_is_never_an_export_candidate(self):
+        session='agent:agt_alex:main'
+        memory_store.add_message(session,'assistant',"I understood this as a local file request, but I couldn’t resolve the file or action.",{'routed_by':'local_guard'})
+        valid=self._result(session,'Architecture report','Architecture content.')
+        candidates=result_memory.list_result_candidates(session)
+        self.assertEqual([x['content'] for x in candidates],[valid])
+
     def test_research_then_pdf_is_two_step_dependency_plan(self):
         phrase='Research Nigerian church management apps and after the research create a PDF with the research'
         self.assertTrue(reference_router._looks_like_background_job(phrase))
@@ -82,6 +90,21 @@ class ArtifactResultWorkflowRegressionTests(unittest.TestCase):
         self.assertEqual(plan[0]['specialist'],'deep_research')
         self.assertEqual(plan[1]['specialist'],'artifact_pdf')
         self.assertEqual(plan[1]['depends_on'],['s1'])
+
+    def test_failed_research_blocks_artifact_and_fails_job(self):
+        phrase='Research Nigerian church management apps and after the research create a PDF with the research'
+        job=job_engine.create_job('agent:agt_alex:main',phrase)
+        async def runner(*_args):return 'unused'
+        failed={'question':'x','queries':['x'],'sources':[],'report':"I couldn't retrieve usable web sources for this research task.",'verification':{'passed':False}}
+        with patch('agentie.core.deep_research.run_deep_research',new=AsyncMock(return_value=failed)):
+            asyncio.run(job_engine.execute_job(job['id'],runner))
+        done=job_engine.get_job(job['id'])
+        self.assertEqual(done['status'],'failed')
+        self.assertEqual(done['steps'][0]['status'],'failed')
+        self.assertEqual(done['steps'][1]['status'],'failed')
+        self.assertEqual(done['steps'][1]['error'],'Dependency failed')
+        self.assertEqual([e for e in job_engine.job_events(job['id']) if e['kind']=='artifact_created'],[])
+        self.assertEqual(done.get('final_output') or '','')
 
     def test_completion_event_is_delivered_only_once(self):
         job=job_engine.create_job('agent:agt_alex:main','Write a short report')
