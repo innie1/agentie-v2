@@ -98,6 +98,11 @@ def _execute_approved_action(item: dict):
         if not knowledge_id:raise ValueError("Approved company knowledge deletion is missing the knowledge id.")
         from agentie.core.company_knowledge import delete_company_knowledge
         result={"knowledge_id":knowledge_id,"deleted":bool(delete_company_knowledge(knowledge_id))}
+    elif kind == "company_knowledge_duplicate_add":
+        statement=str(meta.get("statement") or "").strip()
+        if not statement:raise ValueError("Approved repeated company knowledge is missing the statement.")
+        from agentie.core.company_knowledge import force_add_duplicate_company_knowledge
+        result={"added":True,"knowledge":force_add_duplicate_company_knowledge(statement),"repeated":True}
     else:return None
     item["status"] = "consumed";item["consumed_at"] = datetime.now(timezone.utc).isoformat();item["execution_result"] = result;return result
 def resolve_approval(approval_id: str, approved: bool, remember: bool = False):
