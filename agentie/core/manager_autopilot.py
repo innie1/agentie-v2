@@ -220,7 +220,18 @@ def _controller(job_id: str) -> None:
                     _fail_downstream(job_id, str(previous.get("id")))
                     return
                 _inject_dependency(job_id, handoff_id, previous, str(current.get("autopilot_goal") or current.get("task") or ""))
-            start_team_job(job_id, {handoff_id})
+            # The previous team-worker thread may remain alive for a few milliseconds
+            # after persisting its terminal handoff state. Retry the start until this
+            # handoff actually leaves queued, avoiding a sequential-stage deadlock.
+            while True:
+                start_team_job(job_id, {handoff_id})
+                time.sleep(0.08)
+                started = get_team_job(job_id)
+                if not started:
+                    return
+                observed = next((h for h in started.get("handoffs", []) if h.get("id") == handoff_id), None)
+                if observed and observed.get("status") != "queued":
+                    break
             while True:
                 time.sleep(0.12)
                 latest = get_team_job(job_id)
