@@ -3,7 +3,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from agentie.core import project_brain
+from agentie.core import deletion_registry, project_brain
 from agentie.tools import approval_tools
 
 
@@ -12,9 +12,10 @@ class ProjectManagementRegressionTests(unittest.TestCase):
         self.tmp=tempfile.TemporaryDirectory();root=Path(self.tmp.name)
         self.p1=patch.object(project_brain,"PROJECTS_FILE",root/"projects.json")
         self.p2=patch.object(approval_tools,"STORE",root/"approvals.json")
-        self.p1.start();self.p2.start()
+        self.p3=patch.object(deletion_registry,"DELETIONS_FILE",root/"deletions.json")
+        self.p1.start();self.p2.start();self.p3.start()
     def tearDown(self):
-        self.p2.stop();self.p1.stop();self.tmp.cleanup()
+        self.p3.stop();self.p2.stop();self.p1.stop();self.tmp.cleanup()
 
     def test_project_card_exposes_editable_context_sections(self):
         p=project_brain.create_project("Church App","Build a church app","app")
