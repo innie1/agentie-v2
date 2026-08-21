@@ -4,6 +4,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 from agentie.core.project_skills import activate as activate_project_skill
+
 WORKSPACE=Path.cwd()/"workspace";PROJECTS_FILE=WORKSPACE/"projects.json";_LOCK=threading.Lock()
 PROJECT_TYPES={"novel":{"skill":"novel-writing","specialists":["writer","researcher","critic"],"suggestions":["Create a story bible","Define characters and arcs","Outline chapters","Set a writing routine"]},"screenplay":{"skill":"screenwriting","specialists":["writer","researcher","critic"],"suggestions":["Define premise and genre","Build character arcs","Outline acts and scenes","Set a writing routine"]},"app":{"skill":"product-building","specialists":["researcher","planner","coder","verifier"],"suggestions":["Research users and competitors","Define requirements","Plan architecture","Build and verify"]},"business":{"skill":"business-builder","specialists":["researcher","planner","data analyst","critic"],"suggestions":["Research market","Define business model","Plan launch","Track milestones"]},"life":{"skill":"life-project-coach","specialists":["researcher","planner"],"suggestions":["Define measurable goal","Research safe options","Create milestones","Offer a routine or reminder"]},"general":{"skill":"project-planning","specialists":["researcher","planner","verifier"],"suggestions":["Clarify outcome","Break into milestones","Delegate specialist work","Review progress"]}}
 def _now():return datetime.now().astimezone().isoformat(timespec="seconds")
@@ -17,6 +18,9 @@ def get_project(key):
     k=str(key or "").casefold().strip()
     with _LOCK:return next((dict(x) for x in reversed(_load()) if str(x.get("id","")).casefold()==k or str(x.get("name","")).casefold()==k),None)
 def latest_project(active_only=True):return next((x for x in list_projects() if not active_only or x.get("status")=="active"),None)
+def projects_for_agent(agent_id,limit=50):
+    aid=str(agent_id or "")
+    return [p for p in list_projects(limit) if aid and (p.get("owner_agent_id")==aid or aid in (p.get("assigned_agent_ids") or []))]
 def _kind(text):
     l=text.casefold()
     if any(x in l for x in ("novel","book","fiction","story")):return "novel"
@@ -26,7 +30,8 @@ def _kind(text):
     if any(x in l for x in ("lose weight","fitness","habit","learn ","study ","personal goal","life project")):return "life"
     return "general"
 def create_project(name,goal,kind=None,owner_agent_id=None):
-    k=kind or _kind(f"{name} {goal}");p=PROJECT_TYPES.get(k,PROJECT_TYPES["general"]);now=_now();item={"id":"proj_"+uuid.uuid4().hex[:10],"name":name.strip()[:120],"goal":goal.strip()[:4000],"kind":k,"status":"active","owner_agent_id":owner_agent_id,"skill":p["skill"],"specialists":p["specialists"],"goals":[goal.strip()[:1000]],"decisions":[],"knowledge":[],"milestones":[],"artifacts":[],"handoffs":[],"summaries":[],"created_at":now,"updated_at":now}
+    k=kind or _kind(f"{name} {goal}");p=PROJECT_TYPES.get(k,PROJECT_TYPES["general"]);now=_now();assigned=[owner_agent_id] if owner_agent_id else []
+    item={"id":"proj_"+uuid.uuid4().hex[:10],"name":name.strip()[:120],"goal":goal.strip()[:4000],"kind":k,"status":"active","owner_agent_id":owner_agent_id,"assigned_agent_ids":assigned,"assigned_agents":[],"skill":p["skill"],"specialists":p["specialists"],"goals":[goal.strip()[:1000]],"decisions":[],"knowledge":[],"milestones":[],"artifacts":[],"handoffs":[],"summaries":[],"created_at":now,"updated_at":now}
     with _LOCK:items=_load();items.append(item);_save(items)
     return item
 def update_project(pid,**changes):
@@ -36,6 +41,16 @@ def update_project(pid,**changes):
         for k,v in changes.items():
             if k in {"name","goal","status","owner_agent_id"}:p[k]=v
         p["updated_at"]=_now();_save(items);return dict(p)
+def assign_agents(pid,agents):
+    with _LOCK:
+        items=_load();p=next((x for x in items if x.get("id")==pid),None)
+        if not p:return None
+        ids=list(p.get("assigned_agent_ids") or []);rows=list(p.get("assigned_agents") or []);known={str(x.get("id") or "") for x in rows if isinstance(x,dict)}
+        for a in agents or []:
+            aid=str(a.get("id") or "")
+            if aid and aid not in ids:ids.append(aid)
+            if aid and aid not in known:rows.append({"id":aid,"name":a.get("name"),"role":a.get("role")});known.add(aid)
+        p["assigned_agent_ids"]=ids;p["assigned_agents"]=rows;p["updated_at"]=_now();_save(items);return dict(p)
 def append_project_item(pid,section,value,metadata=None):
     if section not in {"goals","decisions","knowledge","milestones","artifacts","handoffs","summaries"}:raise ValueError("Unsupported project section.")
     with _LOCK:
@@ -59,7 +74,7 @@ def project_context(project,role,task,max_items=8):
 def record_handoff(pid,from_agent,to_agent,task,team_job_id=None):append_project_item(pid,"handoffs",{"from":from_agent,"to":to_agent,"task":task,"team_job_id":team_job_id})
 def record_worker_result(pid,agent_name,role,task,result):
     compact=re.sub(r"\s+"," ",str(result or "")).strip();compact=compact if len(compact)<=900 else compact[:899].rstrip()+"…";append_project_item(pid,"summaries",compact,{"agent":agent_name,"role":role,"task":task});append_project_item(pid,"knowledge",compact,{"source_agent":agent_name,"audience":"all","task":task})
-def project_card(p):return {"type":"project","id":p["id"],"name":p["name"],"goal":p["goal"],"kind":p["kind"],"status":p["status"],"skill":p.get("skill"),"specialists":p.get("specialists",[]),"milestones":p.get("milestones",[])[-8:],"summaries":p.get("summaries",[])[-8:],"updated_at":p.get("updated_at")}
+def project_card(p,viewer_agent_id=None):return {"type":"project","id":p["id"],"name":p["name"],"goal":p["goal"],"kind":p["kind"],"status":p["status"],"skill":p.get("skill"),"specialists":p.get("specialists",[]),"assigned_agents":p.get("assigned_agents",[]),"assigned_to_viewer":bool(viewer_agent_id and viewer_agent_id in (p.get("assigned_agent_ids") or [])),"milestones":p.get("milestones",[])[-8:],"summaries":p.get("summaries",[])[-8:],"updated_at":p.get("updated_at")}
 def _name_from_goal(goal,kind):
     clean=re.sub(r"^(i\s+(want|plan|need)\s+to\s+|i('m| am)\s+)","",goal.strip(),flags=re.I);clean=re.sub(r"\s+"," ",clean).strip(" .?!");return clean[:70] or f"{kind.title()} project"
 def route_project_command(message):
