@@ -8,7 +8,6 @@ from agents import function_tool
 
 STORE = Path.cwd() / "workspace" / "approvals.json"
 
-# Conservative read-only classification. Unknown MCP tools still require approval.
 _READ_ONLY_PREFIXES = (
     "read_", "list_", "get_", "search_", "find_", "inspect_", "fetch_",
     "show_", "describe_", "query_",
@@ -24,178 +23,107 @@ _MUTATING_WORDS = {
 
 
 def _load():
-    if not STORE.exists():
-        return []
-    try:
-        return json.loads(STORE.read_text(encoding="utf-8"))
-    except Exception:
-        return []
-
+    if not STORE.exists(): return []
+    try: return json.loads(STORE.read_text(encoding="utf-8"))
+    except Exception: return []
 
 def _save(items):
     STORE.parent.mkdir(parents=True, exist_ok=True)
     STORE.write_text(json.dumps(items, indent=2, ensure_ascii=False), encoding="utf-8")
-
-
 def _mcp_parts(action: str) -> tuple[str, str] | None:
-    match = re.match(r"^mcp:([^:]+):([^:]+):", str(action or ""))
-    return (match.group(1), match.group(2)) if match else None
-
-
+    match = re.match(r"^mcp:([^:]+):([^:]+):", str(action or ""));return (match.group(1), match.group(2)) if match else None
 def mcp_tool_is_read_only(tool_name: str) -> bool:
     name = str(tool_name or "").lower().strip()
-    if not name:
-        return False
+    if not name:return False
     tokens = {token for token in re.split(r"[^a-z0-9]+", name) if token}
-    if tokens & _MUTATING_WORDS:
-        return False
+    if tokens & _MUTATING_WORDS:return False
     return name in _READ_ONLY_EXACT or name.startswith(_READ_ONLY_PREFIXES)
-
-
 def get_approval(approval_id: str):
     clean_id = str(approval_id or "").removesuffix(":always")
     for item in _load():
-        if item.get("id") == clean_id:
-            return item
+        if item.get("id") == clean_id:return item
     return None
-
-
 def approval_is_granted(action: str, approval_id: str | None = None) -> bool:
-    """Apply MCP approval policy and consume one-time grants when used."""
     parts = _mcp_parts(action)
-    if parts and mcp_tool_is_read_only(parts[1]):
-        return True
-
+    if parts and mcp_tool_is_read_only(parts[1]):return True
     items = _load()
     if parts:
         server, tool = parts
         for item in items:
-            if item.get("status") != "always":
-                continue
+            if item.get("status") != "always":continue
             meta = item.get("metadata") or {}
-            if meta.get("kind") == "mcp" and meta.get("server") == server and meta.get("tool") == tool:
-                return True
-
+            if meta.get("kind") == "mcp" and meta.get("server") == server and meta.get("tool") == tool:return True
     clean_id = str(approval_id or "").removesuffix(":always") if approval_id else None
     for item in items:
-        if (
-            item.get("action") == action
-            and item.get("status") == "approved"
-            and not item.get("consumed_at")
-            and (clean_id is None or item.get("id") == clean_id)
-        ):
+        if item.get("action") == action and item.get("status") == "approved" and not item.get("consumed_at") and (clean_id is None or item.get("id") == clean_id):
             if parts:
-                item["consumed_at"] = datetime.now(timezone.utc).isoformat()
-                item["status"] = "consumed"
-                _save(items)
+                item["consumed_at"] = datetime.now(timezone.utc).isoformat();item["status"] = "consumed";_save(items)
             return True
     return False
-
-
 def consume_approval(action: str) -> bool:
     items = _load()
     for item in items:
         if item.get("action") == action and item.get("status") == "approved" and not item.get("consumed_at"):
-            item["consumed_at"] = datetime.now(timezone.utc).isoformat()
-            item["status"] = "consumed"
-            _save(items)
-            return True
+            item["consumed_at"] = datetime.now(timezone.utc).isoformat();item["status"] = "consumed";_save(items);return True
     return False
-
-
 def create_approval(action: str, reason: str, metadata: dict | None = None):
     items = _load()
     for item in items:
-        if item.get("action") == action and item.get("status") == "pending":
-            return item
-    item = {
-        "id": str(uuid.uuid4())[:8],
-        "action": action[:500],
-        "reason": reason[:1000],
-        "status": "pending",
-        "created_at": datetime.now(timezone.utc).isoformat(),
-    }
-    if metadata:
-        item["metadata"] = metadata
+        if item.get("action") == action and item.get("status") == "pending":return item
+    item = {"id": str(uuid.uuid4())[:8],"action": action[:500],"reason": reason[:1000],"status": "pending","created_at": datetime.now(timezone.utc).isoformat()}
+    if metadata:item["metadata"] = metadata
     else:
         parts = _mcp_parts(action)
-        if parts:
-            item["metadata"] = {"kind": "mcp", "server": parts[0], "tool": parts[1]}
-    items.append(item)
-    _save(items)
-    return item
-
-
+        if parts:item["metadata"] = {"kind": "mcp", "server": parts[0], "tool": parts[1]}
+    items.append(item);_save(items);return item
 def _execute_approved_action(item: dict):
-    meta = item.get("metadata") or {}
-    if meta.get("kind") != "agent_delete":
-        return None
-    agent_id = str(meta.get("agent_id") or "").strip()
-    if not agent_id:
-        raise ValueError("Approved agent deletion is missing the agent id.")
-    from agentie.core.agent_registry import delete_agent
-    result = delete_agent(agent_id)
-    item["status"] = "consumed"
-    item["consumed_at"] = datetime.now(timezone.utc).isoformat()
-    item["execution_result"] = result
-    return result
-
-
+    meta = item.get("metadata") or {};kind=meta.get("kind")
+    if kind == "agent_delete":
+        agent_id = str(meta.get("agent_id") or "").strip()
+        if not agent_id:raise ValueError("Approved agent deletion is missing the agent id.")
+        from agentie.core.agent_registry import delete_agent
+        result = delete_agent(agent_id)
+    elif kind == "project_delete":
+        project_ids=[str(x).strip() for x in (meta.get("project_ids") or []) if str(x).strip()]
+        if not project_ids:raise ValueError("Approved project deletion is missing project ids.")
+        from agentie.core.project_brain import delete_project
+        deleted=[]
+        for project_id in project_ids:
+            row=delete_project(project_id)
+            if row:deleted.append({"id":row.get("id"),"name":row.get("name")})
+        result={"deleted_projects":deleted,"count":len(deleted)}
+    else:return None
+    item["status"] = "consumed";item["consumed_at"] = datetime.now(timezone.utc).isoformat();item["execution_result"] = result;return result
 def resolve_approval(approval_id: str, approved: bool, remember: bool = False):
     raw_id = str(approval_id or "")
-    if raw_id.endswith(":always"):
-        remember = True
-        raw_id = raw_id[:-7]
+    if raw_id.endswith(":always"):remember = True;raw_id = raw_id[:-7]
     items = _load()
     for item in items:
         if item.get("id") == raw_id:
-            if item.get("status") != "pending":
-                raise ValueError("Approval has already been resolved.")
+            if item.get("status") != "pending":raise ValueError("Approval has already been resolved.")
             if approved and remember:
                 parts = _mcp_parts(str(item.get("action") or ""))
-                if not parts:
-                    raise ValueError("Persistent approval is only supported for MCP tool actions.")
-                item["status"] = "always"
-                item["metadata"] = {"kind": "mcp", "server": parts[0], "tool": parts[1]}
-            else:
-                item["status"] = "approved" if approved else "denied"
+                if not parts:raise ValueError("Persistent approval is only supported for MCP tool actions.")
+                item["status"] = "always";item["metadata"] = {"kind": "mcp", "server": parts[0], "tool": parts[1]}
+            else:item["status"] = "approved" if approved else "denied"
             item["resolved_at"] = datetime.now(timezone.utc).isoformat()
-            if approved and not remember:
-                _execute_approved_action(item)
-            _save(items)
-            return item
+            if approved and not remember:_execute_approved_action(item)
+            _save(items);return item
     raise ValueError("Approval not found.")
-
-
 def list_persistent_mcp_permissions() -> list[dict]:
     out = []
     for item in _load():
-        if item.get("status") != "always":
-            continue
+        if item.get("status") != "always":continue
         meta = item.get("metadata") or {}
-        if meta.get("kind") == "mcp":
-            out.append({"id": item.get("id"), "server": meta.get("server"), "tool": meta.get("tool"), "created_at": item.get("resolved_at") or item.get("created_at")})
+        if meta.get("kind") == "mcp":out.append({"id": item.get("id"), "server": meta.get("server"), "tool": meta.get("tool"), "created_at": item.get("resolved_at") or item.get("created_at")})
     return out
-
-
 def revoke_persistent_mcp_permission(approval_id: str) -> bool:
     items = _load()
     for item in items:
         if item.get("id") == approval_id and item.get("status") == "always":
-            item["status"] = "revoked"
-            item["revoked_at"] = datetime.now(timezone.utc).isoformat()
-            _save(items)
-            return True
+            item["status"] = "revoked";item["revoked_at"] = datetime.now(timezone.utc).isoformat();_save(items);return True
     return False
-
-
 @function_tool
-def request_approval(action: str, reason: str) -> str:
-    """Create a pending approval request before an externally consequential action."""
-    return json.dumps(create_approval(action, reason))
-
-
+def request_approval(action: str, reason: str) -> str:return json.dumps(create_approval(action, reason))
 @function_tool
-def list_approvals() -> str:
-    """List pending and previous approval requests."""
-    return json.dumps(_load(), indent=2)
+def list_approvals() -> str:return json.dumps(_load(), indent=2)
