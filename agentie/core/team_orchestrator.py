@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio,json,re,threading,uuid
-from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -96,31 +95,26 @@ def _fallback_status(j,h):
     s=str(h.get("status") or "queued")
     if s=="completed":return _compact(h.get("result") or "Completed the assigned part.")
     if s=="failed":return _compact(f"Failed: {h.get('error') or 'the assigned work could not be completed.'}")
-    if s=="working":return f"Still working on {j.get('task') or h.get('task')}; no completed result has been returned yet."
-    return f"Queued for {j.get('task') or h.get('task')} and waiting to start."
+    if s=="working":return f"Still working on {h.get('task') or j.get('task')}; no completed result has been returned yet."
+    return f"Queued for {h.get('task') or j.get('task')} and waiting for its dependency/worker slot."
 async def _ask_worker_status(j,h):
-    fallback=_fallback_status(j,h);s=str(h.get("status") or "queued")
-    if s not in {"queued","working"}:return h["id"],fallback
-    a=get_agent(str(h.get("to_agent_id") or ""))
-    if not a:return h["id"],fallback
-    from agentie.core.runner import run_agent
-    p=f"Status check only for team job {j['id']}. Task: {j.get('task')}. Backend state: {s}. Give a truthful 1-2 sentence update, max 35 words. Do not restart work or claim completion unless backend says completed."
-    try:v=await asyncio.wait_for(run_agent(p,str(a.get("base") or "general"),f"{a['session_prefix']}status:{j['id']}"),timeout=18);return h["id"],_compact(v,320) or fallback
-    except Exception:return h["id"],fallback
-async def _collect_worker_status(j):return {hid:s for hid,s in await asyncio.gather(*[_ask_worker_status(j,h) for h in j.get("handoffs",[])])}
+    """Compatibility helper: status reporting is deliberately provider-free."""
+    return h["id"],_fallback_status(j,h)
+async def _collect_worker_status(j):return {h["id"]:_fallback_status(j,h) for h in j.get("handoffs",[])}
 def request_team_status(jid):
     j=get_team_job(jid)
     if not j:raise ValueError("Team job was not found.")
-    with ThreadPoolExecutor(max_workers=1,thread_name_prefix="agentie-team-status") as pool:summaries=pool.submit(lambda:asyncio.run(_collect_worker_status(j))).result()
-    checked=_now()
+    # Backend state is already authoritative. Asking every specialist's model to
+    # paraphrase queued/working state wasted provider quota without adding truth.
+    summaries={h["id"]:_fallback_status(j,h) for h in j.get("handoffs",[])};checked=_now()
     def apply(x):
         for h in x.get("handoffs",[]):h["progress_summary"]=summaries.get(h["id"]) or _fallback_status(x,h);h["status_checked_at"]=checked
-        x["status_checked_at"]=checked
+        x["status_checked_at"]=checked;x["status_source"]="backend"
     u=_mutate(jid,apply) or j;remember_global_result("",team_job_card(u));return u
 def _latest_job_for_status():
     jobs=list_team_jobs(30);return next((j for j in jobs if j.get("status") in {"queued","working"}),jobs[0] if jobs else None)
 def _looks_like_status_request(l):return bool((re.search(r"\bteam_[a-z0-9]+\b",l) and re.search(r"\b(status|state|progress|update|doing|going)\b",l)) or re.search(r"\b(state|status|progress)\s+(of|on)\s+(that|this|the)\s+(task|job|team job)\b|\bhow are they doing\b|\bwhat are (the )?agents? doing\b|\b(give|show|tell) me (a )?(quick |small |brief )?update (on|about) (that|this|the) (task|job|team job)\b",l))
-def team_job_card(j):return {"type":"team_job","id":j["id"],"task":j["task"],"status":j["status"],"project_id":j.get("project_id"),"agents":j.get("agent_names",[]),"handoffs":[{"id":h["id"],"agent":h["to_agent_name"],"status":h["status"],"error":h.get("error"),"attempts":h.get("attempts",0),"summary":h.get("progress_summary"),"status_checked_at":h.get("status_checked_at")} for h in j.get("handoffs",[])],"final_output":j.get("final_output"),"created_at":j.get("created_at"),"started_at":j.get("started_at"),"finished_at":j.get("finished_at"),"updated_at":j.get("updated_at"),"status_checked_at":j.get("status_checked_at")}
+def team_job_card(j):return {"type":"team_job","id":j["id"],"task":j["task"],"status":j["status"],"project_id":j.get("project_id"),"agents":j.get("agent_names",[]),"handoffs":[{"id":h["id"],"agent":h["to_agent_name"],"status":h["status"],"error":h.get("error"),"attempts":h.get("attempts",0),"summary":h.get("progress_summary"),"status_checked_at":h.get("status_checked_at")} for h in j.get("handoffs",[])],"final_output":j.get("final_output"),"created_at":j.get("created_at"),"started_at":j.get("started_at"),"finished_at":j.get("finished_at"),"updated_at":j.get("updated_at"),"status_checked_at":j.get("status_checked_at"),"status_source":j.get("status_source")}
 def poll_team_completion_events(limit=20):
     """Return each terminal team/delegation completion once for the existing local-event UI."""
     terminal={"completed","failed","partial","cancelled"};events=[];changed=False;now=_now()
