@@ -10,6 +10,7 @@ from agentie.core.browser_monitor import capture_website, routine_always_show, w
 from agentie.core.job_engine import create_job, job_card, poll_job_completion_events, start_job
 from agentie.core.routine_engine import claim_due_routines, record_run
 from agentie.core.runner import run_agent
+from agentie.core.team_orchestrator import poll_team_completion_events
 
 WORKSPACE=Path.cwd()/"workspace"
 EVENTS=WORKSPACE/"routine_events.json"
@@ -27,6 +28,8 @@ def poll_routine_events()->list[dict[str,Any]]:
     items=_load_events()
     if items:_save_events([])
     try:items.extend(poll_job_completion_events())
+    except Exception:pass
+    try:items.extend(poll_team_completion_events())
     except Exception:pass
     return items
 
