@@ -117,9 +117,9 @@ def list_result_candidates(session_id: str, limit: int = 8) -> list[dict[str, An
     rows=session_messages(session_id,limit=100,newest_first=True)
     for row in rows:
         if row.get("role")!="assistant":continue
-        content=str(row.get("content") or "").strip();meta=row.get("metadata") or {};route=str(meta.get("routed_by") or "")
-        if not content or route in excluded:continue
-        if route!="project_handoff_result" and len(content)<120:continue
+        content=str(row.get("content") or "");meta=row.get("metadata") or {};route=str(meta.get("routed_by") or "")
+        if not content.strip() or route in excluded:continue
+        if route!="project_handoff_result" and len(content.strip())<120:continue
         fid=source_fingerprint(content)
         if fid in seen:continue
         seen.add(fid);clean=_clean_preview(content)
