@@ -3,7 +3,7 @@ import json,re
 from datetime import datetime
 from pathlib import Path
 from typing import Any
-from agentie.core.agent_registry import get_agent
+from agentie.core.agent_registry import get_agent,update_agent_profile
 WORKSPACE=Path.cwd()/"workspace";PROMPTS_FILE=WORKSPACE/"agent_instruction_profiles.json"
 def _now():return datetime.now().astimezone().isoformat(timespec="seconds")
 def _load():
@@ -44,8 +44,35 @@ def _promote(profile,section,key,value,summary,explicit=False):
     candidates=profile.setdefault("learning_candidates",{});cid=f"{section}.{key}={value}";entry=candidates.get(cid,{"count":0});entry["count"]=int(entry.get("count",0))+1;entry["last_seen"]=_now();candidates[cid]=entry
     if not explicit and entry["count"]<2:return False
     bucket[key]=value;candidates.pop(cid,None);_audit(profile,"learned_preference",summary,"conversation","explicit" if explicit else "repeated",{"section":section,"key":key,"value":value});return True
+def _profile_value(value,limit=1200):return " ".join(str(value or "").strip(" .").split())[:limit]
+def _learn_employee_profile(agent,text,profile):
+    updates={};labels=[]
+    m=re.search(r"\b(?:your personality(?: and working style)?|i want your personality)\s+(?:is|to be|should be|as)\s+(.+)$",text,re.I)
+    if m:
+        value=_profile_value(m.group(1),800)
+        if value:updates["personality"]=value;labels.append("personality")
+    m=re.search(r"\b(?:your (?:primary )?(?:goal|objective)|i want your (?:primary )?(?:goal|objective))\s+(?:is|to be|should be|as)\s+(.+)$",text,re.I)
+    if m:
+        value=_profile_value(m.group(1),1200)
+        if value:updates["goal"]=value;labels.append("goal")
+    m=re.search(r"\byour (?:responsibilities|duties)\s*(?:are|include|should be|:)?\s+(.+)$",text,re.I) or re.search(r"\byou are responsible for\s+(.+)$",text,re.I)
+    if m:
+        raw=_profile_value(m.group(1),2400);values=[_profile_value(x,400) for x in re.split(r"\s*(?:\||;|,\s+|\band\b)\s*",raw,flags=re.I)];values=[x for x in values if x]
+        if values:updates["responsibilities"]=values;labels.append("responsibilities")
+    m=re.search(r"\b(?:your company(?: identity)?|company identity)\s+(?:is|to be|should be|as|:)\s+(.+)$",text,re.I) or re.search(r"\byou (?:work for|represent)\s+(.+)$",text,re.I)
+    if m:
+        value=_profile_value(m.group(1),400)
+        if value:updates["company_identity"]=value;labels.append("company identity")
+    if not updates:return []
+    try:updated=update_agent_profile(str(agent.get("id") or agent.get("name") or ""),**updates)
+    except ValueError:return []
+    agent.update(updated)
+    for key,value in _identity_snapshot(updated).items():profile[key]=value
+    for field in labels:_audit(profile,"employee_profile_update",f"Updated employee profile {field} from an explicit user instruction.","conversation","explicit",{"field":field})
+    return [f"Updated employee profile {field}." for field in labels]
 def learn_from_user_message(agent,message):
     text=" ".join(str(message or "").strip().split());low=text.casefold();data=_load();profiles=data.setdefault("agents",{});profile=profiles.get(agent["id"]) or _base_profile(agent);changes=[]
+    changes.extend(_learn_employee_profile(agent,text,profile))
     stable=bool(re.search(r"\b(?:i\s+(?:like|prefer|want)|from now on|always|whenever|usually|in general|my preference)\b",low));temporary=bool(re.search(r"\b(?:this time|this one|for this|just this|only this|right now|today only)\b",low));explicit=stable and not temporary
     concise=bool(re.search(r"\b(?:repl(?:y|ies)|answers?|responses?)\b",low)) and bool(re.search(r"\b(?:short|brief|concise|compact)\b",low))
     if concise and not temporary and _promote(profile,"communication","default_length","concise","Default replies should be concise.",explicit):changes.append("Default replies should be concise.")
