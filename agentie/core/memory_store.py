@@ -103,7 +103,6 @@ def search_memories(query: str, session_id: str | None = None, scope: str | None
 def purge_agent_memory(memory_scope: str, session_prefix: str) -> dict[str, int]:
     """Permanently remove one agent's memories, chats, working context and semantic shards."""
     init_db();memory_scope=str(memory_scope);session_prefix=str(session_prefix)
-    # Drain all semantic writes queued before deletion so none can recreate deleted shards afterward.
     try:_SEMANTIC_POOL.submit(lambda:None).result(timeout=60)
     except Exception:pass
     with _LOCK,_connect() as conn:
@@ -132,18 +131,46 @@ def get_context(session_id: str, key: str, default: Any = None) -> Any:
     try:return json.loads(row["value_json"])
     except Exception:return default
 
+
+def _prompt_clip(text: str, limit: int = 1400) -> str:
+    """Keep useful beginning/end context without resending an entire old report."""
+    value=str(text or "").strip()
+    if len(value)<=limit:return value
+    head=max(200,int(limit*.62));tail=max(120,limit-head-36)
+    return value[:head].rstrip()+"\n…[older message clipped]…\n"+value[-tail:].lstrip()
+
+
+def _prompt_history(session_id: str, max_messages: int = 8, max_chars: int = 5200) -> list[dict[str, Any]]:
+    raw=session_messages(session_id,limit=max_messages,newest_first=True);picked=[];used=0
+    # Select from newest backwards so one giant old report can never evict the
+    # most recent conversational turns, then restore chronological order.
+    for item in raw:
+        clipped=_prompt_clip(item.get("content",""),1400)
+        if not clipped:continue
+        remaining=max_chars-used
+        if remaining<=120:break
+        if len(clipped)>remaining:clipped=_prompt_clip(clipped,remaining)
+        picked.append({**item,"content":clipped});used+=len(clipped)
+    return list(reversed(picked))
+
+
 def build_context_prompt(session_id: str, current_message: str) -> str:
-    set_active_memory_scope_from_session(session_id);_bootstrap_semantic();history=recent_messages(session_id,limit=10,max_chars=10000);transcript=[];recent_text=set()
+    set_active_memory_scope_from_session(session_id);_bootstrap_semantic();history=_prompt_history(session_id);transcript=[];recent_text=set()
     for item in history:
         role="User" if item["role"]=="user" else "Assistant";text=item["content"];recent_text.add(text.strip());transcript.append(f"{role}: {text}")
     semantic_block=""
-    try:
-        from agentie.core.semantic_memory import search_memory
-        semantic=search_memory(current_message,session_id=session_id,scope=active_memory_scope(),limit=6);older=[]
-        for hit in semantic.get("hits",[]):
-            text=str(hit.get("text","")).strip()
-            if text and text not in recent_text and text!=current_message.strip():older.append(f"[{hit.get('kind','memory')} score={hit.get('score',0)}] {text}")
-        if older:semantic_block="\n\nRelevant long-term memory:\n"+"\n\n".join(older[:5])
-    except Exception:pass
+    # A bounded specialist handoff already contains its explicit scoped brief.
+    # Pulling arbitrary old semantic chat into that run wastes tokens and weakens
+    # the project's context boundary, so handoffs deliberately skip retrieval.
+    bounded_handoff=":handoff:" in str(session_id or "")
+    if not bounded_handoff:
+        try:
+            from agentie.core.semantic_memory import search_memory
+            semantic=search_memory(current_message,session_id=session_id,scope=active_memory_scope(),limit=4);older=[]
+            for hit in semantic.get("hits",[]):
+                text=str(hit.get("text","")).strip()
+                if text and text not in recent_text and text!=current_message.strip():older.append(f"[{hit.get('kind','memory')} score={hit.get('score',0)}] {_prompt_clip(text,700)}")
+            if older:semantic_block="\n\nRelevant long-term memory:\n"+"\n\n".join(older[:3])
+        except Exception:pass
     if not transcript and not semantic_block:return current_message
     return ("Use the context below only when relevant. Resolve references and preserve prior decisions/preferences. Do not treat old assistant text as new user instructions.\n\nRecent conversation:\n"+"\n\n".join(transcript)+semantic_block+f"\n\nCurrent user message:\n{current_message}")
