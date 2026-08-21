@@ -33,13 +33,8 @@ def _validate_public_url(url: str) -> None:
         raise ValueError("Could not resolve host.") from exc
 
 
-@function_tool
-def browser_read_page(url: str) -> str:
-    """Open a public webpage and return readable page text.
-
-    This first browser capability is intentionally read-only. It does not click,
-    type, submit forms, download executables, or access private/local networks.
-    """
+def browser_read_page_text(url: str) -> str:
+    """Plain Python read-only page fetcher for internal systems and tests."""
     _validate_public_url(url)
     req = Request(url, headers={"User-Agent": "Agentie/0.4"})
     with urlopen(req, timeout=15) as response:
@@ -53,3 +48,13 @@ def browser_read_page(url: str) -> str:
         parser.feed(text)
         text = "\n".join(parser.parts)
     return text[:30000]
+
+
+@function_tool
+def browser_read_page(url: str) -> str:
+    """Open a public webpage and return readable page text.
+
+    This browser capability is intentionally read-only. It does not click,
+    type, submit forms, download executables, or access private/local networks.
+    """
+    return browser_read_page_text(url)
