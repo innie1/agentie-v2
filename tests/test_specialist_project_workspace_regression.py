@@ -47,6 +47,14 @@ class SpecialistProjectWorkspaceRegressionTests(unittest.TestCase):
         self.assertNotIn('assigned_agents',raw)
         self.assertNotIn('specialists',raw)
 
+    def test_project_preview_observer_cannot_self_trigger_forever(self):
+        raw=Path('frontend/project_workspace.js').read_text(encoding='utf-8')
+        self.assertIn("if(result&&!result.dataset.workspacePreview)",raw)
+        self.assertIn("result.dataset.workspacePreview='1'",raw)
+        self.assertIn('let polishQueued=false',raw)
+        self.assertIn('requestAnimationFrame(()=>{polishQueued=false;polish()})',raw)
+        self.assertNotIn('setInterval(polish,1200)',raw)
+
 
 if __name__=='__main__':
     unittest.main()
