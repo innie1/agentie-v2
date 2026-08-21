@@ -168,6 +168,12 @@ def _job_command(session_id,message):
         except Exception:return {'message':"I couldn't read that job trace.",'card':None,'routed_by':'job'}
         card,title=card_and_title(j);return {'message':f'Trace for {title}.','card':{'type':'job_trace','id':jid,'title':title,'events':events},'routed_by':'job'}
     explicit=re.match(r"^(?:delegate|start (?:a )?(?:background )?job(?: to)?|run (?:this )?as a job)\s*[:\-]?\s*(.+)$",text,re.I);goal=explicit.group(1).strip() if explicit else text
+    if not explicit:
+        from agentie.core.manager_autopilot import maybe_manager_autopilot
+        autopilot=maybe_manager_autopilot(text,session_id)
+        if autopilot is not None:
+            autopilot['routed_by']='manager_autopilot'
+            return autopilot
     if explicit or _looks_like_background_job(text):
         j=create_job(session_id,goal);set_context(session_id,'active_job_id',j['id']);start_job(j['id'],_job_step_runner);card,title=card_and_title(j);set_context(session_id,'active_object',{'type':'job_progress','card':card});return {'message':f"Started “{title}” with {j['total_steps']} planned step(s). You can keep chatting while it runs.",'card':card,'routed_by':'job'}
     return None
