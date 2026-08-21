@@ -31,15 +31,22 @@ STYLE_PACKS: dict[str, DocumentStyle] = {
 
 
 def choose_style(content: str, hint: str | None = None) -> DocumentStyle:
-    hay=f"{hint or ''} {content[:5000]}".lower()
-    explicit={
+    # A caller-supplied style hint is authoritative. This prevents content words
+    # such as "Executive summary" or "launch" from overriding an explicit
+    # request for the research/modern/classic/minimal pack.
+    hint_text=str(hint or "").lower()
+    for sid in STYLE_PACKS:
+        if re.search(rf"\b{re.escape(sid)}\b",hint_text):return STYLE_PACKS[sid]
+
+    hay=content[:5000].lower()
+    inferred={
+        "research":("research","analysis","study","findings","sources","citation","last30days"),
         "executive":("executive","board","management","business report","strategy"),
         "modern":("modern","product","launch","technology","startup","marketing"),
         "classic":("classic","formal letter","proposal","contract","memo"),
-        "research":("research","analysis","study","findings","sources","citation","last30days"),
         "minimal":("minimal","simple","brief","summary","notes"),
     }
-    for sid,words in explicit.items():
+    for sid,words in inferred.items():
         if any(w in hay for w in words):return STYLE_PACKS[sid]
     return STYLE_PACKS["executive"] if len(content)>1800 else STYLE_PACKS["minimal"]
 
