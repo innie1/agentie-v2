@@ -15,6 +15,32 @@ The project is Python-first with a FastAPI backend and a lightweight web UI. Age
 - Agent-to-agent handoffs and simultaneous team jobs.
 - Missing-agent suggestions that can create the requested specialist or route work to a similar existing agent.
 
+### Projects / Project Brain
+- Persistent long-running projects for apps, novels, screenplays, businesses, life goals and general work.
+- Project Brain stores goals, decisions, distilled shared context, milestones, artifacts, handoffs and compact specialist summaries.
+- Worker agents receive role-scoped project briefs instead of another agent's full private chat.
+- A project delegated to several agents remains one shared Project Brain and appears in every assigned agent's chat workspace.
+- Projects can be viewed as native project cards rather than raw JSON.
+- Users can rename a project, change its primary goal, and manually add project context, decisions, goals and milestones.
+- `Show projects` opens a selectable project list with checkboxes and per-project Open controls.
+- `Delete project` without a project name opens a selectable deletion list.
+- Project deletion is approval-gated; selecting one or several projects creates one explicit deletion approval before Project Brain data is removed.
+- Deleting a Project Brain does not silently erase historical agent chat messages.
+
+Useful commands include:
+
+```text
+Show projects
+Show project Church App
+Rename project Church App to Shepherd
+Set project Shepherd goal to Launch to ten churches
+Add to project Shepherd context: Churches need WhatsApp onboarding
+Add to project Shepherd decision: Use Supabase
+Add to project Shepherd milestone: Finish onboarding
+Delete project
+Delete project Shepherd
+```
+
 ### Agent instructions and local NPC brains
 - Generated system instructions from agent identity, role, purpose and permissions.
 - User-editable instructions with higher priority than learned defaults.
@@ -102,6 +128,7 @@ The current UI includes:
 - Agent search/create controls
 - Agent information/instructions editing
 - Native cards for jobs and instructions
+- Native Project Brain management cards and selectable project lists
 - Approval UI
 - Attachments
 - Computer window/card
@@ -127,7 +154,7 @@ agentie-v2/
 └── README.md
 ```
 
-Important core modules include `agent_registry.py`, `agent_prompt.py`, `npc_brain.py`, `job_engine.py`, `team_orchestrator.py`, `memory_store.py`, `advanced_local_router.py`, `agent_access.py`, `skill_registry.py`, `native_last30days.py`, `external_skill_runtime.py`, `capability_router.py`, `browser_automation.py`, and `computer_session.py`.
+Important core modules include `agent_registry.py`, `agent_prompt.py`, `npc_brain.py`, `job_engine.py`, `team_orchestrator.py`, `project_brain.py`, `memory_store.py`, `advanced_local_router.py`, `agent_access.py`, `skill_registry.py`, `native_last30days.py`, `external_skill_runtime.py`, `capability_router.py`, `browser_automation.py`, and `computer_session.py`.
 
 ## Local-first execution philosophy
 
