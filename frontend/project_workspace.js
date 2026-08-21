@@ -50,3 +50,23 @@
   function syncBackground(){const info=selected();let row=messages.querySelector('.agent-background-working');if(!info||!['working','queued'].includes(info.activity)){row?.remove();return}if(!row){row=document.createElement('div');row.className='assistant-row agent-background-working';const body=document.createElement('div');body.className='working';body.innerHTML='<span></span><span class="working-dots"><span></span><span></span><span></span></span>';row.appendChild(body);messages.appendChild(row);decorate(row,info.activity,info)}else if(row.dataset.chatAgentId!==info.id){row.remove();return syncBackground()}const text=row.querySelector('.working>span');if(text)text.textContent=info.activity==='queued'?`${info.name} is queued…`:`${info.name} is working…`;setState(row,info.activity,info.name)}
   setInterval(syncBackground,700);setTimeout(syncBackground,250);
 })();
+
+(()=>{
+  if(window.__agentieOwnedBackgroundEvents)return;window.__agentieOwnedBackgroundEvents=true;
+  const OWNER_KEY='agentie.background.jobOwners.v1',PENDING_KEY='agentie.background.pendingEvents.v1';
+  const read=(key,fallback)=>{try{const v=JSON.parse(localStorage.getItem(key)||'null');return v&&typeof v==='object'?v:fallback}catch(_){return fallback}};
+  const write=(key,value)=>{try{localStorage.setItem(key,JSON.stringify(value))}catch(_){}};
+  let owners=read(OWNER_KEY,{}),pending=read(PENDING_KEY,{});
+  function current(){const row=document.querySelector('#persistentAgentList .agent-row.active');if(!row)return null;const strong=row.querySelector('.agent-copy strong'),name=[...(strong?.childNodes||[])].find(n=>n.nodeType===Node.TEXT_NODE)?.textContent?.trim()||strong?.textContent?.trim()||'';return (window.__agentieAgents||[]).find(a=>a.name===name)||null}
+  function jobCard(card){return card?.type==='routine_run'&&card.job?card.job:card}
+  function jobId(card){const c=jobCard(card);return c?.type==='job_progress'&&c.id?String(c.id):''}
+  function terminal(card){const c=jobCard(card);return c?.type==='job_progress'&&['completed','failed','cancelled'].includes(String(c.status||''))}
+  function artifactOwner(card){const creator=String(card?.creator||'').trim();if(!creator)return null;return (window.__agentieAgents||[]).find(a=>a.name===creator)||null}
+  function rememberOwner(id,agent){if(!id||!agent?.id)return;owners[id]={id:agent.id,name:agent.name};write(OWNER_KEY,owners)}
+  function ownerFor(id){const saved=owners[id];if(!saved)return null;return (window.__agentieAgents||[]).find(a=>a.id===saved.id)||saved}
+  function queue(agentId,message,card){const list=Array.isArray(pending[agentId])?pending[agentId]:[];const key=JSON.stringify([message,card?.type,card?.id,card?.name,card?.document_name]);if(!list.some(x=>x.key===key))list.push({key,message,card});pending[agentId]=list.slice(-20);write(PENDING_KEY,pending)}
+  const previous=window.addAssistant;if(typeof previous!=='function')return;
+  window.addAssistant=function(message,card){const active=current(),id=jobId(card);if(id&&!owners[id]&&active&&!terminal(card))rememberOwner(id,active);const jobOwner=id?ownerFor(id):null;const fileOwner=artifactOwner(card);const owner=jobOwner||fileOwner;if(owner?.id&&active?.id!==owner.id&&(terminal(card)||Boolean(fileOwner))){queue(owner.id,message,card);if(typeof window.agentieNotice==='function')window.agentieNotice(terminal(card)&&jobCard(card)?.status==='failed'?'⚠️':'✅',`${owner.name} ${terminal(card)?(jobCard(card)?.status==='failed'?'job failed':'completed a job'):'created a file'}`,card?.document_name||card?.title||card?.name||'',null,`owned:${owner.id}:${id||card?.name||card?.document_name||message}`);return null}const result=previous(message,card);if(id&&active&&!owners[id])rememberOwner(id,active);return result};
+  function flush(){const active=current();if(!active?.id)return;const list=Array.isArray(pending[active.id])?pending[active.id]:[];if(!list.length)return;pending[active.id]=[];write(PENDING_KEY,pending);for(const item of list)previous(item.message||'',item.card||null)}
+  setInterval(flush,500);setTimeout(flush,250);
+})();
