@@ -66,7 +66,7 @@ def create_pdf(content:str,filename:str|None=None,creator:str="Agentie",style_hi
         labels,values,label=series;story.extend([Spacer(1,6),Paragraph('Visual summary',h1),KeepTogether([_chart(labels,values,label,style.accent)])])
     def page(canvas,_doc):
         canvas.saveState();canvas.setFillColor(_c(style.muted));canvas.setFont('Helvetica',7.5);canvas.drawString(18*mm,8*mm,f'{creator} · Agentie');canvas.drawRightString(A4[0]-18*mm,8*mm,f'Page {_doc.page}');canvas.restoreState()
-    doc.build(story,onFirstPage=page,onLaterPages=page);card=inspect_file(path);card.update({'document_style':style.id,'creator':creator});return card
+    doc.build(story,onFirstPage=page,onLaterPages=page);card=inspect_file(path);card.update({'document_style':style.id,'creator':creator,'document_name':title});return card
 
 def try_pdf_request(session_id:str,message:str)->dict|None:
     if not _PDF_INTENT_RE.search(message):return None
@@ -74,4 +74,4 @@ def try_pdf_request(session_id:str,message:str)->dict|None:
     if content is None:content=resolve_result_reference(session_id,message)
     if content is None and (_REFERENCE_RE.search(message) or len(message.split())<=12):content=latest_assistant_text(session_id,max_chars=40000)
     if not content:return {'message':'What should I put in the PDF? You can paste the content or say “use the previous answer.”','card':None,'needs_content':True}
-    creator=creator_from_session(session_id);card=create_pdf(content,filename,creator,message);return {'message':f"Created {card['name']} using the {card.get('document_style','professional')} document style.",'card':card,'needs_content':False}
+    creator=creator_from_session(session_id);card=create_pdf(content,filename,creator,message);return {'message':f"Created “{card.get('document_name') or card['name']}” as {card['name']} using the {card.get('document_style','professional')} document style.",'card':card,'needs_content':False}
