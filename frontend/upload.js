@@ -115,28 +115,13 @@
     const question=input.value.trim();
     const batch=pending.splice(0,pending.length);
     const visible=question||`Attached ${batch.length===1?batch[0].file.name:`${batch.length} files`}`;
-
-    // Commit the draft immediately. The composer is ready for the user's next
-    // message while this attachment request continues in the background.
-    input.value='';
-    drafts.replaceChildren();
-    composer.classList.remove('has-attachments');
-    input.dispatchEvent(new Event('input',{bubbles:true}));
-    addUser(visible);
-    const working=addWorking();
-    input.focus();
-
+    input.value='';drafts.replaceChildren();composer.classList.remove('has-attachments');input.dispatchEvent(new Event('input',{bubbles:true}));addUser(visible);const working=addWorking();input.focus();
     try{
       const cards=[];for(const item of batch)cards.push(await upload(item));
       for(const card of cards)window.addAssistant?.('',card);
-
       if(question){
-        const r=await fetch('/files/reason',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({question,filenames:cards.map(c=>c.name)})});
-        const d=await r.json();if(!r.ok)throw Error(d.detail||'Attachment reasoning failed');
-        working.remove();window.addAssistant?.(d.message||'I could not produce an answer from that attachment.',null);
-      }else{
-        working.remove();window.addAssistant?.('Attachment uploaded. Add a message if you want me to read, summarize, inspect, or analyze it.',null);
-      }
+        const r=await fetch('/files/reason',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({question,filenames:cards.map(c=>c.name)})});const d=await r.json();if(!r.ok)throw Error(d.detail||'Attachment reasoning failed');working.remove();window.addAssistant?.(d.message||'I could not produce an answer from that attachment.',null);
+      }else{working.remove();window.addAssistant?.('Attachment uploaded. Add a message if you want me to read, summarize, inspect, or analyze it.',null)}
     }catch(err){working.remove();window.addAssistant?.(`Attachment request failed: ${err.message}`,null)}
   }
 
@@ -153,7 +138,7 @@
   }
   function renderFile(c){
     if(c.type==='uploaded_file'){
-      const[w,e]=box(`${icon(c.kind)} ${c.name}`);const meta=document.createElement('div');meta.className='card-meta';const p=[humanBytes(c.size_bytes),c.kind||c.suffix||'file'];if(c.pages!=null)p.push(`${c.pages} pages`);if(c.entries!=null)p.push(`${c.entries} files`);meta.textContent=p.join(' · ');e.appendChild(meta);
+      const displayName=c.document_name||c.name;const[w,e]=box(`${icon(c.kind)} ${displayName}`);const meta=document.createElement('div');meta.className='card-meta';const p=[];if(c.document_name&&c.document_name!==c.name)p.push(`File: ${c.name}`);p.push(humanBytes(c.size_bytes),c.kind||c.suffix||'file');if(c.pages!=null)p.push(`${c.pages} pages`);if(c.entries!=null)p.push(`${c.entries} files`);meta.textContent=p.join(' · ');e.appendChild(meta);
       if(c.inspection_error){const er=document.createElement('div');er.className='card-meta';er.textContent=`Could not inspect: ${c.inspection_error}`;e.appendChild(er)}buttonBox(e,c);return w;
     }
     if(c.type==='file_text'){const[w,e]=box(`📄 ${c.filename}`);const b=document.createElement('div');b.className='file-badge';b.textContent=c.truncated?'Text preview · truncated':'Extracted text';e.appendChild(b);const p=document.createElement('div');p.className='file-preview';p.textContent=c.text||'';e.appendChild(p);return w}
@@ -170,15 +155,13 @@
     return previousRender(card,message);
   };
 
-  // Format all normal assistant model text, not only attachment responses.
   const originalAddAssistant=window.addAssistant;
   if(typeof originalAddAssistant==='function'){
     window.addAssistant=function(message,card){
       const text=String(message||'');
       if(!text||card)return originalAddAssistant(message,card);
       const messages=document.getElementById('messages');const row=document.createElement('div');row.className='assistant-row';
-      const wrap=document.createElement('div');const bubble=document.createElement('div');bubble.className='bubble assistant';bubble.appendChild(richText(text));wrap.appendChild(bubble);row.appendChild(wrap);messages?.appendChild(row);
-      window.scrollTo({top:document.body.scrollHeight,behavior:'smooth'});
+      const wrap=document.createElement('div');const bubble=document.createElement('div');bubble.className='bubble assistant';bubble.appendChild(richText(text));wrap.appendChild(bubble);row.appendChild(wrap);messages?.appendChild(row);window.scrollTo({top:document.body.scrollHeight,behavior:'smooth'});
     };
   }
 })();
