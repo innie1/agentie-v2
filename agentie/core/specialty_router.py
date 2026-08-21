@@ -62,7 +62,7 @@ def _start_handoff(current:dict[str,Any],specialist:dict[str,Any],task:str,sessi
     return {"message":message,"card":{"type":"agent_handoff","from_agent":{"id":current["id"],"name":current["name"],"role":current["role"]},"to_agent":{"id":specialist["id"],"name":specialist["name"],"role":specialist["role"]},"reason":f"Matched {specialty} specialty","team_job":team_job_card(job)}}
 
 def maybe_auto_delegate(message:str,session_id:str|None)->dict[str,Any]|None:
-    """Propose specialty handoffs, or auto-route when the user has saved that preference."""
+    """Run Manager Autopilot for complex manager goals, otherwise use the normal specialty handoff flow."""
     current=_active_agent_from_session(session_id)
     if not current:return None
     lower=" ".join(message.casefold().strip().split()).strip(" .?!")
@@ -79,6 +79,11 @@ def maybe_auto_delegate(message:str,session_id:str|None)->dict[str,Any]|None:
         return _start_handoff(current,specialist,task,session_id,specialty,always=always)
     # Explicit orchestration/registry commands are handled by their existing routers.
     if re.match(r"^(delegate|hand off|handoff|have |ask |tell |create |make |add |delete |remove |show |list |retry )",lower):return None
+    # Manager Autopilot is intentionally inserted into the existing handoff router,
+    # so the main request pipeline and all existing cards/events remain unchanged.
+    from agentie.core.manager_autopilot import maybe_manager_autopilot
+    autopilot=maybe_manager_autopilot(message,session_id)
+    if autopilot is not None:return autopilot
     task_specialty,confidence=_specialty_for_task(message);current_specialty=_specialty_for_agent(current)
     if confidence<1 or task_specialty=="general" or task_specialty==current_specialty:return None
     specialist=best_specialist(message,current.get("id"))
