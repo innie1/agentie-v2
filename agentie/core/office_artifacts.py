@@ -24,6 +24,7 @@ from agentie.core.artifact_naming import artifact_filename,creator_from_session
 from agentie.core.document_design import choose_style, document_title, first_numeric_series, parse_blocks, numeric_series, chart_png_bytes
 from agentie.core.file_service import UPLOADS, inspect_file, unique_path
 from agentie.core.memory_store import latest_assistant_text
+from agentie.core.result_memory import resolve_result_reference
 
 _REFERENCE_RE = re.compile(r"\b(?:this|that|it|the previous answer|previous answer|last answer|above|what you just wrote|what you wrote)\b", re.I)
 _DOCX_RE = re.compile(r"\b(?:create|make|generate|export|save|turn|convert)\b.*\b(?:docx|word document|word file)\b|\b(?:docx|word document|word file)\b.*\b(?:create|make|generate|export|save|turn|convert)\b", re.I)
@@ -40,6 +41,7 @@ def _explicit_content(message: str) -> str | None:
     value=m.group(1).strip();return value.strip(" \"'") if value and not _REFERENCE_RE.fullmatch(value.strip(" .?!\"'")) else None
 def _resolve_content(session_id:str,message:str)->str|None:
     content=_explicit_content(message)
+    if content is None:content=resolve_result_reference(session_id,message)
     if content is None and (_REFERENCE_RE.search(message) or len(message.split())<=14):content=latest_assistant_text(session_id,max_chars=120000)
     return content
 
