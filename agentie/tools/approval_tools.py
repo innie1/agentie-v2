@@ -93,6 +93,11 @@ def _execute_approved_action(item: dict):
             if row.get("already_deleted"):already.append({"id":row.get("id"),"name":row.get("name"),"deleted_at":row.get("deleted_at")})
             else:deleted.append({"id":row.get("id"),"name":row.get("name")})
         result={"deleted_projects":deleted,"already_deleted":already,"count":len(deleted)}
+    elif kind == "company_knowledge_delete":
+        knowledge_id=str(meta.get("knowledge_id") or "").strip()
+        if not knowledge_id:raise ValueError("Approved company knowledge deletion is missing the knowledge id.")
+        from agentie.core.company_knowledge import delete_company_knowledge
+        result={"knowledge_id":knowledge_id,"deleted":bool(delete_company_knowledge(knowledge_id))}
     else:return None
     item["status"] = "consumed";item["consumed_at"] = datetime.now(timezone.utc).isoformat();item["execution_result"] = result;return result
 def resolve_approval(approval_id: str, approved: bool, remember: bool = False):
