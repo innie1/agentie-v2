@@ -41,6 +41,12 @@ def update_project(pid,**changes):
         for k,v in changes.items():
             if k in {"name","goal","status","owner_agent_id"}:p[k]=v
         p["updated_at"]=_now();_save(items);return dict(p)
+def delete_project(pid):
+    """Delete the Project Brain record. Historical agent chats remain historical chat."""
+    with _LOCK:
+        items=_load();index=next((i for i,x in enumerate(items) if x.get("id")==pid),None)
+        if index is None:return None
+        deleted=items.pop(index);_save(items);return deleted
 def assign_agents(pid,agents):
     with _LOCK:
         items=_load();p=next((x for x in items if x.get("id")==pid),None)
@@ -80,7 +86,8 @@ def record_handoff(pid,from_agent,to_agent,task,team_job_id=None):
     except Exception:pass
 def record_worker_result(pid,agent_name,role,task,result):
     compact=re.sub(r"\s+"," ",str(result or "")).strip();compact=compact if len(compact)<=900 else compact[:899].rstrip()+"…";append_project_item(pid,"summaries",compact,{"agent":agent_name,"role":role,"task":task});append_project_item(pid,"knowledge",compact,{"source_agent":agent_name,"audience":"all","task":task})
-def project_card(p,viewer_agent_id=None):return {"type":"project","id":p["id"],"name":p["name"],"goal":p["goal"],"kind":p["kind"],"status":p["status"],"skill":p.get("skill"),"specialists":p.get("specialists",[]),"assigned_agents":p.get("assigned_agents",[]),"assigned_to_viewer":bool(viewer_agent_id and viewer_agent_id in (p.get("assigned_agent_ids") or [])),"milestones":p.get("milestones",[])[-8:],"summaries":p.get("summaries",[])[-8:],"updated_at":p.get("updated_at")}
+def _item_values(p,section,limit=8):return [str(x.get("value",x)) if isinstance(x,dict) else str(x) for x in (p.get(section) or [])[-limit:]]
+def project_card(p,viewer_agent_id=None):return {"type":"project","id":p["id"],"name":p["name"],"goal":p["goal"],"kind":p["kind"],"status":p["status"],"skill":p.get("skill"),"specialists":p.get("specialists",[]),"assigned_agents":p.get("assigned_agents",[]),"assigned_to_viewer":bool(viewer_agent_id and viewer_agent_id in (p.get("assigned_agent_ids") or [])),"goals":_item_values(p,"goals"),"decisions":_item_values(p,"decisions"),"context":_item_values(p,"knowledge"),"milestones":_item_values(p,"milestones"),"summaries":p.get("summaries",[])[-8:],"updated_at":p.get("updated_at")}
 def _name_from_goal(goal,kind):
     clean=re.sub(r"^(i\s+(want|plan|need)\s+to\s+|i('m| am)\s+)","",goal.strip(),flags=re.I);clean=re.sub(r"\s+"," ",clean).strip(" .?!");return clean[:70] or f"{kind.title()} project"
 def _project_from_reference(text):
@@ -113,16 +120,54 @@ def _project_delegation(text):
         if all(x['id']!=a['id'] for x in agents):agents.append(a)
     assign_agents(project['id'],agents);job=create_team_job(task,agents,project_id=project['id']);start_team_job(job['id'])
     return {"message":f"Assigned {project['name']} to {', '.join(a['name'] for a in agents)}. The project is now visible from each assigned agent's workspace.","card":team_job_card(job)}
+def _delete_picker():
+    items=list_projects();return {"message":"Choose the project or projects you want to delete.","card":{"type":"project_delete_picker","items":[project_card(x) for x in items]}}
+def _delete_request(raw):
+    from agentie.tools.approval_tools import create_approval
+    bits=[x.strip() for x in re.split(r"\s*,\s*|\s*;\s*",str(raw or "")) if x.strip()];projects=[]
+    for bit in bits:
+        p=get_project(bit)
+        if not p and bit.casefold().startswith("project "):p=get_project(bit[8:].strip())
+        if not p:return {"message":f"Project {bit} was not found.","card":None}
+        if all(x['id']!=p['id'] for x in projects):projects.append(p)
+    if not projects:return _delete_picker()
+    ids=[p['id'] for p in projects];names=[p['name'] for p in projects];action="delete_projects:"+",".join(ids)
+    approval=create_approval(action,"Permanently delete "+(", ".join(names))+" from Project Brain? Historical agent chat messages are not deleted.",{"kind":"project_delete","project_ids":ids,"project_names":names})
+    return {"message":"Project deletion requires approval.","card":{"type":"approvals","items":[approval]}}
 def route_project_command(message):
     text=" ".join(message.strip().split());lower=text.casefold().strip(" .?!")
     delegated=_project_delegation(text)
     if delegated is not None:return delegated
+    if lower in {"delete project","delete a project","remove project","delete projects","remove projects"}:return _delete_picker()
+    m_delete=re.match(r"^(?:delete|remove)\s+projects?\s+(.+?)[.!?]?$",text,re.I)
+    if m_delete:return _delete_request(m_delete.group(1))
+    m_rename=re.match(r"^rename\s+project\s+(.+?)\s+to\s+(.+?)[.!?]?$",text,re.I)
+    if m_rename:
+        p=get_project(m_rename.group(1).strip())
+        if not p:return {"message":"Project was not found.","card":None}
+        updated=update_project(p['id'],name=m_rename.group(2).strip(' \"“”'));return {"message":f"Renamed project to {updated['name']}.","card":project_card(updated)}
+    m_goal=re.match(r"^(?:set|change|update)\s+project\s+(.+?)\s+goal\s+(?:to|as)\s+(.+?)[.!?]?$",text,re.I)
+    if m_goal:
+        p=get_project(m_goal.group(1).strip())
+        if not p:return {"message":"Project was not found.","card":None}
+        goal=m_goal.group(2).strip();updated=update_project(p['id'],goal=goal);append_project_item(p['id'],"goals",goal,{"source":"manual"});updated=get_project(p['id']);return {"message":f"Updated {updated['name']}'s goal.","card":project_card(updated)}
+    m_add=re.match(r"^add\s+(?:to\s+)?project\s+(.+?)\s+(context|decision|milestone|goal)\s*:\s*(.+)$",text,re.I)
+    if not m_add:m_add=re.match(r"^add\s+(context|decision|milestone|goal)\s+to\s+project\s+(.+?)\s*:\s*(.+)$",text,re.I)
+    if m_add:
+        if m_add.group(1).casefold() in {"context","decision","milestone","goal"}:kind,name,value=m_add.group(1),m_add.group(2),m_add.group(3)
+        else:name,kind,value=m_add.group(1),m_add.group(2),m_add.group(3)
+        p=get_project(name.strip())
+        if not p:return {"message":"Project was not found.","card":None}
+        section={"context":"knowledge","decision":"decisions","milestone":"milestones","goal":"goals"}[kind.casefold()];updated=append_project_item(p['id'],section,value.strip(),{"source":"manual","audience":"all"} if section=="knowledge" else {"source":"manual"});return {"message":f"Added {kind.casefold()} to {p['name']}.","card":project_card(updated)}
     m_agent=re.match(r"^(?:show|list)\s+(?:the\s+)?projects?\s+(?:for|assigned to)\s+(.+?)[.!?]?$",text,re.I)
     if m_agent:
         from agentie.core.agent_registry import get_agent
         a=get_agent(m_agent.group(1).strip())
         if not a:return {"message":"Agent was not found.","card":None}
         items=projects_for_agent(a['id']);return {"message":f"{a['name']} has {len(items)} assigned project(s).","card":{"type":"projects","agent_id":a['id'],"agent_name":a['name'],"items":[project_card(x,a['id']) for x in items]}}
+    m_show=re.match(r"^(?:show|open|view|inspect)\s+project\s+(.+?)[.!?]?$",text,re.I)
+    if m_show:
+        p=get_project(m_show.group(1).strip());return {"message":"Project was not found.","card":None} if not p else {"message":f"Here is {p['name']}.","card":project_card(p)}
     if lower in {"show projects","list projects","my projects","show my projects"}:
         items=list_projects();return {"message":f"You have {len(items)} project(s).","card":{"type":"projects","items":[project_card(x) for x in items]}}
     if re.search(r"\b(where are we|project status|how is the project|where are we so far)\b",lower):
