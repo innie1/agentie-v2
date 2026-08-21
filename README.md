@@ -144,6 +144,7 @@ The current UI includes:
 - Selected-agent `Delegated work` feed that polls persisted handoff tasks/results from that agent's own normal chat timeline
 - Compact assigned-project previews plus an expandable full specialist project workspace
 - Safe Markdown rendering for specialist results, including headings, lists, simple tables and fenced code blocks
+- Specialist project preview observers are idempotent and animation-frame debounced so rendering a project result cannot lock the browser in a self-triggering DOM mutation loop.
 - Native agent profile cards instead of raw internal profile JSON
 - Agent search/create controls
 - Agent information/instructions editing
