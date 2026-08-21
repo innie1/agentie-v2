@@ -22,8 +22,9 @@ The project is Python-first with a FastAPI backend and a lightweight web UI. Age
 - Worker agents receive role-scoped project briefs instead of another agent's full private chat.
 - A project delegated to several agents remains one shared Project Brain and appears in every assigned agent's chat workspace.
 - Each assigned-agent project view includes that agent's delegated task, role-scoped context, work status and latest result without exposing another worker's private context.
-- Assigned-project list rows stay compact: they show task/status plus a short result preview instead of squeezing a whole report into the list.
+- Assigned-project list rows stay compact: they show task/status plus a short, Markdown-clean result title/summary instead of squeezing a whole report or raw formatting tokens into the list.
 - **Open** in a worker workspace expands a full specialist workspace with that agent's task, status, scoped project context, full persisted handoff result rendered as readable Markdown, and project artifacts when present.
+- Specialist workspace selection resolves the actual selected agent name independently of sidebar role badges, so role labels cannot break the Open action.
 - The full specialist workspace reads only `Show projects for <agent>` plus that agent's own handoff history; it never fetches the global project to render recipient work.
 - The final project-manager renderer preserves `viewer_assignment`; a worker-scoped project cannot be replaced by the global project view when the user presses **Open**.
 - Project handoff tasks and results are mirrored into the receiving specialist's normal `main` chat timeline, and the selected-agent UI reads that persisted timeline back as a live `Delegated work` feed.
