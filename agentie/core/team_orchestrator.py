@@ -8,7 +8,7 @@ from typing import Any
 from agentie.core.agent_registry import get_agent,list_agents
 from agentie.core.result_memory import remember_global_result
 from agentie.core.memory_store import add_message
-from agentie.core.project_brain import get_project,project_context,record_handoff,record_worker_result,route_project_command
+from agentie.core.project_brain import get_project,project_context,record_handoff,record_worker_result,route_project_command,update_agent_work_status
 
 WORKSPACE=Path.cwd()/"workspace";TEAM_FILE=WORKSPACE/"team_jobs.json";_LOCK=threading.Lock();_RUNNING={}
 def _now():return datetime.now().astimezone().isoformat(timespec="seconds")
@@ -70,21 +70,26 @@ def _mirror(agent,role,content,metadata):
     except Exception:pass
 async def _worker(jid,h):
     from agentie.core.runner import run_agent
-    a=get_agent(str(h["to_agent_id"]));
-    if not a:return h["id"],None,"Agent no longer exists."
+    a=get_agent(str(h["to_agent_id"]));pid=h.get("context",{}).get("project_id")
+    if not a:
+        if pid:update_agent_work_status(pid,str(h.get("to_agent_id") or h.get("to_agent_name") or ""),"failed","Agent no longer exists.")
+        return h["id"],None,"Agent no longer exists."
     def start(j):
         for x in j["handoffs"]:
             if x["id"]==h["id"]:x.update(status="working",started_at=_now(),attempts=int(x.get("attempts",0))+1,error=None,progress_summary=f"Working on {x.get('task') or j.get('task')}.",status_checked_at=_now())
-    _mutate(jid,start);brief=str(h.get("context",{}).get("scoped_brief") or h["task"])
-    visible=f"Project handoff: {h['task']}";_mirror(a,"user",visible,{"routed_by":"project_handoff","team_job_id":jid,"project_id":h.get("context",{}).get("project_id")})
+    _mutate(jid,start)
+    if pid:update_agent_work_status(pid,a["id"],"working")
+    brief=str(h.get("context",{}).get("scoped_brief") or h["task"])
+    visible=f"Project handoff: {h['task']}";_mirror(a,"user",visible,{"routed_by":"project_handoff","team_job_id":jid,"project_id":pid})
     prompt=f"You are {a['name']}, the {a['role']} agent. Work only within your specialty. This is a bounded handoff. Never absorb another worker's private chat. Return a useful deliverable and a concise handoff summary.\n\n{brief}"
     try:
-        out=await run_agent(prompt,str(a.get("base") or "general"),f"{a['session_prefix']}handoff:{jid}");_mirror(a,"assistant",out,{"routed_by":"project_handoff_result","team_job_id":jid,"project_id":h.get("context",{}).get("project_id")})
-        pid=h.get("context",{}).get("project_id")
+        out=await run_agent(prompt,str(a.get("base") or "general"),f"{a['session_prefix']}handoff:{jid}");_mirror(a,"assistant",out,{"routed_by":"project_handoff_result","team_job_id":jid,"project_id":pid})
         if pid:record_worker_result(pid,a["name"],a.get("role") or a.get("base"),h["task"],out)
         return h["id"],out,None
     except Exception as exc:
-        msg=str(exc);_mirror(a,"assistant",f"Handoff failed: {msg}",{"routed_by":"project_handoff_result","team_job_id":jid,"failed":True});return h["id"],None,msg
+        msg=str(exc);_mirror(a,"assistant",f"Handoff failed: {msg}",{"routed_by":"project_handoff_result","team_job_id":jid,"project_id":pid,"failed":True})
+        if pid:update_agent_work_status(pid,a["id"],"failed",f"Handoff failed: {msg}")
+        return h["id"],None,msg
 def _compact(v,n=260):
     t=re.sub(r"\s+"," ",str(v or "")).strip();return t if len(t)<=n else t[:n-1].rstrip()+"…"
 def _fallback_status(j,h):
