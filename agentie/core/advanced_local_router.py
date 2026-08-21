@@ -99,6 +99,12 @@ def _memory_command(text: str) -> dict | None:
 
 def try_advanced_local_command(message: str) -> dict | None:
     text=" ".join(message.strip().split()); lower=text.lower().strip(" .?!")
+    # Brain dumps are an explicit durable-knowledge action. They stay local and
+    # reuse Agentie's existing memory + Project Brain stores rather than creating
+    # another persistence system.
+    from agentie.core.company_knowledge import route_company_knowledge_command
+    company=route_company_knowledge_command(text)
+    if company is not None:return company
     # Research/web commands must run before collection search. Otherwise phrases
     # like "search the web for ..." are misread as collection="the web".
     for router in (route_routine_command, route_role_command, route_skill_command, route_collection_command):
