@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-import asyncio
-import json
-import re
+import asyncio,json,re,shutil
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from pathlib import Path
@@ -10,27 +8,27 @@ from typing import Any
 
 from agentie.core.code_execution import route_code_command
 from agentie.core.external_skill_runtime import route_last30days
-from agentie.core.native_last30days import route as route_native_last30days, status as native_last30days_status
-from agentie.core.observability import current_trace_id, set_current_trace
+from agentie.core.native_last30days import route as route_native_last30days,status as native_last30days_status
+from agentie.core.observability import current_trace_id,set_current_trace
 from agentie.core.visual_artifacts import try_visual_request
-from agentie.core.web_research_service import answer_web_search, search_sources, source_card, sources_only_requested
+from agentie.core.web_research_service import answer_web_search,search_sources,source_card,sources_only_requested
+from agentie.core.workflow_skills import create_workflow_skill,delete_workflow_skill,get_workflow_skill,list_workflow_skills,set_workflow_skill_status,skill_card
 
-WORKSPACE=Path.cwd()/"workspace"
-SKILLS_DIR=WORKSPACE/"skills"
-STATE=WORKSPACE/"skills_state.json"
+WORKSPACE=Path.cwd()/"workspace";SKILLS_DIR=WORKSPACE/"skills";STATE=WORKSPACE/"skills_state.json"
+# These are built-in capability packages, not prebuilt employee identities.
 DEFAULT_SKILLS={
-  "local-utils":{"name":"Local Utilities","description":"Timers, reminders, calculations, conversions, notes and system utilities.","agents":["general","manager","coding"],"enabled":True,"capabilities":["timer","alarm","reminder","calculator","conversion","notes","system"],"permissions":["read","write"]},
-  "code-execution":{"name":"Code Execution","description":"Constrained local Python execution with captured output and downloadable artifacts.","agents":["general","coding","manager","research"],"enabled":True,"capabilities":["python","code_execution","local_analysis","artifacts"],"permissions":["execute","files_write"]},
-  "research":{"name":"Research","description":"Web search, page reading and deep research with citations.","agents":["general","research","manager"],"enabled":True,"capabilities":["web_search","browser_read","deep_research","citation_verify"],"permissions":["web_read"]},
-  "last30days":{"name":"Last30Days","description":"Agentie-native 30-day multi-source research for Reddit, X, YouTube, Hacker News, GitHub and the web. Runs on Python 3.11+; the upstream 3.12 engine remains optional.","agents":["general","research","manager"],"enabled":True,"capabilities":["recent_research","reddit","x","youtube","hackernews","github","web_search","trends"],"permissions":["web_read"],"kind":"native_external_compatible","repository":"https://github.com/mvanhorn/last30days-skill.git","runtime_status":native_last30days_status},
-  "files":{"name":"Files & Documents","description":"Upload, inspect, search, generate and download local artifacts including PDF, DOCX, XLSX and PPTX.","agents":["general","research","coding","manager"],"enabled":True,"capabilities":["files","pdf","docx","xlsx","pptx","zip","collections","rag"],"permissions":["files_read","files_write"]},
-  "visuals-motion":{"name":"Visuals & Motion","description":"Create local SVG flowcharts, architecture/process diagrams and animated HTML motion graphics without a paid image or video API.","agents":["general","research","coding","manager"],"enabled":True,"capabilities":["diagram","flowchart","architecture_diagram","process_diagram","svg","motion_graphics","animation"],"permissions":["files_write"]},
-  "jobs":{"name":"Jobs & Delegation","description":"Durable background jobs, parallel agents, routines and dynamic roles.","agents":["general","manager","research","coding","github"],"enabled":True,"capabilities":["jobs","delegation","routines","roles"],"permissions":["delegate","schedule"]},
-  "github":{"name":"GitHub","description":"Repository inspection, issues, pull requests, Actions and GitHub-specialist workflows.","agents":["github","coding","manager"],"enabled":True,"capabilities":["github_read","repositories","issues","pull_requests","actions"],"permissions":["github_read","github_write"]},
-  "browser-automation":{"name":"Browser Automation","description":"Navigate websites, interact with pages, capture screenshots and complete browser workflows through an approved MCP/browser provider.","agents":["general","research","manager"],"enabled":True,"capabilities":["browser","navigation","web_automation","screenshot"],"permissions":["web_read","web_interact"]},
-  "email":{"name":"Email","description":"Read, search, draft and send email when an approved email MCP or plugin is connected.","agents":["general","manager"],"enabled":True,"capabilities":["email","inboxes","messages","drafts","attachments"],"permissions":["email_read","email_write","send"]},
-  "knowledge-memory":{"name":"Knowledge Memory","description":"Persistent entities, observations, relations and useful long-term knowledge.","agents":["general","research","manager","coding","github"],"enabled":True,"capabilities":["knowledge_graph","entities","relations","memory"],"permissions":["memory_read","memory_write"]},
-  "planning":{"name":"Planning & Reasoning","description":"Structured planning, decomposition, verification and multi-step reasoning for complex work.","agents":["general","research","manager","coding"],"enabled":True,"capabilities":["reasoning","planning","verification","sequential_thinking"],"permissions":["read"]},
+  "local-utils":{"name":"Local Utilities","description":"Timers, reminders, calculations, conversions, notes and system utilities.","agents":["general","manager","coding"],"enabled":True,"capabilities":["timer","alarm","reminder","calculator","conversion","notes","system"],"permissions":["read","write"],"kind":"capability"},
+  "code-execution":{"name":"Code Execution","description":"Constrained local Python execution with captured output and downloadable artifacts.","agents":["general","coding","manager","research"],"enabled":True,"capabilities":["python","code_execution","local_analysis","artifacts"],"permissions":["execute","files_write"],"kind":"capability"},
+  "research":{"name":"Research","description":"Web search, page reading and deep research with citations.","agents":["general","research","manager"],"enabled":True,"capabilities":["web_search","browser_read","deep_research","citation_verify"],"permissions":["web_read"],"kind":"capability"},
+  "last30days":{"name":"Last30Days","description":"Agentie-native 30-day multi-source research for Reddit, X, YouTube, Hacker News, GitHub and the web.","agents":["general","research","manager"],"enabled":True,"capabilities":["recent_research","reddit","x","youtube","hackernews","github","web_search","trends"],"permissions":["web_read"],"kind":"capability","repository":"https://github.com/mvanhorn/last30days-skill.git","runtime_status":native_last30days_status},
+  "files":{"name":"Files & Documents","description":"Upload, inspect, search, generate and download local artifacts including PDF, DOCX, XLSX and PPTX.","agents":["general","research","coding","manager"],"enabled":True,"capabilities":["files","pdf","docx","xlsx","pptx","zip","collections","rag"],"permissions":["files_read","files_write"],"kind":"capability"},
+  "visuals-motion":{"name":"Visuals & Motion","description":"Create local SVG flowcharts, architecture/process diagrams and animated HTML motion graphics.","agents":["general","research","coding","manager"],"enabled":True,"capabilities":["diagram","flowchart","architecture_diagram","process_diagram","svg","motion_graphics","animation"],"permissions":["files_write"],"kind":"capability"},
+  "jobs":{"name":"Jobs & Delegation","description":"Durable background jobs, parallel agents, routines and delegation.","agents":["general","manager","research","coding","github"],"enabled":True,"capabilities":["jobs","delegation","routines"],"permissions":["delegate","schedule"],"kind":"capability"},
+  "github":{"name":"GitHub","description":"Repository inspection, issues, pull requests, Actions and GitHub workflows.","agents":["github","coding","manager"],"enabled":True,"capabilities":["github_read","repositories","issues","pull_requests","actions"],"permissions":["github_read","github_write"],"kind":"capability"},
+  "browser-automation":{"name":"Browser Automation","description":"Navigate websites, interact with pages, capture screenshots and complete browser workflows.","agents":["general","research","manager"],"enabled":True,"capabilities":["browser","navigation","web_automation","screenshot"],"permissions":["web_read","web_interact"],"kind":"capability"},
+  "email":{"name":"Email","description":"Read, search, draft and send email when an approved email MCP or plugin is connected.","agents":["general","manager"],"enabled":True,"capabilities":["email","inboxes","messages","drafts","attachments"],"permissions":["email_read","email_write","send"],"kind":"capability"},
+  "knowledge-memory":{"name":"Knowledge Memory","description":"Persistent entities, observations, relations and useful long-term knowledge.","agents":["general","research","manager","coding","github"],"enabled":True,"capabilities":["knowledge_graph","entities","relations","memory"],"permissions":["memory_read","memory_write"],"kind":"capability"},
+  "planning":{"name":"Planning & Reasoning","description":"Structured planning, decomposition, verification and multi-step reasoning.","agents":["general","research","manager","coding"],"enabled":True,"capabilities":["reasoning","planning","verification","sequential_thinking"],"permissions":["read"],"kind":"capability"},
 }
 
 def _load_state()->dict[str,Any]:
@@ -52,18 +50,20 @@ def all_skills()->dict[str,dict[str,Any]]:
         if callable(status_fn):item["runtime"]=status_fn();item.pop("runtime_status",None)
     return skills
 def list_skills()->list[dict[str,Any]]:return sorted(all_skills().values(),key=lambda x:str(x.get("name",x["id"])).lower())
-def skill_enabled(skill_id:str)->bool:return bool(all_skills().get(skill_id,{}).get("enabled",False))
+def skill_enabled(skill_id:str)->bool:return bool(all_skills().get(str(skill_id).lower(),{}).get("enabled",False))
 def set_skill_enabled(skill_id:str,enabled:bool)->dict[str,Any]:
-    skills=all_skills();sid=skill_id.lower().strip()
+    sid=skill_id.lower().strip();skills=all_skills()
     if sid not in skills:raise KeyError(sid)
+    item=skills[sid]
+    if item.get("kind")=="workflow":return set_workflow_skill_status(sid,"active" if enabled else "paused")
     state=_load_state();state.setdefault("overrides",{}).setdefault(sid,{})["enabled"]=bool(enabled);state["updated_at"]=datetime.now().astimezone().isoformat(timespec="seconds");_save_state(state);return all_skills()[sid]
 def create_skill_manifest(skill_id:str,name:str,description:str,agents:list[str],capabilities:list[str])->dict[str,Any]:
+    """Backward-compatible declarative capability manifest creator."""
     sid=re.sub(r"[^a-z0-9_-]+","-",skill_id.lower()).strip("-")
     if not sid:raise ValueError("Skill id is required.")
     path=SKILLS_DIR/sid/"skill.json";path.parent.mkdir(parents=True,exist_ok=True)
     if path.exists():raise ValueError("That skill already exists.")
-    valid_agents={"general","research","coding","manager","github","*"};agents=[a for a in agents if a in valid_agents] or ["general"]
-    item={"id":sid,"name":name[:120],"description":description[:1000],"agents":sorted(set(agents)),"capabilities":sorted(set(capabilities)),"permissions":[],"enabled":True,"version":"1.0","kind":"declarative"};path.write_text(json.dumps(item,indent=2,ensure_ascii=False),encoding="utf-8");return item
+    item={"id":sid,"name":name[:120],"description":description[:1000],"agents":sorted(set(agents)) or ["*"],"capabilities":sorted(set(capabilities)),"permissions":[],"enabled":True,"version":"1.0","kind":"declarative"};path.write_text(json.dumps(item,indent=2,ensure_ascii=False),encoding="utf-8");return item
 def skills_for_agent(agent_type:str)->list[dict[str,Any]]:return [s for s in list_skills() if s.get("enabled") and (agent_type in (s.get("agents") or []) or "*" in (s.get("agents") or []))]
 
 def _run_web_synthesis(query:str)->dict[str,Any]:
@@ -77,22 +77,46 @@ def _friendly_synthesis_failure(exc:Exception)->str:
     if "429" in text or "quota" in text or "resource_exhausted" in text or "rate limit" in text:return "I found the web sources, but the AI summary is temporarily unavailable because the model quota was reached. You can still open the sources below."
     return "I found the web sources, but I couldn't generate the AI summary right now. You can still open the sources below."
 def _global_access_command(text:str)->dict[str,Any]|None:
-    m=re.match(r"^(?:always allow|allow|grant)\s+(skill|mcp|plugin)\s+(.+?)\s+(?:for|to)\s+(?:all|every)\s+agents?$",text,re.I)
-    revoke=re.match(r"^(?:revoke|remove|stop allowing|disallow)\s+(skill|mcp|plugin)\s+(.+?)\s+(?:for|from)\s+(?:all|every)\s+agents?$",text,re.I)
-    hit=m or revoke
+    m=re.match(r"^(?:always allow|allow|grant)\s+(skill|mcp|plugin)\s+(.+?)\s+(?:for|to)\s+(?:all|every)\s+agents?$",text,re.I);revoke=re.match(r"^(?:revoke|remove|stop allowing|disallow)\s+(skill|mcp|plugin)\s+(.+?)\s+(?:for|from)\s+(?:all|every)\s+agents?$",text,re.I);hit=m or revoke
     if not hit:return None
     from agentie.core.agent_access import set_global_mcp_access,set_global_skill_access
     kind=hit.group(1).lower();cap=hit.group(2).strip(' .?!\"“”');allowed=bool(m)
-    try:
-        if kind=="skill":set_global_skill_access(cap,allowed)
-        else:set_global_mcp_access(cap,allowed)
+    try:set_global_skill_access(cap,allowed) if kind=="skill" else set_global_mcp_access(cap,allowed)
     except ValueError as exc:return {"message":str(exc),"card":None}
-    verb="available to" if allowed else "no longer globally allowed for"
-    return {"message":f"{cap} is now {verb} all agents. Individual agent blocks still override the global setting.","card":{"type":"global_capability_access","kind":"skill" if kind=="skill" else "mcp","capability_id":cap,"allowed":allowed}}
+    verb="available to" if allowed else "no longer globally allowed for";return {"message":f"{cap} is now {verb} all agents. Individual agent blocks still override the global setting.","card":{"type":"global_capability_access","kind":"skill" if kind=="skill" else "mcp","capability_id":cap,"allowed":allowed}}
+def _workflow_skill_command(text:str,lower:str)->dict[str,Any]|None:
+    if lower in {"show workflow skills","list workflow skills","workflow skills","show reusable skills"}:
+        items=list_workflow_skills();return {"message":f"You have {len(items)} reusable workflow skill(s).","card":{"type":"workflow_skills","items":[skill_card(x) for x in items]}}
+    m=re.match(r"^(?:show|open|inspect)\s+skill\s+(.+)$",text,re.I)
+    if m:
+        item=get_workflow_skill(m.group(1).strip(' .?!\"“”'));return {"message":"Workflow skill was not found.","card":None} if not item else {"message":f"Here is skill “{item['name']}”.","card":skill_card(item)}
+    m=re.match(r"^(?:activate|enable)\s+skill\s+(.+)$",text,re.I)
+    if m:
+        try:item=set_workflow_skill_status(m.group(1).strip(' .?!\"“”'),"active")
+        except ValueError:return None
+        return {"message":f"Activated reusable skill “{item['name']}”.","card":skill_card(item)}
+    m=re.match(r"^(?:pause|disable)\s+skill\s+(.+)$",text,re.I)
+    if m:
+        item=get_workflow_skill(m.group(1).strip(' .?!\"“”'))
+        if item:
+            item=set_workflow_skill_status(item["id"],"paused");return {"message":f"Paused reusable skill “{item['name']}”.","card":skill_card(item)}
+    m=re.match(r"^(?:delete|remove)\s+skill\s+(.+)$",text,re.I)
+    if m:
+        item=get_workflow_skill(m.group(1).strip(' .?!\"“”'))
+        if item:
+            deleted=delete_workflow_skill(item["id"]);return {"message":f"Deleted reusable skill “{deleted['name']}”.","card":{"type":"workflow_skill_deleted","id":deleted["id"],"name":deleted["name"]}}
+    m=re.match(r"^(?:create|make)\s+(?:a\s+)?skill\s+(?:called|named)\s+(.+?)\s*:\s*(.+)$",text,re.I)
+    if m:
+        name=m.group(1).strip(' \"“”');body=m.group(2).strip();steps=[x.strip() for x in re.split(r"\s*;\s*|\s*->\s*",body) if x.strip()]
+        item=create_workflow_skill(name=name,description=body,when_to_use=f"Use when the user asks for {name}.",steps=steps,expected_output=f"Complete {name} and return the verified result.",approval_boundaries=["Use Agentie's normal approval path for consequential actions."],status="draft");return {"message":f"Created draft reusable skill “{item['name']}”. Review it, then activate it when ready.","card":skill_card(item)}
+    return None
+
 def route_skill_command(message:str)->dict[str,Any]|None:
     text=" ".join(message.strip().split());lower=text.lower().strip(" .?!")
     access=_global_access_command(text)
     if access is not None:return access
+    workflow=_workflow_skill_command(text,lower)
+    if workflow is not None:return workflow
     visual=try_visual_request("",message)
     if visual is not None:return visual
     native=route_native_last30days(message)
@@ -116,23 +140,24 @@ def route_skill_command(message:str)->dict[str,Any]|None:
             except Exception:return {"message":"Web search is temporarily unavailable.","card":None}
             card=source_card(query,sources,"",0);card["synthesis_unavailable"]=True;return {"message":_friendly_synthesis_failure(exc),"card":card}
     if lower in {"skills","show skills","list skills","my skills"}:
-        items=list_skills();return {"message":f"Agentie has {len(items)} registered skill(s).","card":{"type":"skills","items":items}}
+        items=list_skills();return {"message":f"Agentie has {len(items)} registered capability/skill item(s).","card":{"type":"skills","items":items}}
+    # Legacy declarative syntax remains supported for backwards compatibility.
     m=re.match(r"^(?:create|make|add)\s+(?:a\s+)?skill(?:\s+called|\s+named)?\s+(.+?)\s+(?:for|usable by)\s+([a-z*, ]+?)\s+(?:with|using|that has)\s+(?:capabilities?\s+)?(.+)$",text,re.I)
     if m:
         name=m.group(1).strip(' \"“”');agents=[x.strip().lower() for x in re.split(r"[,/]|\band\b",m.group(2),flags=re.I) if x.strip()];caps=[x.strip().lower().replace(" ","_") for x in re.split(r"[,/]|\band\b",m.group(3),flags=re.I) if x.strip()]
-        try:item=create_skill_manifest(name,name,f"Custom declarative skill: {name}",agents,caps)
+        try:item=create_skill_manifest(name,name,f"Custom declarative capability group: {name}",agents,caps)
         except ValueError as exc:return {"message":str(exc),"card":None}
-        return {"message":f"Created declarative skill “{item['name']}”. It can group existing capabilities but will not auto-load arbitrary code.","card":{"type":"skill",**item}}
+        return {"message":f"Created declarative capability group “{item['name']}”.","card":{"type":"skill",**item}}
     m=re.match(r"^(?:enable|turn on)\s+(?:skill\s+)?(.+)$",text,re.I)
     if m:
         sid=m.group(1).strip().lower()
         try:item=set_skill_enabled(sid,True)
-        except KeyError:return {"message":"I couldn't find that skill.","card":None}
+        except (KeyError,ValueError):return {"message":"I couldn't find that skill or capability.","card":None}
         return {"message":f"Enabled {item['name']}.","card":{"type":"skill",**item}}
     m=re.match(r"^(?:disable|turn off)\s+(?:skill\s+)?(.+)$",text,re.I)
     if m:
         sid=m.group(1).strip().lower()
         try:item=set_skill_enabled(sid,False)
-        except KeyError:return {"message":"I couldn't find that skill.","card":None}
+        except (KeyError,ValueError):return {"message":"I couldn't find that skill or capability.","card":None}
         return {"message":f"Disabled {item['name']}.","card":{"type":"skill",**item}}
     return None
