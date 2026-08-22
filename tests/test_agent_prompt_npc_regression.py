@@ -62,8 +62,12 @@ class AgentPromptNPCRegressionTests(unittest.TestCase):
         runner=Path('agentie/core/runner.py').read_text(encoding='utf-8');assistant=Path('agentie/agents/assistant.py').read_text(encoding='utf-8')
         self.assertIn('try_npc_response',runner);self.assertIn('persistent_instructions',runner)
         self.assertLess(runner.index('try_npc_response'),runner.index('get_provider_info()'))
-        self.assertIn('persistent_instructions: str | None = None',assistant)
+        # Assert the behavior contract, not whitespace/style in the function signature.
+        self.assertIn('def build_assistant',assistant)
+        self.assertIn('persistent_instructions',assistant)
+        self.assertIn('persistent_agent',assistant)
         self.assertIn('Persistent identity, rules, memory preferences',assistant)
+        self.assertIn('tools_for_persistent_agent(persistent_agent)',assistant)
 
 
 if __name__=='__main__':unittest.main()
