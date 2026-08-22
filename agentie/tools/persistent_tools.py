@@ -20,15 +20,35 @@ def _add(tools,extra):
     return tools
 
 
+def _plugin_inspect_tool(agent:dict[str,Any]):
+    @function_tool
+    async def inspect_plugin(server: str) -> str:
+        """Inspect one real MCP/plugin granted to this agent before using it.
+
+        Returns discovered tool names, descriptions, and input schemas. Never guess
+        a plugin tool name when this inspection can discover the provider contract.
+        """
+        server=str(server or "").strip()
+        if not server:return "Plugin server is required."
+        if not mcp_allowed(agent,server):return f"{agent.get('name') or 'This agent'} is not allowed to use MCP/plugin '{server}'."
+        try:info=await inspect_server(server)
+        except Exception as exc:return f"Could not inspect plugin '{server}': {str(exc)[:500]}"
+        tools=[]
+        for item in info.get("tools") or []:
+            tools.append({"name":item.get("name"),"description":item.get("description"),"input_schema":item.get("input_schema") or {}})
+        return json.dumps({"server":server,"tools":tools},ensure_ascii=False)
+    return inspect_plugin
+
+
 def _plugin_tool(agent:dict[str,Any]):
     @function_tool
     async def use_plugin(server: str, tool: str, arguments_json: str = "{}") -> str:
         """Use one real MCP/plugin granted to this agent.
 
-        First inspect the provider's tools when needed, then call this with the exact
-        server name, exact tool name, and a JSON object string for arguments.
-        Read-only MCP tools can run automatically. Consequential tools create the
-        normal Agentie approval request and must be retried after approval.
+        Inspect the provider first when needed, then call this with the exact server
+        name, exact tool name, and JSON-object arguments. Read-only MCP tools can
+        run automatically. Consequential tools create the normal Agentie approval
+        request and must be retried only after approval.
         """
         server=str(server or "").strip();tool=str(tool or "").strip()
         if not server or not tool:return "Plugin server and tool are required."
@@ -50,6 +70,24 @@ def _plugin_tool(agent:dict[str,Any]):
     return use_plugin
 
 
+def _delegate_tool(agent:dict[str,Any]):
+    @function_tool
+    async def delegate_to_agent(agent_name: str, task: str, thread_id: str = "") -> str:
+        """Delegate bounded work to another existing Agentie agent.
+
+        This creates a real Team Job and a visible Agent Chat message. Use only when
+        this agent has explicit delegation permission and another configured agent
+        is a better owner for the bounded task. The target keeps its own private
+        memory and permissions; only the task/result are shared through the thread.
+        """
+        try:
+            from agentie.core.agent_threads import agent_to_agent_task
+            result=agent_to_agent_task(str(agent.get("id") or agent.get("name") or ""),agent_name,task,thread_id or None)
+        except Exception as exc:return f"Could not delegate to {agent_name}: {str(exc)[:700]}"
+        return json.dumps({"status":"started","team_job_id":result["job"]["id"],"thread_id":result["thread"]["id"],"from_agent":result["sender"]["name"],"to_agent":result["target"]["name"],"task":result["job"]["task"],"message":"The target agent is working in a visible Agent Chat. Do not claim completion until its real result returns."},ensure_ascii=False)
+    return delegate_to_agent
+
+
 def tools_for_persistent_agent(agent:dict[str,Any])->list:
     """Build model tools from effective grants, never from a job-title class."""
     tools=[get_current_utc_time,request_approval,list_approvals]
@@ -62,5 +100,6 @@ def tools_for_persistent_agent(agent:dict[str,Any])->list:
     if skill_allowed(agent,"planning"):_add(tools,registry.WORK_TOOLS)
     if skill_allowed(agent,"github"):_add(tools,[registry.github_repo_info,registry.github_read_file])
     if skill_allowed(agent,"browser-automation"):_add(tools,[registry.browser_read_page])
-    if any(mcp_allowed(agent,str(server.get("name") or "")) for server in list_servers()):tools.append(_plugin_tool(agent))
+    if bool((agent.get("permissions") or {}).get("delegate")):tools.append(_delegate_tool(agent))
+    if any(mcp_allowed(agent,str(server.get("name") or "")) for server in list_servers()):tools.extend([_plugin_inspect_tool(agent),_plugin_tool(agent)])
     return tools
