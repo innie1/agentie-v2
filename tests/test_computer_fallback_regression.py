@@ -30,6 +30,17 @@ class ComputerFallbackRegressionTests(unittest.TestCase):
         self.assertEqual(item['url'],'https://mail.google.com')
         self.assertFalse(item['consequential'])
 
+    def test_agentmail_prevents_email_computer_fallback(self):
+        with patch.object(browser_monitor,'_connected_plugin_names',return_value={'agentmail'}):
+            self.assertIsNone(browser_monitor._service_for_task('Check my email'))
+            self.assertIsNone(browser_monitor._service_for_task('Read my Gmail inbox'))
+
+    def test_email_without_connected_capability_still_has_computer_fallback(self):
+        with patch.object(browser_monitor,'_connected_plugin_names',return_value=set()):
+            item=browser_monitor._service_for_task('Check my email')
+        self.assertIsNotNone(item)
+        self.assertEqual(item['service'],'gmail')
+
     def test_use_computer_command_uses_existing_fallback_executor(self):
         async def scenario():
             with patch.object(browser_monitor,'_launch_computer_fallback',new=AsyncMock(return_value={'message':'ready','card':{'type':'desktop_view','mode':'wsl'}})) as launch:
