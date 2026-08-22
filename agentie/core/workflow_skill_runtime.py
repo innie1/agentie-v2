@@ -96,7 +96,7 @@ def _new_run(skill:dict[str,Any],agent:dict[str,Any],inputs:dict[str,Any]|None,r
 def _event(run:dict[str,Any])->None:
     try:
         from agentie.core.automation_events import publish_event
-        publish_event(f"skill_run.{run.get('status')}",{k:run.get(k) for k in ("id","skill_id","skill_name","agent_id","agent_name","status","result","error")},source="workflow_skill_runtime",dedupe_key=f"skillrun:{run.get('id')}:{run.get('status')}")
+        publish_event(f"skill_run.{run.get('status')}",{k:run.get(k) for k in ("id","skill_id","skill_name","agent_id","agent_name","status","result","error","source","requested_by")},source="workflow_skill_runtime",dedupe_key=f"skillrun:{run.get('id')}:{run.get('status')}")
     except Exception:pass
 
 def skill_run_note(run:dict[str,Any])->dict[str,Any]:
