@@ -9,6 +9,7 @@ from fastapi.responses import Response
 from agentie.core import agent_threads
 from agentie.core.agent_chat_presence import available_agents, connected_thread, create_group_chat, list_connected_threads, set_thread_owner
 from agentie.core.google_workspace_events import add_drive_watch, bridge_status, poll_enabled_sources, remove_drive_watch, start_google_workspace_event_bridge, update_settings
+from agentie.core.model_routing import routing_status, set_mode
 from agentie.core.skill_marketplace import assign_marketplace_item, install_marketplace_item, search_marketplace, share_installed_skill
 
 router = APIRouter()
@@ -17,6 +18,12 @@ router = APIRouter()
 def _frontend_script(name: str) -> Response:
     path = Path(__file__).resolve().parents[2] / "frontend" / name
     return Response(path.read_text(encoding="utf-8"), media_type="application/javascript", headers={"Cache-Control": "no-store"})
+
+
+def _frontend_bundle(*names: str) -> Response:
+    frontend = Path(__file__).resolve().parents[2] / "frontend"
+    content = "\n".join((frontend / name).read_text(encoding="utf-8") for name in names)
+    return Response(content, media_type="application/javascript", headers={"Cache-Control": "no-store"})
 
 
 async def _json(request: Request) -> dict[str, Any]:
@@ -44,9 +51,30 @@ async def platform_permission_guard_js():
     return _frontend_script("platform_permission_guard.js")
 
 
+@router.get("/platform-model-router.js")
+async def platform_model_router_js():
+    return _frontend_script("model_router.js")
+
+
 @router.get("/platform-next4.js")
 async def platform_next4_js():
-    return _frontend_script("platform_next4.js")
+    # Keep one connected UI loader so existing /platform.js bootstrap remains
+    # stable while this additive model selector ships with the same surface.
+    return _frontend_bundle("platform_next4.js", "model_router.js")
+
+
+@router.get("/platform/model-routing/status")
+async def platform_model_routing_status(verify: bool = True):
+    return routing_status(verify_local=verify)
+
+
+@router.post("/platform/model-routing/mode")
+async def platform_model_routing_mode(request: Request):
+    data = await _json(request)
+    try:
+        return set_mode(str(data.get("mode") or ""))
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
 
 
 @router.get("/platform/agents")
