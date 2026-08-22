@@ -12,6 +12,8 @@ from agentie.core.team_orchestrator import create_team_job,get_team_job,start_te
 
 _CONTROLLERS:dict[str,threading.Thread]={};_LOCK=threading.Lock()
 _ACTION=re.compile(r"^(?:research|find|compare|investigate|analyze|analyse|write|draft|create|make|build|implement|develop|code|test|verify|review|check|design|plan|organize|organise|contact|email|send|prepare|calculate|update|publish|post|summarize|summarise)\b",re.I)
+_ARTIFACT_RE=re.compile(r"\b(?:pdf|docx|xlsx|pptx|powerpoint|slide\s*deck|slides?|spreadsheet|excel|word\s+document|csv)\b",re.I)
+_ARTIFACT_CREATE_RE=re.compile(r"\b(?:create|make|generate|write|prepare|build|export|produce|turn|convert)\b",re.I)
 
 def _active_manager(session_id:str|None)->dict[str,Any]|None:
     m=re.match(r"^agent:(agt_[a-z0-9]+):",str(session_id or ""),re.I)
@@ -25,6 +27,17 @@ def _advice_only(goal:str)->bool:
     proceed=bool(re.search(r"\b(?:go ahead|do it|proceed|start now|execute|make it happen|carry it out)\b",low))
     return advice and not proceed
 
+def _artifact_compound_request(goal:str)->bool:
+    """Keep file-producing multi-step workflows on Agentie's artifact/job engine.
+
+    The generic configured-agent planner coordinates ownership. It must not steal
+    compound requests whose final deliverable is a real PDF/DOCX/XLSX/PPTX/etc.,
+    because the existing job engine owns artifact creation, progress and output.
+    """
+    text=" ".join(str(goal or "").strip().split())
+    if not (_ARTIFACT_RE.search(text) and _ARTIFACT_CREATE_RE.search(text)):return False
+    return bool(re.search(r"\b(?:then|after|and then|after that)\b|;",text,re.I))
+
 def _split_goal(goal:str)->list[str]:
     clean=" ".join(str(goal or "").strip().split())
     if not clean:return []
@@ -36,6 +49,7 @@ def _split_goal(goal:str)->list[str]:
 
 def build_autopilot_plan(goal:str,manager:dict[str,Any])->dict[str,Any]|None:
     if not bool((manager.get("permissions") or {}).get("delegate")) or _advice_only(goal):return None
+    if _artifact_compound_request(goal):return None
     clauses=_split_goal(goal)
     if len(clauses)<2:return None
     steps=[]
