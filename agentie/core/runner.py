@@ -53,6 +53,18 @@ def _cooldown_error(info:dict)->RuntimeError|None:
     return _ProviderCooldownError(f"{friendly} Agentie is temporarily suppressing repeated provider calls for about {remaining} more second(s).")
 
 
+def _npc_shortcuts_allowed(session_id:str|None)->bool:
+    """NPC shortcuts are only for real user-facing conversation sessions.
+
+    Team/group collaboration uses internal ``handoff:`` sessions containing
+    orchestration instructions. Feeding those generated prompts to the NPC
+    preference learner can mistake internal wording for a user preference and
+    return an acknowledgement instead of actually doing/replying to the work.
+    """
+    value=str(session_id or "")
+    return not (value.startswith("handoff:") or ":handoff:" in value)
+
+
 async def _invoke_provider(provider_info:dict,agent_type:str,effective_message:str,role_info:dict,persistent_instructions:str|None,persistent_agent:dict|None):
     mcp_url=os.getenv("AGENTIE_MCP_URL","").strip()
     if mcp_url and (persistent_agent or str(role_info.get("base")) in {"general","manager"}):
@@ -80,7 +92,11 @@ async def run_agent(message:str,agent_type:str="general",session_id:str|None=Non
     if not trace_id:trace_id=start_trace(session_id,agent_type,message);own_trace=True
     original_message=message;persistent_agent=agent_from_session(session_id);persistent_instructions=None
     if persistent_agent:
-        npc=try_npc_response(persistent_agent,message,session_id=session_id)
+        npc=None
+        if _npc_shortcuts_allowed(session_id):
+            npc=try_npc_response(persistent_agent,message,session_id=session_id)
+        else:
+            record_event("npc_bypass","internal_handoff",metadata={"session_id":session_id,"provider_calls":0})
         if npc is not None and npc.get("message") is not None:
             output=str(npc.get("message") or "")
             if session_id:add_message(session_id,"user",original_message,{"agent_type":"persistent","routed_by":"npc_brain","npc_confidence":npc.get("confidence")});add_message(session_id,"assistant",output,{"agent_type":"persistent","routed_by":"npc_brain","npc_confidence":npc.get("confidence")})
