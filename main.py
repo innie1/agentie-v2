@@ -29,12 +29,15 @@ from agentie.core.routine_worker import poll_routine_events,start_routine_worker
 from agentie.core.runner import run_agent
 from agentie.core.skill_registry import list_skills
 from agentie.core.specialty_router import maybe_auto_delegate
+from agentie.core.whatsapp_cloud import poll_events as poll_whatsapp_events
+from agentie.core.whatsapp_webhook import router as whatsapp_router
 from agentie.tools import local_utility_tools as local_utils
 from agentie.tools.approval_tools import resolve_approval
 from agentie.tools.advanced_utility_tools import SCHEDULES
 from agentie.tools.productivity_tools import REMINDERS
 
 app=FastAPI(title="Agentie API",version="1.10.1",description="Local-first Agentie runtime with observability, cost tracking, memory, routines, jobs, RAG, browser monitoring, MCP, plugins, skills and local artifact generation")
+app.include_router(whatsapp_router)
 FRONTEND_DIR=Path(__file__).parent/"frontend";FRONTEND_FILE=FRONTEND_DIR/"index.html";CARDS_JS=FRONTEND_DIR/"cards.js";EVENTS_JS=FRONTEND_DIR/"events.js";UPLOAD_JS=FRONTEND_DIR/"upload.js";PLUGINS_JS=FRONTEND_DIR/"plugins.js";PLUGIN_SETUP_JS=FRONTEND_DIR/"plugin_setup.js";PLUGIN_ACCESS_JS=FRONTEND_DIR/"plugin_access.js";BROWSER_SCREEN_JS=FRONTEND_DIR/"browser_screen.js";UI_UPGRADE_JS=FRONTEND_DIR/"ui_upgrade.js"
 class AgentRequest(BaseModel):
     message:str=Field(min_length=1,max_length=20_000);agent_type:str=Field(default="general",pattern="^(general|research|coding|manager|github)$");session_id:str|None=Field(default=None,max_length=200)
@@ -115,7 +118,7 @@ async def startup_event():apply_all_credentials();start_routine_worker()
 @app.get("/")
 async def chat_ui():
     if not FRONTEND_FILE.exists():raise HTTPException(404,"Frontend not found.")
-    html=FRONTEND_FILE.read_text(encoding="utf-8")+'\n<script src="/cards.js?v=201"></script>\n<script src="/events.js?v=201"></script>\n<script src="/upload.js?v=201"></script>\n<script src="/plugins.js?v=206"></script>\n<script src="/plugin-setup.js?v=206"></script>\n<script src="/plugin-access.js?v=203"></script>\n<script src="/browser-screen.js?v=201"></script>\n<script src="/ui-upgrade.js?v=203"></script>\n';return HTMLResponse(html,headers={"Cache-Control":"no-store, no-cache, must-revalidate, max-age=0"})
+    html=FRONTEND_FILE.read_text(encoding="utf-8")+'\n<script src="/cards.js?v=201"></script>\n<script src="/events.js?v=201"></script>\n<script src="/upload.js?v=201"></script>\n<script src="/plugins.js?v=207"></script>\n<script src="/plugin-setup.js?v=207"></script>\n<script src="/plugin-access.js?v=203"></script>\n<script src="/browser-screen.js?v=201"></script>\n<script src="/ui-upgrade.js?v=203"></script>\n';return HTMLResponse(html,headers={"Cache-Control":"no-store, no-cache, must-revalidate, max-age=0"})
 @app.get("/cards.js")
 async def cards_js():return Response(CARDS_JS.read_text(encoding="utf-8"),media_type="application/javascript",headers={"Cache-Control":"no-store"})
 @app.get("/events.js")
@@ -146,6 +149,8 @@ async def plugin_setup_save(server_name:str,request:PluginSetupUpdate):
     if not get_server(server_name):raise HTTPException(404,"MCP server is not registered.")
     try:state=save_credentials(server_name,request.values)
     except ValueError as exc:raise HTTPException(400,str(exc)) from exc
+    if state.get("requires_credentials") and not state.get("configured"):
+        return {"connected":False,"message":"Credentials saved, but required setup fields are still missing.","setup":state}
     if state.get("oauth_supported"):
         return {"connected":False,"oauth_required":True,"message":"Credentials saved. Connect your account to finish OAuth approval.","setup":state}
     try:
@@ -162,6 +167,9 @@ async def plugin_connect(server_name:str):
 @app.post("/plugins/test/{server_name}")
 async def plugin_test(server_name:str):
     if not get_server(server_name):raise HTTPException(404,"MCP server is not registered.")
+    state=public_setup_state(server_name)
+    if state.get("requires_credentials") and not state.get("configured"):
+        return {"connected":False,"message":f"{server_name} still needs required setup fields.","setup":state}
     try:
         await inspect_server(server_name)
         return {"connected":True,"message":f"Connected to {server_name}.","setup":public_setup_state(server_name)}
@@ -255,7 +263,7 @@ async def poll_local_events():
             if _schedule_due(item,now):events.append({"message":f"Scheduled reminder: {item.get('text','')}","card":{"type":"schedule",**item}});item["last_fired_at"]=now.isoformat(timespec="seconds");changed=True
         except Exception:continue
     if changed:_save(SCHEDULES,schedules)
-    events.extend(poll_routine_events());return {"events":events}
+    events.extend(poll_routine_events());events.extend(poll_whatsapp_events());return {"events":events}
 @app.post("/agent/run",response_model=AgentResponse)
 async def agent_run(request:AgentRequest,http_request:Request):
     trace_id=None;failed=None
