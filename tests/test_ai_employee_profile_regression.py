@@ -94,8 +94,11 @@ class AIEmployeeProfileRegressionTests(unittest.TestCase):
         self.assertIn("Personality and working style: Friendly, professional, proactive.", prompt)
         self.assertIn("Primary goal: Increase sales.", prompt)
         self.assertIn("Follow up leads", prompt)
-        self.assertIn("make recommendations, flag risks, and respectfully disagree", prompt)
-        self.assertIn("facts from recommendations/opinions", prompt)
+        self.assertIn("make a recommendation, flag meaningful risks, and respectfully disagree", prompt)
+        self.assertIn("FACTS are supported by known context or verified evidence", prompt)
+        self.assertIn("OPINIONS are your role-based judgment", prompt)
+        self.assertIn("RECOMMENDATIONS are the action or option you advise", prompt)
+        self.assertIn("RISKS/UNCERTAINTY", prompt)
 
     def test_generated_and_uploaded_avatars_are_real_persistent_modes(self):
         agent = agent_registry.create_agent("Ben", "Sales", "general")["agent"]
