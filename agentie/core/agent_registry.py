@@ -13,6 +13,9 @@ from agentie.core.deletion_registry import find_deleted, remember_deleted
 
 WORKSPACE = Path.cwd() / "workspace"
 AGENTS_FILE = WORKSPACE / "agents.json"
+# Legacy execution profiles remain an internal compatibility layer for the old
+# base-agent runtime. A user's persistent agent is defined by its configured job,
+# goal, responsibilities, skills, plugins and permissions instead.
 VALID_BASES = {"general", "research", "coding", "manager", "github"}
 VALID_AVATAR_KINDS = {"default", "generated", "uploaded"}
 AVATAR_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp"}
@@ -50,67 +53,21 @@ def _clean_list(values: list[str] | tuple[str, ...] | None, *, item_limit: int =
     return out
 
 
-def _generated_employee_profile(role: str, base: str, purpose: str = "") -> dict[str, Any]:
-    """Generate a useful employee profile locally from creation inputs, with no provider/API call."""
-    role_text = _clean(role, 160)
-    purpose_text = _clean(purpose, 800)
-    low = f"{role_text} {purpose_text} {base}".casefold()
-    personality = "Professional, proactive, reliable, and willing to recommend better approaches when useful"
-    goal = f"Perform the {role_text or 'assigned'} role reliably and help move the user's goals forward"
-    responsibilities = [
-        "Handle work that belongs to this role",
-        "Use available tools and skills when they improve the result",
-        "Report progress, risks, and useful recommendations clearly",
-    ]
-
-    if any(x in low for x in ("sales", "outreach", "business development", "lead generation", "crm")):
-        personality = "Friendly, professional, proactive, persuasive without being pushy"
-        goal = "Increase qualified sales opportunities and help convert them into revenue"
-        responsibilities = ["Find and qualify opportunities", "Follow up leads and customers", "Track sales context and recommend next actions"]
-    elif any(x in low for x in ("marketing", "social media", "content creator", "copywriter", "brand")):
-        personality = "Creative, observant, concise, audience-focused, and commercially aware"
-        goal = "Grow attention, trust, and demand for the user's products or business"
-        responsibilities = ["Plan and create useful marketing content", "Study audience and channel performance", "Recommend campaigns, positioning, and improvements"]
-    elif any(x in low for x in ("finance", "account", "bookkeep", "budget", "financial")):
-        personality = "Careful, analytical, practical, and risk-aware"
-        goal = "Improve financial visibility, discipline, and decision quality"
-        responsibilities = ["Track and analyze financial information", "Flag unusual costs, risks, and missing data", "Prepare budgets, comparisons, and recommendations"]
-    elif any(x in low for x in ("operations", "logistics", "inventory", "supply", "procurement")):
-        personality = "Organized, practical, proactive, and detail-oriented"
-        goal = "Keep operations efficient, reliable, and well coordinated"
-        responsibilities = ["Coordinate operational work and dependencies", "Identify bottlenecks and process risks", "Recommend practical improvements and follow-up actions"]
-    elif any(x in low for x in ("support", "customer service", "customer success", "helpdesk")):
-        personality = "Patient, clear, helpful, empathetic, and solution-oriented"
-        goal = "Resolve customer issues quickly while protecting trust and service quality"
-        responsibilities = ["Understand and resolve customer requests", "Escalate issues that need human or specialist attention", "Keep communication clear, respectful, and consistent"]
-    elif any(x in low for x in ("research", "analyst", "critic", "verifier", "market research")) or base == "research":
-        personality = "Curious, rigorous, skeptical, evidence-focused, and clear about uncertainty"
-        goal = "Produce reliable research and recommendations that improve decisions"
-        responsibilities = ["Gather and compare relevant evidence", "Separate facts from inference and uncertainty", "Summarize findings, risks, and recommended next steps"]
-    elif any(x in low for x in ("developer", "engineer", "coder", "cto", "programmer", "technical")) or base == "coding":
-        personality = "Systematic, practical, quality-focused, and protective of backwards compatibility"
-        goal = "Build and maintain reliable software with the smallest safe changes"
-        responsibilities = ["Inspect existing implementations before changing them", "Implement and test working software", "Identify technical risks and recommend maintainable solutions"]
-    elif any(x in low for x in ("chief of staff", "manager", "ceo", "director", "planner", "lead")) or base == "manager":
-        personality = "Organized, decisive, proactive, collaborative, and comfortable challenging weak plans"
-        goal = "Coordinate the AI company so the user's goals are turned into completed work"
-        responsibilities = ["Break goals into clear work and delegate appropriately", "Coordinate agents and combine their results", "Track progress, risks, missing capabilities, and decisions needing approval"]
-    elif any(x in low for x in ("email", "inbox", "mail")):
-        personality = "Professional, concise, tactful, attentive, and consistent"
-        goal = "Manage email communication accurately and help important conversations move forward"
-        responsibilities = ["Draft and organize email communication", "Identify important messages and required responses", "Use the agent's identity consistently and request approval before sending when required"]
-    elif "whatsapp" in low:
-        personality = "Friendly, responsive, concise, and customer-focused"
-        goal = "Handle WhatsApp conversations helpfully while escalating when needed"
-        responsibilities = ["Understand and route incoming WhatsApp messages", "Reply within granted permissions and platform rules", "Escalate unresolved or sensitive conversations to a human"]
-
-    if purpose_text:
-        goal = f"{goal}. Current focus: {purpose_text}"
-
+def _generated_employee_profile(role: str, base: str = "general", purpose: str = "") -> dict[str, Any]:
+    """Generate a neutral starting profile without guessing a predefined profession."""
+    job = _clean(role, 300) or "the work assigned by the user"
+    focus = _clean(purpose, 1200)
+    goal = f"Own and complete the work described by the user for: {job}"
+    if focus:
+        goal += f". Current focus: {focus}"
     return {
-        "personality": _clean(personality, 800),
-        "goal": _clean(goal, 1200),
-        "responsibilities": _clean_list(responsibilities, item_limit=400, max_items=30),
+        "personality": "Proactive, reliable, clear about uncertainty, and willing to recommend a better approach when evidence supports it",
+        "goal": _clean(goal, 1600),
+        "responsibilities": [
+            f"Own work that falls within: {job}",
+            "Use assigned skills, plugins, knowledge and tools only within granted permissions",
+            "Report progress, blockers, meaningful risks and recommendations clearly",
+        ],
         "company_identity": "",
     }
 
@@ -120,7 +77,10 @@ def _public(agent: dict[str, Any]) -> dict[str, Any]:
         "id": agent.get("id"),
         "name": agent.get("name"),
         "role": agent.get("role"),
-        "base": agent.get("base"),
+        # Kept for backward compatibility with old sessions; new UI does not
+        # expose this as the user's definition of the agent.
+        "base": agent.get("base", "general"),
+        "runtime_profile": agent.get("runtime_profile", agent.get("base", "general")),
         "purpose": agent.get("purpose", ""),
         "personality": agent.get("personality", ""),
         "goal": agent.get("goal", ""),
@@ -136,6 +96,8 @@ def _public(agent: dict[str, Any]) -> dict[str, Any]:
         "session_prefix": agent.get("session_prefix"),
         "skills": list(agent.get("skills") or []),
         "permissions": dict(agent.get("permissions") or {}),
+        "approval_policy": dict(agent.get("approval_policy") or {}),
+        "memory_policy": dict(agent.get("memory_policy") or {}),
         "created_at": agent.get("created_at"),
         "updated_at": agent.get("updated_at"),
     }
@@ -143,14 +105,7 @@ def _public(agent: dict[str, Any]) -> dict[str, Any]:
 
 def list_agents() -> list[dict[str, Any]]:
     items = [_public(item) for item in _load().get("agents", [])]
-    return sorted(
-        items,
-        key=lambda a: (
-            0 if a.get("pinned") else 1,
-            int(a.get("pin_order") or 10**9) if a.get("pinned") else 10**9,
-            str(a.get("created_at") or ""),
-        ),
-    )
+    return sorted(items, key=lambda a: (0 if a.get("pinned") else 1, int(a.get("pin_order") or 10**9) if a.get("pinned") else 10**9, str(a.get("created_at") or "")))
 
 
 def get_agent(agent_id_or_name: str) -> dict[str, Any] | None:
@@ -171,11 +126,18 @@ def create_agent(
     manager_id: str | None = None,
     skills: list[str] | None = None,
     permissions: dict[str, Any] | None = None,
+    *,
+    personality: str | None = None,
+    goal: str | None = None,
+    responsibilities: list[str] | tuple[str, ...] | None = None,
+    company_identity: str = "",
+    approval_policy: dict[str, Any] | None = None,
+    memory_policy: dict[str, Any] | None = None,
+    runtime_profile: str = "general",
 ) -> dict[str, Any]:
     name = _clean(name, 120)
-    role = _clean(role, 120) or "general"
-    base = base if base in VALID_BASES else "general"
-    purpose = _clean(purpose, 800)
+    role = _clean(role, 500) or "General ownership"
+    purpose = _clean(purpose, 1600)
     if not name:
         raise ValueError("Agent name is required.")
     data = _load()
@@ -188,19 +150,24 @@ def create_agent(
         if not manager:
             raise ValueError("Manager agent was not found.")
         manager_id = str(manager["id"])
-    generated = _generated_employee_profile(role, base, purpose)
+    generated = _generated_employee_profile(role, "general", purpose)
     now = datetime.now().astimezone().isoformat(timespec="seconds")
     agent_id = "agt_" + uuid.uuid4().hex[:10]
+    safe_permissions = {"delegate": False, "shared_company_memory": "read"}
+    safe_permissions.update(dict(permissions or {}))
     item = {
         "id": agent_id,
         "name": name,
         "role": role,
-        "base": base,
+        # New persistent agents always start from the neutral runtime. The old
+        # base value remains only so older stored data and base-agent code work.
+        "base": "general",
+        "runtime_profile": runtime_profile if runtime_profile in VALID_BASES else "general",
         "purpose": purpose,
-        "personality": generated["personality"],
-        "goal": generated["goal"],
-        "responsibilities": generated["responsibilities"],
-        "company_identity": generated["company_identity"],
+        "personality": _clean(personality if personality is not None else generated["personality"], 800),
+        "goal": _clean(goal if goal is not None else generated["goal"], 1600),
+        "responsibilities": _clean_list(responsibilities if responsibilities is not None else generated["responsibilities"], item_limit=500, max_items=30),
+        "company_identity": _clean(company_identity, 400),
         "avatar_kind": "default",
         "avatar_file": None,
         "manager_id": manager_id,
@@ -209,8 +176,10 @@ def create_agent(
         "pin_order": None,
         "memory_scope": f"agent:{agent_id}",
         "session_prefix": f"agent:{agent_id}:",
-        "skills": sorted(set(str(x).strip() for x in (skills or []) if str(x).strip())),
-        "permissions": permissions or {"delegate": base == "manager", "shared_company_memory": "read"},
+        "skills": sorted(set(str(x).strip().lower() for x in (skills or []) if str(x).strip())),
+        "permissions": safe_permissions,
+        "approval_policy": dict(approval_policy or {}),
+        "memory_policy": dict(memory_policy or {"private_context": True, "company_knowledge": "read", "project_knowledge": "scoped"}),
         "created_at": now,
         "updated_at": now,
     }
@@ -221,12 +190,9 @@ def create_agent(
 
 
 def set_agent_pinned(agent_id_or_name: str, pinned: bool = True) -> dict[str, Any]:
-    data = _load()
-    agents = data.setdefault("agents", [])
-    key = _clean(agent_id_or_name).casefold()
+    data = _load();agents = data.setdefault("agents", []);key = _clean(agent_id_or_name).casefold()
     target = next((x for x in agents if str(x.get("id", "")).casefold() == key or str(x.get("name", "")).casefold() == key), None)
-    if not target:
-        raise ValueError("Agent was not found.")
+    if not target:raise ValueError("Agent was not found.")
     now = datetime.now().astimezone().isoformat(timespec="seconds")
     if pinned:
         if not target.get("pinned"):
@@ -234,28 +200,20 @@ def set_agent_pinned(agent_id_or_name: str, pinned: bool = True) -> dict[str, An
             target["pin_order"] = (max(orders) if orders else 0) + 1
         target["pinned"] = True
     else:
-        target["pinned"] = False
-        target["pin_order"] = None
-    target["updated_at"] = now
-    data["updated_at"] = now
-    _save(data)
-    return _public(target)
+        target["pinned"] = False;target["pin_order"] = None
+    target["updated_at"] = now;data["updated_at"] = now;_save(data);return _public(target)
 
 
 def _owned_avatar_path(agent_id: str, filename: str | None) -> Path | None:
-    if not filename:
-        return None
+    if not filename:return None
     safe = Path(str(filename)).name
-    if safe != filename or not safe.startswith(f"agent-avatar-{agent_id}-"):
-        return None
+    if safe != filename or not safe.startswith(f"agent-avatar-{agent_id}-"):return None
     return WORKSPACE / "uploads" / safe
 
 
 def _delete_owned_avatar_file(agent: dict[str, Any]) -> int:
     path = _owned_avatar_path(str(agent.get("id") or ""), agent.get("avatar_file"))
-    if path and path.exists() and path.is_file():
-        path.unlink(missing_ok=True)
-        return 1
+    if path and path.exists() and path.is_file():path.unlink(missing_ok=True);return 1
     return 0
 
 
@@ -270,146 +228,103 @@ def update_agent_profile(
     goal: str | None = None,
     responsibilities: list[str] | tuple[str, ...] | None = None,
     company_identity: str | None = None,
+    approval_policy: dict[str, Any] | None = None,
+    memory_policy: dict[str, Any] | None = None,
+    runtime_profile: str | None = None,
 ) -> dict[str, Any]:
-    data = _load()
-    agents = data.setdefault("agents", [])
-    key = _clean(agent_id_or_name).casefold()
+    data = _load();agents = data.setdefault("agents", []);key = _clean(agent_id_or_name).casefold()
     target = next((x for x in agents if str(x.get("id", "")).casefold() == key or str(x.get("name", "")).casefold() == key), None)
-    if not target:
-        raise ValueError("Agent was not found.")
+    if not target:raise ValueError("Agent was not found.")
     if name is not None:
         clean = _clean(name, 120)
-        if not clean:
-            raise ValueError("Agent name is required.")
-        if any(x is not target and str(x.get("name", "")).casefold() == clean.casefold() for x in agents):
-            raise ValueError("Another agent already uses that name.")
+        if not clean:raise ValueError("Agent name is required.")
+        if any(x is not target and str(x.get("name", "")).casefold() == clean.casefold() for x in agents):raise ValueError("Another agent already uses that name.")
         target["name"] = clean
-    if role is not None:
-        target["role"] = _clean(role, 120) or "general"
-    if base is not None and base in VALID_BASES:
-        target["base"] = base
-    if purpose is not None:
-        target["purpose"] = _clean(purpose, 800)
-    if personality is not None:
-        target["personality"] = _clean(personality, 800)
-    if goal is not None:
-        target["goal"] = _clean(goal, 1200)
-    if responsibilities is not None:
-        target["responsibilities"] = _clean_list(responsibilities, item_limit=400, max_items=30)
-    if company_identity is not None:
-        target["company_identity"] = _clean(company_identity, 400)
-    target.setdefault("avatar_kind", "default")
-    target.setdefault("avatar_file", None)
-    target["updated_at"] = datetime.now().astimezone().isoformat(timespec="seconds")
-    data["updated_at"] = target["updated_at"]
-    _save(data)
-    return _public(target)
+    if role is not None:target["role"] = _clean(role, 500) or "General ownership"
+    # base is accepted for legacy callers but no longer inferred from a user's
+    # job title. Only an explicit valid compatibility value is stored.
+    if base is not None and base in VALID_BASES:target["base"] = base
+    if runtime_profile is not None and runtime_profile in VALID_BASES:target["runtime_profile"] = runtime_profile
+    if purpose is not None:target["purpose"] = _clean(purpose, 1600)
+    if personality is not None:target["personality"] = _clean(personality, 800)
+    if goal is not None:target["goal"] = _clean(goal, 1600)
+    if responsibilities is not None:target["responsibilities"] = _clean_list(responsibilities, item_limit=500, max_items=30)
+    if company_identity is not None:target["company_identity"] = _clean(company_identity, 400)
+    if approval_policy is not None:target["approval_policy"] = dict(approval_policy)
+    if memory_policy is not None:target["memory_policy"] = dict(memory_policy)
+    target.setdefault("avatar_kind", "default");target.setdefault("avatar_file", None);target.setdefault("runtime_profile", target.get("base", "general"));target.setdefault("approval_policy", {});target.setdefault("memory_policy", {})
+    target["updated_at"] = datetime.now().astimezone().isoformat(timespec="seconds");data["updated_at"] = target["updated_at"];_save(data);return _public(target)
 
 
 def set_agent_avatar(agent_id_or_name: str, kind: str, filename: str | None = None) -> dict[str, Any]:
     mode = _clean(kind, 40).casefold()
-    if mode not in VALID_AVATAR_KINDS:
-        raise ValueError("Avatar type must be default, generated, or uploaded.")
-    data = _load()
-    agents = data.setdefault("agents", [])
-    key = _clean(agent_id_or_name).casefold()
+    if mode not in VALID_AVATAR_KINDS:raise ValueError("Avatar type must be default, generated, or uploaded.")
+    data = _load();agents = data.setdefault("agents", []);key = _clean(agent_id_or_name).casefold()
     target = next((x for x in agents if str(x.get("id", "")).casefold() == key or str(x.get("name", "")).casefold() == key), None)
-    if not target:
-        raise ValueError("Agent was not found.")
-    previous_file = target.get("avatar_file")
-    next_file: str | None = None
+    if not target:raise ValueError("Agent was not found.")
+    previous_file = target.get("avatar_file");next_file: str | None = None
     if mode == "uploaded":
         safe = Path(str(filename or "")).name
-        if not safe or safe != str(filename or ""):
-            raise ValueError("Avatar upload was not found.")
+        if not safe or safe != str(filename or ""):raise ValueError("Avatar upload was not found.")
         owned = _owned_avatar_path(str(target["id"]), safe)
-        if not owned or not owned.exists() or not owned.is_file():
-            raise ValueError("Avatar upload was not found or is not owned by this agent.")
-        if owned.suffix.lower() not in AVATAR_SUFFIXES:
-            raise ValueError("Avatar must be an image file.")
-        if owned.stat().st_size > 8 * 1024 * 1024:
-            raise ValueError("Avatar image must be 8 MB or smaller.")
+        if not owned or not owned.exists() or not owned.is_file():raise ValueError("Avatar upload was not found or is not owned by this agent.")
+        if owned.suffix.lower() not in AVATAR_SUFFIXES:raise ValueError("Avatar must be an image file.")
+        if owned.stat().st_size > 8 * 1024 * 1024:raise ValueError("Avatar image must be 8 MB or smaller.")
         try:
-            with Image.open(owned) as image:
-                image.verify()
-        except Exception as exc:
-            raise ValueError("Avatar file is not a valid image.") from exc
+            with Image.open(owned) as image:image.verify()
+        except Exception as exc:raise ValueError("Avatar file is not a valid image.") from exc
         next_file = safe
-    target["avatar_kind"] = mode
-    target["avatar_file"] = next_file
-    target["updated_at"] = datetime.now().astimezone().isoformat(timespec="seconds")
-    data["updated_at"] = target["updated_at"]
-    _save(data)
+    target["avatar_kind"] = mode;target["avatar_file"] = next_file;target["updated_at"] = datetime.now().astimezone().isoformat(timespec="seconds");data["updated_at"] = target["updated_at"];_save(data)
     if previous_file and previous_file != next_file:
         old = _owned_avatar_path(str(target["id"]), previous_file)
-        if old and old.exists() and old.is_file():
-            old.unlink(missing_ok=True)
+        if old and old.exists() and old.is_file():old.unlink(missing_ok=True)
     return _public(target)
 
 
 def update_agent_manager(agent_id_or_name: str, manager_id_or_name: str | None) -> dict[str, Any]:
-    data = _load()
-    agents = data.setdefault("agents", [])
-    key = _clean(agent_id_or_name).casefold()
+    data = _load();agents = data.setdefault("agents", []);key = _clean(agent_id_or_name).casefold()
     target = next((x for x in agents if str(x.get("id", "")).casefold() == key or str(x.get("name", "")).casefold() == key), None)
-    if not target:
-        raise ValueError("Agent was not found.")
+    if not target:raise ValueError("Agent was not found.")
     manager_id = None
     if manager_id_or_name:
         manager = get_agent(manager_id_or_name)
-        if not manager:
-            raise ValueError("Manager agent was not found.")
-        if manager["id"] == target.get("id"):
-            raise ValueError("An agent cannot manage itself.")
+        if not manager:raise ValueError("Manager agent was not found.")
+        if manager["id"] == target.get("id"):raise ValueError("An agent cannot manage itself.")
         manager_id = manager["id"]
-    target["manager_id"] = manager_id
-    target["updated_at"] = datetime.now().astimezone().isoformat(timespec="seconds")
-    _save(data)
-    return _public(target)
+    target["manager_id"] = manager_id;target["updated_at"] = datetime.now().astimezone().isoformat(timespec="seconds");_save(data);return _public(target)
 
 
 def delete_agent(agent_id_or_name: str) -> dict[str, Any]:
-    """Permanently delete an agent once; repeated calls return an already-deleted result."""
-    data = _load()
-    agents = data.setdefault("agents", [])
-    key = _clean(agent_id_or_name).casefold()
-    target = next((x for x in agents if str(x.get("id", "")).casefold() == key or str(x.get("name", "")).casefold() == key), None)
-    deletion_file = WORKSPACE / "deletions.json"
+    """Permanently delete an agent and every Agentie-owned resource scoped to it."""
+    data = _load();agents = data.setdefault("agents", []);key = _clean(agent_id_or_name).casefold();target = next((x for x in agents if str(x.get("id", "")).casefold() == key or str(x.get("name", "")).casefold() == key), None);deletion_file = WORKSPACE / "deletions.json"
     if not target:
         tombstone = find_deleted("agent", key, deletion_file)
-        if tombstone:
-            return {"deleted": False, "already_deleted": True, "agent": {"id": tombstone.get("entity_id"), "name": tombstone.get("name")}, "deleted_at": tombstone.get("deleted_at")}
+        if tombstone:return {"deleted": False, "already_deleted": True, "agent": {"id": tombstone.get("entity_id"), "name": tombstone.get("name")}, "deleted_at": tombstone.get("deleted_at")}
         raise ValueError("Agent was not found.")
-    public = _public(target)
-    agent_id = str(target["id"])
-    now = datetime.now().astimezone().isoformat(timespec="seconds")
+    public = _public(target);agent_id = str(target["id"]);now = datetime.now().astimezone().isoformat(timespec="seconds")
     for item in agents:
-        if item.get("manager_id") == agent_id:
-            item["manager_id"] = None
-            item["updated_at"] = now
-    data["agents"] = [x for x in agents if x is not target]
-    data["updated_at"] = now
-    _save(data)
+        if item.get("manager_id") == agent_id:item["manager_id"] = None;item["updated_at"] = now
+    data["agents"] = [x for x in agents if x is not target];data["updated_at"] = now;_save(data)
     from agentie.core.memory_store import purge_agent_memory
     from agentie.core.agent_prompt import purge_instruction_profile
-    purged = purge_agent_memory(str(target.get("memory_scope") or f"agent:{agent_id}"), str(target.get("session_prefix") or f"agent:{agent_id}:"))
-    instruction_profiles = purge_instruction_profile(agent_id)
-    removed = _delete_owned_avatar_file(target)
+    purged = purge_agent_memory(str(target.get("memory_scope") or f"agent:{agent_id}"), str(target.get("session_prefix") or f"agent:{agent_id}:"));instruction_profiles = purge_instruction_profile(agent_id);removed = _delete_owned_avatar_file(target)
+    routine_count=0;thread_count=0
+    try:
+        from agentie.core.routine_engine import delete_routines_for_agent
+        routine_count=delete_routines_for_agent(agent_id)
+    except Exception:pass
+    try:
+        from agentie.core.agent_threads import remove_agent_from_threads
+        thread_count=remove_agent_from_threads(agent_id)
+    except Exception:pass
     for path in (WORKSPACE / "agents" / agent_id, WORKSPACE / "agent_data" / agent_id):
-        if path.exists():
-            shutil.rmtree(path, ignore_errors=True)
-            removed += 1
+        if path.exists():shutil.rmtree(path, ignore_errors=True);removed += 1
     remember_deleted("agent", agent_id, public.get("name"), {"role": public.get("role")}, deletion_file)
-    return {"deleted": True, "already_deleted": False, "agent": public, "purged": {**purged, "instruction_profiles": instruction_profiles, "directories": removed}}
+    return {"deleted": True, "already_deleted": False, "agent": public, "purged": {**purged, "instruction_profiles": instruction_profiles, "directories": removed, "routines": routine_count, "thread_memberships": thread_count}}
 
 
 def hierarchy() -> list[dict[str, Any]]:
-    items = list_agents()
-    by_manager: dict[str | None, list[dict[str, Any]]] = {}
-    for item in items:
-        by_manager.setdefault(item.get("manager_id"), []).append(item)
-
-    def build(agent: dict[str, Any]) -> dict[str, Any]:
-        return {**agent, "reports": [build(child) for child in by_manager.get(agent["id"], [])]}
-
+    items = list_agents();by_manager: dict[str | None, list[dict[str, Any]]] = {}
+    for item in items:by_manager.setdefault(item.get("manager_id"), []).append(item)
+    def build(agent: dict[str, Any]) -> dict[str, Any]:return {**agent, "reports": [build(child) for child in by_manager.get(agent["id"], [])]}
     return [build(item) for item in by_manager.get(None, [])]
