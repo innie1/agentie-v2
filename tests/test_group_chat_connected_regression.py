@@ -5,7 +5,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import main
-from agentie.core import agent_chat_presence,agent_registry,agent_threads,team_orchestrator,whatsapp_webhook
+from agentie.core import agent_chat_presence,agent_registry,agent_threads,team_orchestrator
 
 
 class ConnectedGroupChatRegressionTests(unittest.TestCase):
@@ -40,6 +40,13 @@ class ConnectedGroupChatRegressionTests(unittest.TestCase):
         agent_chat_presence.set_thread_owner(thread['id'],self.ada['id']);updated=agent_registry.get_agent(self.ada['id'])
         self.assertFalse(updated['permissions']['delegate'])
 
+    def test_removed_owner_is_cleared_without_deleting_the_chat(self):
+        thread=agent_chat_presence.create_group_chat('Ops',[self.ada['id'],self.ben['id']],self.ada['id'])
+        agent_threads.remove_agent_from_threads(self.ada['id'])
+        card=agent_chat_presence.connected_thread(agent_threads.get_thread(thread['id']))
+        self.assertIsNone(card['owner_agent_id']);self.assertIsNone(card['owner_agent_name'])
+        self.assertEqual(card['participants'],['Ben']);self.assertEqual(card['id'],thread['id'])
+
     def test_presence_comes_from_real_thread_linked_team_job(self):
         thread=agent_chat_presence.create_group_chat('Ops',[self.ada['id'],self.ben['id']])
         with patch.object(agent_threads,'start_team_job'):
@@ -63,7 +70,7 @@ class ConnectedGroupChatRegressionTests(unittest.TestCase):
 
     def test_next4_group_chat_ui_fetches_real_agents_and_uses_checkboxes_not_participant_prompt(self):
         text=Path('frontend/platform_next4.js').read_text(encoding='utf-8')
-        self.assertIn("/platform/agents",text);self.assertIn("/platform/agent-chats",text);self.assertIn('type="checkbox"',text)
+        self.assertIn('/platform/agents',text);self.assertIn('/platform/agent-chats',text);self.assertIn('type="checkbox"',text)
         self.assertNotIn("prompt('Participants",text);self.assertNotIn('Participants (comma-separated)',text)
         self.assertIn('Select at least two agents',text);self.assertIn('n4-presence-chip',text)
 
