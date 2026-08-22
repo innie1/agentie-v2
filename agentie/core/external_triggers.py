@@ -12,12 +12,19 @@ _NATIVE={
     "file.uploaded":"File uploaded to Agentie",
     "whatsapp.message.received":"Incoming WhatsApp Cloud API message",
     "plugin.tool.completed":"Connected plugin/MCP tool completed",
+    "email.received":"New Gmail message detected through connected Google Workspace",
+    "calendar.event.started":"Google Calendar event entered its start window",
+    "drive.file.changed":"Explicitly watched Google Drive file changed",
+    "drive.folder.changed":"Explicitly watched Google Drive folder changed",
 }
 _ALIASES={
     "file upload":"file.uploaded","file uploaded":"file.uploaded","new file":"file.uploaded",
     "whatsapp message":"whatsapp.message.received","incoming whatsapp message":"whatsapp.message.received",
     "email":"email.received","email arrives":"email.received","incoming email":"email.received","new email":"email.received",
-    "calendar event":"calendar.event.started","calendar event starts":"calendar.event.started",
+    "gmail":"email.received","gmail message":"email.received","new gmail":"email.received",
+    "calendar event":"calendar.event.started","calendar event starts":"calendar.event.started","google calendar event":"calendar.event.started",
+    "drive file changes":"drive.file.changed","google drive file changes":"drive.file.changed",
+    "drive folder changes":"drive.folder.changed","google drive folder changes":"drive.folder.changed",
 }
 
 def normalize_event_type(value:str)->str:
@@ -33,7 +40,7 @@ def publish_external_event(event_type:str,payload:dict[str,Any]|None=None,*,sour
 
 def webhook_security_state()->dict[str,Any]:
     token=bool(os.getenv("AGENTIE_AUTOMATION_WEBHOOK_TOKEN","").strip())
-    return {"token_configured":token,"when_unconfigured":"loopback_only","native_sources":[{"event_type":k,"label":v} for k,v in sorted(_NATIVE.items())],"webhook_event_prefix":"Any normalized event type, e.g. email.received or crm.lead.created"}
+    return {"token_configured":token,"when_unconfigured":"loopback_only","native_sources":[{"event_type":k,"label":v} for k,v in sorted(_NATIVE.items())],"webhook_event_prefix":"Any normalized event type, e.g. crm.lead.created"}
 
 def webhook_allowed(client_host:str|None,provided_token:str|None)->bool:
     expected=os.getenv("AGENTIE_AUTOMATION_WEBHOOK_TOKEN","").strip()
