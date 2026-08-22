@@ -9,10 +9,12 @@ from fastapi.responses import Response
 from agentie.core import agent_threads
 from agentie.core.agent_chat_presence import available_agents, connected_thread, create_group_chat, list_connected_threads, set_thread_owner
 from agentie.core.google_workspace_events import add_drive_watch, bridge_status, poll_enabled_sources, remove_drive_watch, start_google_workspace_event_bridge, update_settings
+from agentie.core.group_chat_policy import install_group_chat_policy
 from agentie.core.model_routing import routing_status, set_mode
 from agentie.core.skill_marketplace import assign_marketplace_item, install_marketplace_item, search_marketplace, share_installed_skill
 
 router = APIRouter()
+install_group_chat_policy()
 
 
 def _frontend_script(name: str) -> Response:
@@ -61,12 +63,17 @@ async def platform_chat_focus_guard_js():
     return _frontend_script("platform_chat_focus_guard.js")
 
 
+@router.get("/platform-group-chat-markdown.js")
+async def platform_group_chat_markdown_js():
+    return _frontend_script("group_chat_markdown.js")
+
+
 @router.get("/platform-next4.js")
 async def platform_next4_js():
-    # Keep one connected UI loader so existing /platform.js bootstrap remains stable.
-    # The focus guard preserves the live group-chat composer while polling refreshes
-    # messages/presence, and the model router remains additive on the same surface.
-    return _frontend_bundle("platform_next4.js", "platform_chat_focus_guard.js", "model_router.js")
+    # One connected UI bundle keeps group chat behavior additive: live composer
+    # focus guard, safe Markdown rendering, and model routing all share the same
+    # existing platform surface.
+    return _frontend_bundle("platform_next4.js", "platform_chat_focus_guard.js", "group_chat_markdown.js", "model_router.js")
 
 
 @router.get("/platform/model-routing/status")
