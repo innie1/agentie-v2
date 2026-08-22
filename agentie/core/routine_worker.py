@@ -43,17 +43,32 @@ async def _run_website_routine(routine:dict[str,Any],url:str,event:dict[str,Any]
         result=await capture_website(url,track_change=True);changed=bool(result.get("changed"));first=bool(result.get("first_check"));always=routine_always_show(str(routine.get("action") or ""));status="changed" if changed else "unchanged";record_run(routine["id"],None,status,{"event_id":(event or {}).get("id"),"trigger_type":routine.get("trigger_type","schedule")})
         if first or changed or always:_push({"message":f"Website routine: {routine['name']}. {result.get('message','')}","card":result.get("card")})
     except Exception as exc:record_run(routine["id"],None,"failed",{"event_id":(event or {}).get("id")});_push({"message":f"Website routine “{routine['name']}” failed: {exc}","card":None})
+def _browser_skill_status(result:dict[str,Any])->str:
+    explicit=str(result.get("status") or "").strip()
+    if explicit:return explicit
+    card=result.get("card") if isinstance(result.get("card"),dict) else {};ctype=str(card.get("type") or "");title=str(card.get("title") or "").casefold();message=str(result.get("message") or "").casefold()
+    if ctype=="browser_approval":return "awaiting_approval"
+    if "protected value" in message or "complete the protected field" in message:return "needs_input"
+    if "failed" in title or "failed:" in message:return "failed"
+    return "completed"
 async def _run_linked_skill(routine:dict[str,Any],event:dict[str,Any]|None=None)->None:
     skill_id=str(routine.get("skill_id") or "").strip()
     if not skill_id:return
     if not routine.get("owner_agent_id"):
         record_run(routine["id"],None,"failed",{"skill_id":skill_id,"event_id":(event or {}).get("id")});_push({"message":f"Routine “{routine['name']}” cannot run Skill {skill_id} until it has an owner agent.","card":None});return
     try:
-        from agentie.core.workflow_browser_runtime import _run_skill
-        payload=dict((event or {}).get("payload") or {});inputs={str(k):v for k,v in payload.items() if isinstance(v,(str,int,float,bool))}
-        invocation=skill_id
-        if inputs:invocation += " with inputs " + ", ".join(f"{k}={v}" for k,v in inputs.items())
-        result=await _run_skill(invocation,_routine_session(routine));status=str(result.get("status") or "completed")
+        from agentie.core.workflow_skills import get_workflow_skill
+        skill=get_workflow_skill(skill_id)
+        if not skill:raise ValueError(f"Skill {skill_id} was not found.")
+        payload=dict((event or {}).get("payload") or {});inputs={str(k):v for k,v in payload.items() if isinstance(v,(str,int,float,bool))};session=_routine_session(routine)
+        if skill.get("source_workflow_id"):
+            from agentie.core.workflow_browser_runtime import _run_skill
+            invocation=skill_id
+            if inputs:invocation += " with inputs " + ", ".join(f"{k}={v}" for k,v in inputs.items())
+            result=await _run_skill(invocation,session);status=_browser_skill_status(result)
+        else:
+            from agentie.core.workflow_skill_runtime import execute_workflow_skill
+            result=await execute_workflow_skill(skill_id,session,inputs=inputs,requested_by="routine",source=f"routine:{routine['id']}");status=str(result.get("status") or "completed")
         if status not in {"completed","failed","awaiting_approval","needs_input","needs_access","inactive","needs_agent"}:status="completed"
         record_run(routine["id"],None,status,{"skill_id":skill_id,"skill_run_id":((result.get("run") or {}).get("id")),"event_id":(event or {}).get("id"),"trigger_type":routine.get("trigger_type","schedule")});_push({"message":f"Routine “{routine['name']}” ran Skill {skill_id}. {result.get('message','')}","card":result.get("card")})
     except Exception as exc:record_run(routine["id"],None,"failed",{"skill_id":skill_id,"event_id":(event or {}).get("id")});_push({"message":f"Routine “{routine['name']}” Skill execution failed: {exc}","card":None})
