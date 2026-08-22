@@ -24,6 +24,7 @@ _DEFAULT_APPROVAL_POLICY={
 }
 _SCHEDULE_RE=re.compile(r"\b(?:every\s+(?:weekday|day|morning|afternoon|evening|monday|tuesday|wednesday|thursday|friday|saturday|sunday|\d+(?:\.\d+)?\s*(?:minutes?|mins?|hours?|hrs?))|daily|weekly)\b(?:\s+at\s+\d{1,2}(?::\d{2})?\s*(?:am|pm)?)?",re.I)
 _COORDINATE_RE=re.compile(r"\b(?:coordinate|delegate|manage\s+(?:the\s+)?team|oversee\s+(?:the\s+)?team|assign\s+work|manage\s+other\s+agents|chief\s+of\s+staff)\b",re.I)
+_REPORTING_RE=re.compile(r"\b(?:reports?\s+to|reporting\s+to|managed\s+by|work(?:s|ing)?\s+under|under\s+(?:the\s+)?management\s+of)\b",re.I)
 
 
 def _clean(value: str, limit: int = 1200) -> str:return " ".join(str(value or "").strip().split())[:limit]
@@ -67,11 +68,16 @@ def recommend_collaborators(description:str,limit:int=4)->list[dict[str,Any]]:
 
 
 def recommend_manager(description:str)->dict[str,Any]|None:
+    """Suggest a reporting relationship only when the user actually described one."""
+    if not _REPORTING_RE.search(str(description or "")):return None
     coordinators=[a for a in list_agents() if bool((a.get("permissions") or {}).get("delegate"))]
     if not coordinators:return None
-    ranked=sorted(((match_identity_score(description,a),a) for a in coordinators),key=lambda x:(-x[0],str(x[1].get("name") or "").casefold()))
+    low=str(description or "").casefold()
+    explicitly_named=[a for a in coordinators if str(a.get("name") or "").casefold() in low]
+    candidates=explicitly_named or coordinators
+    ranked=sorted(((match_identity_score(description,a),a) for a in candidates),key=lambda x:(-x[0],str(x[1].get("name") or "").casefold()))
     score,agent=ranked[0]
-    return {"id":agent["id"],"name":agent["name"],"job":agent.get("role"),"score":round(float(score),3),"reason":"This existing agent has explicit delegation authority; the title itself does not grant that authority."}
+    return {"id":agent["id"],"name":agent["name"],"job":agent.get("role"),"score":round(float(score),3),"reason":"The job description explicitly described a reporting relationship and this existing agent has delegation authority. The title itself does not grant that authority."}
 
 
 def routine_suggestions(description:str)->list[dict[str,Any]]:
