@@ -4,8 +4,9 @@ import shutil
 from pathlib import Path
 from typing import Any
 
+from agentie.core import agent_registry
 from agentie.core.agent_prompt import get_instruction_profile,set_manual_instructions
-from agentie.core.agent_registry import WORKSPACE,create_agent,get_agent,set_agent_avatar
+from agentie.core.agent_registry import create_agent,get_agent,set_agent_avatar
 from agentie.core.routine_engine import create_event_routine,create_routine,list_routines
 
 
@@ -30,21 +31,15 @@ def _clone_routines(source:dict[str,Any],target:dict[str,Any])->list[dict[str,An
 
 def _clone_avatar(source:dict[str,Any],target:dict[str,Any])->bool:
     kind=str(source.get("avatar_kind") or "default")
-    if kind=="generated":
-        set_agent_avatar(target["id"],"generated");return True
+    if kind=="generated":set_agent_avatar(target["id"],"generated");return True
     if kind!="uploaded" or not source.get("avatar_file"):return False
-    source_file=WORKSPACE/"uploads"/Path(str(source["avatar_file"])).name
+    root=agent_registry.WORKSPACE;source_file=root/"uploads"/Path(str(source["avatar_file"])).name
     if not source_file.exists() or not source_file.is_file():return False
-    suffix=source_file.suffix.lower();new_name=f"agent-avatar-{target['id']}-duplicate{suffix}";dest=WORKSPACE/"uploads"/new_name;dest.parent.mkdir(parents=True,exist_ok=True);shutil.copy2(source_file,dest);set_agent_avatar(target["id"],"uploaded",new_name);return True
+    suffix=source_file.suffix.lower();new_name=f"agent-avatar-{target['id']}-duplicate{suffix}";dest=root/"uploads"/new_name;dest.parent.mkdir(parents=True,exist_ok=True);shutil.copy2(source_file,dest);set_agent_avatar(target["id"],"uploaded",new_name);return True
 
 
 def duplicate_agent(source_id_or_name:str,new_name:str,*,copy_routines:bool=True)->dict[str,Any]:
-    """Duplicate configuration, not private memory/conversation history.
-
-    This mirrors the useful Grok Bot duplication boundary: profile/settings,
-    permissions, Skills, connected plugin grants, avatar, and routines can copy;
-    private conversation memory and automatically learned preferences do not.
-    """
+    """Duplicate configuration, not private memory/conversation history."""
     source=get_agent(source_id_or_name)
     if not source:raise ValueError("Agent to duplicate was not found.")
     new_name=" ".join(str(new_name or "").strip().split())[:120]
@@ -52,11 +47,8 @@ def duplicate_agent(source_id_or_name:str,new_name:str,*,copy_routines:bool=True
     result=create_agent(new_name,str(source.get("role") or "General ownership"),purpose=str(source.get("purpose") or ""),manager_id=source.get("manager_id"),skills=list(source.get("skills") or []),permissions=dict(source.get("permissions") or {}),personality=str(source.get("personality") or ""),goal=str(source.get("goal") or ""),responsibilities=list(source.get("responsibilities") or []),company_identity=str(source.get("company_identity") or ""),approval_policy=dict(source.get("approval_policy") or {}),memory_policy=dict(source.get("memory_policy") or {}))
     if not result.get("created"):return {"created":False,"agent":result["agent"],"routines":[],"avatar_copied":False}
     target=result["agent"]
-    # Copy explicit user-authored instructions only. Learned preferences and
-    # durable conversation memory remain separate for the new agent.
     profile=get_instruction_profile(source);manual=str(profile.get("manual_instructions") or "").strip()
     if manual:set_manual_instructions(target,manual)
-    avatar_copied=False
     try:avatar_copied=_clone_avatar(source,target)
     except Exception:avatar_copied=False
     routines=_clone_routines(source,target) if copy_routines else []
