@@ -13,7 +13,7 @@ class SkillsMCPCatalogRegressionTests(unittest.TestCase):
 
     def test_mcp_catalog_has_curated_sources_and_permissions(self):
         items={item["id"]:item for item in presets()}
-        for server_id in ("filesystem", "playwright", "github", "memory", "fetch", "git"):
+        for server_id in ("filesystem", "playwright", "github", "agentmail", "whatsapp", "google-workspace", "canva", "memory", "fetch", "git"):
             self.assertIn(server_id, items)
             self.assertEqual(items[server_id].get("source"), "curated")
             self.assertTrue(items[server_id].get("permission_groups"))
@@ -22,6 +22,13 @@ class SkillsMCPCatalogRegressionTests(unittest.TestCase):
         github={item["id"]:item for item in presets()}["github"]
         self.assertEqual(github.get("registry_name"), "io.github.github/github-mcp-server")
         self.assertIn("registry.modelcontextprotocol.io", github.get("registry_url", ""))
+
+    def test_whatsapp_catalog_uses_local_official_cloud_wrapper_not_whatsapp_web(self):
+        whatsapp={item["id"]:item for item in presets()}["whatsapp"]
+        self.assertIn("agentie.mcp_whatsapp_server", whatsapp.get("command", ""))
+        self.assertIn("webhooks", whatsapp.get("capabilities") or [])
+        self.assertNotIn("whatsapp web", whatsapp.get("description", "").lower())
+        self.assertEqual((whatsapp.get("setup") or {}).get("webhook_path"), "/webhooks/whatsapp")
 
     def test_catalog_does_not_auto_grant_or_auto_install(self):
         for item in presets():
