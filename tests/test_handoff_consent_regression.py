@@ -11,8 +11,8 @@ class HandoffConsentRegressionTests(unittest.TestCase):
         self.p_agents=patch.object(agent_registry,"AGENTS_FILE",root/"agents.json");self.p_agents.start()
         self.p_team=patch.object(team_orchestrator,"TEAM_FILE",root/"team_jobs.json");self.p_team.start()
         self.p_memory=patch.object(memory_store,"DB_PATH",root/"memory.sqlite3");self.p_memory.start()
-        self.alex=agent_registry.create_agent("Alex","CTO","manager")["agent"]
-        self.writer=agent_registry.create_agent("Writer","writer","general")["agent"]
+        self.alex=agent_registry.create_agent("Alex","Engineering owner",purpose="Own technical implementation and engineering architecture")["agent"]
+        self.writer=agent_registry.create_agent("Writer","Content and social media owner",purpose="Write social media posts, launch copy, blog posts and marketing content",responsibilities=["Write social media launch posts","Draft blog and campaign content"])["agent"]
         self.session=f"{self.alex['session_prefix']}main"
     def tearDown(self):
         self.p_memory.stop();self.p_team.stop();self.p_agents.stop();gc.collect()
@@ -31,15 +31,17 @@ class HandoffConsentRegressionTests(unittest.TestCase):
         self.assertEqual(result["card"]["type"],"agent_handoff");start.assert_called_once()
         self.assertEqual(len(team_orchestrator.list_team_jobs()),1)
         self.assertTrue(memory_store.get_context(self.session,"active_team_job_id",""))
-    def test_always_accept_persists_and_future_match_auto_routes(self):
+    def test_always_accept_persists_for_future_work_matching_same_configured_agent(self):
         specialty_router.maybe_auto_delegate("write a social media post",self.session)
         with patch.object(specialty_router,"start_team_job"):
             specialty_router.maybe_auto_delegate("Always accept handoff",self.session)
-        key=specialty_router._routing_key(self.alex["id"],"writing")
+        key=specialty_router._agent_preference_key(self.alex["id"],self.writer["id"])
         self.assertEqual(memory_store.get_memory("routing",key),self.writer["id"])
         with patch.object(specialty_router,"start_team_job"):
-            again=specialty_router.maybe_auto_delegate("draft a blog post",self.session)
+            again=specialty_router.maybe_auto_delegate("draft a blog post for the launch",self.session)
+        self.assertIsNotNone(again)
         self.assertEqual(again["card"]["type"],"agent_handoff")
+        self.assertEqual(again["card"]["to_agent"]["id"],self.writer["id"])
     def test_retry_that_retries_active_failed_handoff_locally(self):
         job=team_orchestrator.create_team_job("write the launch post",[self.writer],requested_by=self.alex["id"])
         def fail(j):
