@@ -16,10 +16,10 @@ class AgentCapabilityAccessRegressionTests(unittest.TestCase):
     def tearDown(self):
         agent_registry.AGENTS_FILE=self.old_agents;mcp_client.REGISTRY=self.old_mcp;agent_access.GLOBAL_ACCESS_FILE=self.old_global;self.temp.cleanup()
 
-    def test_role_skill_is_real_and_inherited(self):
-        agent=agent_registry.get_agent('Alex');self.assertTrue(skill_allowed(agent,'code-execution'))
+    def test_new_agent_job_title_does_not_inherit_hidden_capabilities(self):
+        agent=agent_registry.get_agent('Alex');self.assertFalse(skill_allowed(agent,'code-execution'))
         snap=access_snapshot(agent['id']);item=next(x for x in snap['skills'] if x['id']=='code-execution')
-        self.assertTrue(item['inherited']);self.assertTrue(item['effective'])
+        self.assertEqual(snap['capability_mode'],'explicit');self.assertFalse(item['inherited']);self.assertFalse(item['effective'])
 
     def test_skill_can_be_blocked_and_explicitly_allowed(self):
         set_skill_access(self.agent['id'],'code-execution','block');self.assertFalse(skill_allowed(agent_registry.get_agent('Alex'),'code-execution'))
