@@ -15,6 +15,7 @@ from agentie.core.mcp_client import (
     inspect_server,
     list_servers,
 )
+from agentie.core.plugin_credentials import setup_response
 from agentie.core.skill_registry import skills_for_agent
 
 _STOPWORDS = {
@@ -53,8 +54,6 @@ def _windows_path(text: str) -> str | None:
 
 
 def _unix_path(text: str) -> str | None:
-    # Require a slash-prefixed path with at least one additional component so normal
-    # prose such as "and/or" is not mistaken for a filesystem location.
     match = re.search(r"(?<!\w)(/[^\s\"']+/[^\s\"']*)", text)
     return match.group(1).strip().rstrip(" .?!") if match else None
 
@@ -105,6 +104,17 @@ def _looks_graph_memory(text: str) -> bool:
     )
 
 
+def _looks_google_workspace(text: str) -> bool:
+    low=text.lower()
+    service=bool(re.search(r"\b(?:gmail|google\s+(?:mail|drive|docs?|sheets?|slides?|calendar|contacts?|workspace))\b",low))
+    action=bool(re.search(r"\b(?:check|list|show|read|open|search|find|send|reply|draft|create|make|update|edit|delete|remove|share|upload|download|schedule|calendar|email)\b",low))
+    return service and action
+
+
+def _looks_canva(text: str) -> bool:
+    low=text.lower();return bool("canva" in low and re.search(r"\b(?:show|list|search|find|create|make|generate|edit|update|export|download|comment|design)\b",low))
+
+
 def _tool_map(info: dict[str, Any]) -> dict[str, dict[str, Any]]:
     return {str(item.get("name") or "").lower(): item for item in info.get("tools") or [] if item.get("name")}
 
@@ -128,6 +138,29 @@ def _schema_for(info: dict[str, Any], tool_name: str) -> dict[str, Any]:
 def _required(schema: dict[str, Any]) -> list[str]:
     value = schema.get("required")
     return [str(x) for x in value] if isinstance(value, list) else []
+
+
+def _set_schema_value(schema: dict[str, Any], args: dict[str, Any], names: tuple[str, ...], value: Any) -> bool:
+    props=schema.get("properties") if isinstance(schema.get("properties"),dict) else {}
+    by_lower={str(key).lower():str(key) for key in props}
+    key=next((by_lower[name.lower()] for name in names if name.lower() in by_lower),None)
+    if key is None and not props:key=names[0]
+    if key is None:return False
+    prop=props.get(key) if isinstance(props.get(key),dict) else {}
+    if prop.get("type")=="array" and not isinstance(value,list):value=[value]
+    args[key]=value;return True
+
+
+def _arguments_complete(schema: dict[str, Any], args: dict[str, Any]) -> bool:
+    return all(key in args for key in _required(schema))
+
+
+def _after(text: str, pattern: str) -> str:
+    match=re.search(pattern,text,re.I);return match.group(1).strip(" .?!\"'`") if match else ""
+
+
+def _email_address(text: str) -> str | None:
+    match=re.search(r"\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b",text,re.I);return match.group(0) if match else None
 
 
 def _infer_common_arguments(text: str, schema: dict[str, Any], server: dict[str, Any]) -> dict[str, Any] | None:
@@ -163,7 +196,7 @@ def _lexical_tool(text: str, info: dict[str, Any], server: dict[str, Any]) -> tu
     for item in info.get("tools") or []:
         name = str(item.get("name") or "")
         hay = " ".join([name, str(item.get("title") or ""), str(item.get("description") or "")])
-        tool_tokens = _tokens(hay.replace("_", " "))
+        tool_tokens = _tokens(hay.replace("_", " ").replace("-"," "))
         overlap = len(query & tool_tokens)
         if overlap < 2:
             continue
@@ -180,21 +213,14 @@ def _lexical_tool(text: str, info: dict[str, Any], server: dict[str, Any]) -> tu
 
 
 def _filesystem_choice(text: str, server: dict[str, Any], info: dict[str, Any]) -> tuple[str, dict[str, Any]] | None:
-    # Reuse the explicit-plugin inference first; it already understands the official
-    # Filesystem server's common tools.
     direct = _infer_natural_tool(text, server, info)
     if direct:
         return direct
-
-    low = text.lower()
-    root = _filesystem_root(server)
-    path = _explicit_path(text) or root
-    if not path:
-        return None
+    low = text.lower();root=_filesystem_root(server);path=_explicit_path(text) or root
+    if not path:return None
     if re.search(r"\b(?:look at|show|list|inspect)\b", low) and re.search(r"\b(?:files|folder|directory|workspace|place)\b", low):
         tool = _pick_name(info, ("list_directory", "list_directory_with_sizes"))
-        if tool:
-            return tool, {"path": path}
+        if tool:return tool,{"path":path}
     return _lexical_tool(text, info, server)
 
 
@@ -210,103 +236,149 @@ def _git_choice(text: str, server: dict[str, Any], info: dict[str, Any]) -> tupl
         if any(word in low for word in words):
             tool = _pick_name(info, names)
             if tool:
-                schema = _schema_for(info, tool)
-                args = _infer_common_arguments(text, schema, server)
+                schema = _schema_for(info, tool);args = _infer_common_arguments(text, schema, server)
                 if args is not None:
-                    # mcp-server-git commonly requires repo_path. The registration
-                    # already pins a repository, but supply cwd when the schema asks.
                     for key in _required(schema):
-                        if key.lower() in {"repo_path", "repository", "repository_path"} and key not in args:
-                            args[key] = str(Path.cwd())
-                    if all(key in args for key in _required(schema)):
-                        return tool, args
+                        if key.lower() in {"repo_path", "repository", "repository_path"} and key not in args:args[key]=str(Path.cwd())
+                    if _arguments_complete(schema,args):return tool,args
     return _lexical_tool(text, info, server)
 
 
 def _fetch_choice(text: str, server: dict[str, Any], info: dict[str, Any]) -> tuple[str, dict[str, Any]] | None:
     url = _url(text)
-    if not url:
-        return None
-    tool = _pick_name(info, ("fetch", "fetch_url", "get_url"))
-    if not tool:
-        return _lexical_tool(text, info, server)
-    schema = _schema_for(info, tool)
-    props = schema.get("properties") if isinstance(schema.get("properties"), dict) else {}
-    key = "url" if "url" in props or not props else next((x for x in props if x.lower() in {"url", "uri"}), "url")
-    args = {key: url}
-    if all(name in args for name in _required(schema)):
-        return tool, args
-    return None
+    if not url:return None
+    tool=_pick_name(info,("fetch","fetch_url","get_url"))
+    if not tool:return _lexical_tool(text,info,server)
+    schema=_schema_for(info,tool);props=schema.get("properties") if isinstance(schema.get("properties"),dict) else {};key="url" if "url" in props or not props else next((x for x in props if x.lower() in {"url","uri"}),"url");args={key:url}
+    return (tool,args) if _arguments_complete(schema,args) else None
 
 
 def _memory_choice(text: str, server: dict[str, Any], info: dict[str, Any]) -> tuple[str, dict[str, Any]] | None:
     return _lexical_tool(text, info, server)
 
 
-async def _prepare(server: dict[str, Any], text: str, chooser) -> dict[str, Any] | None:
+def _google_workspace_choice(text: str, server: dict[str, Any], info: dict[str, Any]) -> tuple[str, dict[str, Any]] | None:
+    low=text.lower()
+    if re.search(r"\b(?:gmail|google\s+mail)\b",low):
+        if re.search(r"\b(?:send|email|mail)\b",low) and _email_address(text):
+            tool=_pick_name(info,("sendEmail","send_email"))
+            if tool:
+                schema=_schema_for(info,tool);args={};recipient=_email_address(text);subject=_after(text,r"\bsubject\s*[:=-]?\s*[\"']?(.+?)[\"']?(?=\s+(?:saying|message|body|with)\b|$)") or "Agentie message";body=_after(text,r"\b(?:saying|message|body|that says|with (?:the )?(?:message|body))\s*[:=-]?\s*(.+)$") or "Message from Agentie."
+                _set_schema_value(schema,args,("to","recipient","recipients"),recipient);_set_schema_value(schema,args,("subject",),subject);_set_schema_value(schema,args,("body","text","message"),body)
+                if _arguments_complete(schema,args):return tool,args
+        if re.search(r"\b(?:read|open|get)\b",low):
+            ident=_after(text,r"\b(?:email|message)(?:\s+(?:id|#))?\s+([A-Za-z0-9._:-]{3,})\b")
+            tool=_pick_name(info,("readEmail","read_email"))
+            if tool and ident:
+                schema=_schema_for(info,tool);args={};_set_schema_value(schema,args,("messageId","message_id","id"),ident)
+                if _arguments_complete(schema,args):return tool,args
+        tool=_pick_name(info,("searchEmails","search_emails"))
+        if tool:
+            schema=_schema_for(info,tool);args={};query=_after(text,r"\b(?:search|find)\b.*?\b(?:gmail|emails?|mail)\b(?:\s+for)?\s+(.+)$") or "in:inbox"
+            _set_schema_value(schema,args,("query","q","search"),query);_set_schema_value(schema,args,("maxResults","limit","pageSize"),10)
+            if _arguments_complete(schema,args):return tool,args
+    if "google drive" in low:
+        if re.search(r"\b(?:search|find)\b",low):
+            tool=_pick_name(info,("search","searchFiles","search_files"))
+            if tool:
+                schema=_schema_for(info,tool);args={};query=_after(text,r"\b(?:search|find)\b.*?\b(?:google\s+)?drive\b(?:\s+for)?\s+(.+)$")
+                if query:_set_schema_value(schema,args,("query","q","name"),query)
+                if _arguments_complete(schema,args):return tool,args
+        if re.search(r"\b(?:list|show|open|check)\b",low):
+            tool=_pick_name(info,("listFolder","list_folder"))
+            if tool:
+                schema=_schema_for(info,tool);args={};_set_schema_value(schema,args,("folderId","folder_id","id"),"root")
+                if _arguments_complete(schema,args):return tool,args
+    if "google calendar" in low:
+        tool=_pick_name(info,("listEvents","list_events"))
+        if tool and re.search(r"\b(?:check|list|show|read|events?|schedule)\b",low):
+            schema=_schema_for(info,tool);args={};_set_schema_value(schema,args,("calendarId","calendar_id"),"primary")
+            if _arguments_complete(schema,args):return tool,args
+    if re.search(r"\bgoogle\s+contacts?\b",low):
+        tool=_pick_name(info,("listContacts","list_contacts"))
+        if tool and re.search(r"\b(?:check|list|show|read|contacts?)\b",low):
+            schema=_schema_for(info,tool);args={};_set_schema_value(schema,args,("limit","pageSize","maxResults"),20)
+            if _arguments_complete(schema,args):return tool,args
+    create_specs=(("google doc","google docs"),("createGoogleDoc","create_google_doc")),(("google sheet","google sheets"),("createGoogleSheet","create_google_sheet")),(("google slide","google slides"),("createGoogleSlides","create_google_slides"))
+    for labels,names in create_specs:
+        if any(label in low for label in labels) and re.search(r"\b(?:create|make|new)\b",low):
+            tool=_pick_name(info,names)
+            if tool:
+                schema=_schema_for(info,tool);args={};title=_after(text,r"\b(?:called|named|titled)\s+(.+)$") or _after(text,r"\b(?:doc|document|sheet|spreadsheet|slide|presentation)\s+(.+)$")
+                if title:_set_schema_value(schema,args,("title","name"),title)
+                if _arguments_complete(schema,args):return tool,args
+    return _lexical_tool(text,info,server)
+
+
+def _canva_choice(text: str, server: dict[str, Any], info: dict[str, Any]) -> tuple[str, dict[str, Any]] | None:
+    low=text.lower()
+    if re.search(r"\b(?:search|find|show|list)\b",low) and re.search(r"\b(?:design|designs|canva)\b",low):
+        tool=_pick_name(info,("search-designs","search_designs","list-designs","list_designs"))
+        if tool:
+            schema=_schema_for(info,tool);args={};query=_after(text,r"\b(?:search|find)\b.*?\b(?:canva|designs?)\b(?:\s+for)?\s+(.+)$")
+            if query:_set_schema_value(schema,args,("query","search","term"),query)
+            _set_schema_value(schema,args,("limit","pageSize"),10)
+            if _arguments_complete(schema,args):return tool,args
+    direct=_infer_natural_tool(text,server,info)
+    if direct:return direct
+    return _lexical_tool(text,info,server)
+
+
+async def _prepare(server: dict[str, Any], text: str, chooser, *, surface_setup: bool=False) -> dict[str, Any] | None:
     name = str(server.get("name") or "")
-    if not name:
-        return None
-    try:
-        info = await inspect_server(name)
-    except Exception:
-        return None
-    choice = chooser(text, server, info)
-    if not choice:
-        return None
-    tool_name, arguments = choice
-    canonical = f"Call MCP {name} tool {tool_name} with {json.dumps(arguments, ensure_ascii=False)}"
-    approval = _approval_response(name, tool_name, arguments, canonical, natural=True)
+    if not name:return None
+    try:info=await inspect_server(name)
+    except Exception as exc:
+        return setup_response(name,_error_text(exc)) if surface_setup else None
+    choice=chooser(text,server,info)
+    if not choice:return None
+    tool_name,arguments=choice;canonical=f"Call MCP {name} tool {tool_name} with {json.dumps(arguments, ensure_ascii=False)}";approval=_approval_response(name,tool_name,arguments,canonical,natural=True)
     if approval.get("approved"):
-        try:
-            return await execute_tool(name, tool_name, arguments)
-        except Exception as exc:
-            return {"message": f"The approved MCP tool call could not complete: {_error_text(exc)}", "card": None}
+        try:return await execute_tool(name,tool_name,arguments)
+        except Exception as exc:return {"message":f"The approved MCP tool call could not complete: {_error_text(exc)}","card":None}
     return approval
 
 
 async def route_capability_request(message: str, agent_type: str = "general") -> dict[str, Any] | None:
-    """Route an unresolved request to an installed capability without requiring its name.
+    """Route an unresolved request to an installed capability without requiring its name."""
+    text=" ".join(str(message or "").strip().split())
+    if not text or _native_guarded(text):return None
+    _=skills_for_agent(agent_type)
 
-    This is intentionally conservative. Native Agentie skills are given first refusal by
-    main.py; this layer is only for unresolved requests with strong external-capability
-    signals. That keeps new integrations additive instead of replacing stable behavior.
-    """
-    text = " ".join(str(message or "").strip().split())
-    if not text or _native_guarded(text):
-        return None
+    if _looks_google_workspace(text):
+        server=_server_by_names("google-workspace")
+        if server:
+            result=await _prepare(server,text,_google_workspace_choice,surface_setup=True)
+            if result:return result
 
-    # Loading enabled skill manifests here makes capability routing aware of the same
-    # skill registry used by the rest of Agentie. Future plugin/skill adapters can plug
-    # into this module without changing the main router.
-    _ = skills_for_agent(agent_type)
+    if _looks_canva(text):
+        server=_server_by_names("canva")
+        if server:
+            result=await _prepare(server,text,_canva_choice,surface_setup=True)
+            if result:return result
 
     if _looks_filesystem(text):
-        server = _server_by_names("filesystem")
+        server=_server_by_names("filesystem")
         if server:
-            result = await _prepare(server, text, _filesystem_choice)
-            if result:
-                return result
+            result=await _prepare(server,text,_filesystem_choice)
+            if result:return result
 
     if _looks_git(text):
-        server = _server_by_names("git")
+        server=_server_by_names("git")
         if server:
-            result = await _prepare(server, text, _git_choice)
-            if result:
-                return result
+            result=await _prepare(server,text,_git_choice)
+            if result:return result
 
     if _looks_fetch(text):
-        server = _server_by_names("fetch")
+        server=_server_by_names("fetch")
         if server:
-            result = await _prepare(server, text, _fetch_choice)
-            if result:
-                return result
+            result=await _prepare(server,text,_fetch_choice)
+            if result:return result
 
     if _looks_graph_memory(text):
-        server = _server_by_names("memory")
+        server=_server_by_names("memory")
         if server:
-            result = await _prepare(server, text, _memory_choice)
-            if result:
-                return result
+            result=await _prepare(server,text,_memory_choice)
+            if result:return result
 
     return None
