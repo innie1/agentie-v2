@@ -67,7 +67,7 @@ def create_team(name:str,members:list[str],*,lead_agent_id:str|None=None,goal:st
 def update_team(team_id_or_name:str,*,name:str|None=None,goal:str|None=None,instructions:str|None=None,lead_agent_id:str|None|object=...)->dict[str,Any]:
     items=_load();key=_clean(team_id_or_name,160).casefold();item=next((x for x in items if str(x.get("id") or "").casefold()==key or str(x.get("name") or "").casefold()==key),None)
     if not item:raise ValueError("Team was not found.")
-    members=_resolve_members([str(x) for x in item.get("member_ids") or []])
+    members=[get_agent(str(x)) for x in item.get("member_ids") or []];members=[x for x in members if x]
     if name is not None:
         clean=_clean(name,120)
         if not clean:raise ValueError("Team name is required.")
@@ -76,6 +76,7 @@ def update_team(team_id_or_name:str,*,name:str|None=None,goal:str|None=None,inst
     if goal is not None:item["goal"]=_clean(goal,1600)
     if instructions is not None:item["instructions"]=str(instructions or "").strip()[:6000]
     if lead_agent_id is not ...:
+        if lead_agent_id and not members:raise ValueError("Add team members before assigning a lead.")
         lead=_validate_lead(str(lead_agent_id) if lead_agent_id else None,members);item["lead_agent_id"]=lead.get("id") if lead else None;item["lead_agent_name"]=lead.get("name") if lead else None
     item["updated_at"]=_now();_save(items);return get_team(str(item["id"])) or dict(item)
 def add_team_member(team_id_or_name:str,agent_id_or_name:str)->dict[str,Any]:
@@ -97,6 +98,15 @@ def delete_team(team_id_or_name:str)->dict[str,Any]:
     items=_load();key=_clean(team_id_or_name,160).casefold();item=next((x for x in items if str(x.get("id") or "").casefold()==key or str(x.get("name") or "").casefold()==key),None)
     if not item:raise ValueError("Team was not found.")
     _save([x for x in items if x is not item]);return dict(item)
+def run_team_task(team_id_or_name:str,task:str)->dict[str,Any]:
+    team=get_team(team_id_or_name)
+    if not team:raise ValueError("Team was not found.")
+    agents=[get_agent(str(x)) for x in team.get("member_ids") or []];agents=[x for x in agents if x]
+    if not agents:raise ValueError("That team has no active agents.")
+    task=_clean(task,12000)
+    if not task:raise ValueError("A team task is required.")
+    from agentie.core.team_orchestrator import create_team_job,start_team_job,team_job_card
+    job=create_team_job(task,agents,requested_by="user");start_team_job(job["id"]);return {"team":team,"job":job,"card":team_job_card(job)}
 def teams_for_agent(agent_id:str)->list[dict[str,Any]]:return list_teams(agent_id)
 def team_context(agent:dict[str,Any])->str:
     teams=teams_for_agent(str(agent.get("id") or ""));blocks=[]
@@ -127,14 +137,29 @@ def route_team_structure_command(message:str)->dict[str,Any]|None:
         try:item=create_team(name,members)
         except ValueError as exc:return {"message":str(exc),"card":None}
         return {"message":f"Created team “{item['name']}”.","card":team_note(item)}
-    m=re.match(r"^(?:show|open)\s+(?:team|department)\s+(.+)$",text,re.I)
+    m=re.match(r"^(?:show|open)\s+(?:team(?!\s+(?:chat|job)\b)|department)\s+(.+)$",text,re.I)
     if m:
         item=get_team(m.group(1).strip(' .?!\"“”'));return {"message":"Team was not found.","card":None} if not item else {"message":f"Here is team “{item['name']}”.","card":team_note(item)}
+    m=re.match(r"^(?:have|ask|tell)\s+(?:team|department)\s+(.+?)\s+(?:to\s+|work\s+on\s+)(.+)$",text,re.I)
+    if m:
+        try:result=run_team_task(m.group(1).strip(' .?!\"“”'),m.group(2).strip())
+        except ValueError as exc:return {"message":str(exc),"card":None}
+        return {"message":f"Started team job {result['job']['id']} with {', '.join(result['job']['agent_names'])} from “{result['team']['name']}”.","card":result['card']}
     m=re.match(r"^(?:set|make)\s+(.+?)\s+(?:the\s+)?lead\s+(?:of|for)\s+(?:team|department)\s+(.+)$",text,re.I)
     if m:
         try:item=update_team(m.group(2).strip(),lead_agent_id=m.group(1).strip())
         except ValueError as exc:return {"message":str(exc),"card":None}
         return {"message":f"{item.get('lead_agent_name')} now leads “{item['name']}”.","card":team_note(item)}
+    m=re.match(r"^set\s+(?:the\s+)?goal\s+(?:of|for)\s+(?:team|department)\s+(.+?)\s+to\s+(.+)$",text,re.I)
+    if m:
+        try:item=update_team(m.group(1).strip(),goal=m.group(2).strip())
+        except ValueError as exc:return {"message":str(exc),"card":None}
+        return {"message":f"Updated the goal for “{item['name']}”.","card":team_note(item)}
+    m=re.match(r"^set\s+(?:the\s+)?instructions?\s+(?:of|for)\s+(?:team|department)\s+(.+?)\s+to\s+(.+)$",text,re.I)
+    if m:
+        try:item=update_team(m.group(1).strip(),instructions=m.group(2).strip())
+        except ValueError as exc:return {"message":str(exc),"card":None}
+        return {"message":f"Updated the instructions for “{item['name']}”.","card":team_note(item)}
     m=re.match(r"^(?:add)\s+(.+?)\s+to\s+(?:team|department)\s+(.+)$",text,re.I)
     if m:
         try:item=add_team_member(m.group(2).strip(),m.group(1).strip())
@@ -145,4 +170,9 @@ def route_team_structure_command(message:str)->dict[str,Any]|None:
         try:item=remove_team_member(m.group(2).strip(),m.group(1).strip())
         except ValueError as exc:return {"message":str(exc),"card":None}
         return {"message":f"Removed {m.group(1).strip()} from “{item['name']}”.","card":team_note(item)}
+    m=re.match(r"^(?:delete|remove)\s+(?:team|department)\s+(.+)$",text,re.I)
+    if m:
+        try:item=delete_team(m.group(1).strip())
+        except ValueError as exc:return {"message":str(exc),"card":None}
+        return {"message":f"Deleted team “{item['name']}”. Agents themselves were not deleted.","card":{"type":"note","title":"Team deleted","content":item['name']}}
     return None
