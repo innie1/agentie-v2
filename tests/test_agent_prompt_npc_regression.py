@@ -15,16 +15,19 @@ class AgentPromptNPCRegressionTests(unittest.TestCase):
         self.old_prompts=agent_prompt.PROMPTS_FILE;self.old_pw=agent_prompt.WORKSPACE
         agent_registry.WORKSPACE=root;agent_registry.AGENTS_FILE=root/'agents.json'
         agent_prompt.WORKSPACE=root;agent_prompt.PROMPTS_FILE=root/'agent_instruction_profiles.json'
-        self.agent=agent_registry.create_agent('Alex','CTO','manager',purpose='Lead product engineering')["agent"]
+        self.agent=agent_registry.create_agent('Alex','CTO',purpose='Lead product engineering',permissions={'delegate':True})["agent"]
     def tearDown(self):
         agent_registry.AGENTS_FILE=self.old_agents;agent_registry.WORKSPACE=self.old_aw
         agent_prompt.PROMPTS_FILE=self.old_prompts;agent_prompt.WORKSPACE=self.old_pw
         self.temp.cleanup()
 
-    def test_agent_prompt_contains_identity_role_purpose_and_delegation(self):
+    def test_agent_prompt_contains_identity_role_purpose_and_explicit_delegation(self):
         text=agent_prompt.build_agent_instructions(self.agent)
         self.assertIn('You are Alex',text);self.assertIn('Your role is CTO',text)
-        self.assertIn('Lead product engineering',text);self.assertIn('delegate',text.lower())
+        self.assertIn('Lead product engineering',text);self.assertIn('allowed to coordinate and delegate',text.lower())
+        same_title=agent_registry.create_agent('Other CTO','CTO',purpose='Lead another product')["agent"]
+        other_text=agent_prompt.build_agent_instructions(same_title)
+        self.assertNotIn('allowed to coordinate and delegate',other_text.lower())
 
     def test_concise_default_and_detailed_reports_can_coexist(self):
         agent_prompt.learn_from_user_message(self.agent,'I prefer short concise replies.')
@@ -60,7 +63,7 @@ class AgentPromptNPCRegressionTests(unittest.TestCase):
         self.assertIn('try_npc_response',runner);self.assertIn('persistent_instructions',runner)
         self.assertLess(runner.index('try_npc_response'),runner.index('get_provider_info()'))
         self.assertIn('persistent_instructions: str | None = None',assistant)
-        self.assertIn('Persistent agent identity and learned preferences',assistant)
+        self.assertIn('Persistent identity, rules, memory preferences',assistant)
 
 
 if __name__=='__main__':unittest.main()
