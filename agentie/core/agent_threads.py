@@ -72,6 +72,21 @@ def _task_without_mentions(message:str,agents:list[dict[str,Any]])->str:
     task=str(message or "")
     for agent in agents:task=re.sub(rf"(?<!\w)@{re.escape(str(agent.get('name') or ''))}(?![A-Za-z0-9_-])"," ",task,flags=re.I)
     return _clean(task,12000).strip(" ,.;:-") or _clean(message,12000)
+def _interaction_mode(task:str)->str:
+    text=" ".join(str(task or "").strip().split());lower=text.casefold()
+    if not text:return "chat"
+    task_signal=re.search(r"\b(?:research|investigate|compare|analy[sz]e|review|audit|create|write|draft|build|make|design|calculate|check|verify|summari[sz]e|plan|evaluate|recommend|prepare|send|email|post|publish|edit|fix|implement|test|report|find|search|look up|work on|give me|list|explain|delegate|coordinate)\b",lower)
+    if task_signal:return "task"
+    return "chat" if len(text)<=320 else "task"
+def _visible_agent_reply(value:str,mode:str="task")->str:
+    text=str(value or "").strip()
+    if not text:return "Completed the assigned task."
+    text=re.split(r"(?im)^\s*#{1,6}\s*Handoff Summary\b",text,maxsplit=1)[0].strip()
+    text=re.sub(r"(?im)^\s*#{1,6}\s*(?:Deliverable|Response|Answer)\s*:?[ \t]*\n?","",text).strip()
+    text=re.sub(r"(?m)^\s*---+\s*$","",text).strip()
+    if mode=="chat":
+        text=re.split(r"(?im)^\s*#{1,6}\s*(?:Current Status|Role Focus|Next Steps?|Scope|Verification Framework|Facts|Opinions|Recommendations|Risks?\s*&\s*Uncertainties)\b",text,maxsplit=1)[0].strip()
+    return text[:12000] or "Completed the assigned task."
 
 def post_message(thread_id:str,sender_type:str,sender_id:str|None,sender_name:str,message:str,metadata:dict[str,Any]|None=None,reply_to_message_id:str|None=None)->dict[str,Any]:
     items=_load();thread=_stored_thread(items,thread_id)
@@ -83,7 +98,7 @@ def post_message(thread_id:str,sender_type:str,sender_id:str|None,sender_name:st
     if sender_type=="user" and not meta.get("team_job_id"):
         agents=_mentioned_agents(thread,message)
         if agents:
-            task=_task_without_mentions(message,agents);job=create_team_job(task,agents,requested_by="user");start_team_job(job["id"]);meta.update({"team_job_id":job["id"],"to_agent_ids":[a["id"] for a in agents],"mentions":[a["name"] for a in agents],"materialize_replies":True})
+            task=_task_without_mentions(message,agents);mode=_interaction_mode(task);job=create_team_job(task,agents,requested_by="user",interaction_mode=mode);start_team_job(job["id"]);meta.update({"team_job_id":job["id"],"to_agent_ids":[a["id"] for a in agents],"mentions":[a["name"] for a in agents],"materialize_replies":True,"interaction_mode":mode})
     row={"id":"msg_"+uuid.uuid4().hex[:10],"sender_type":sender_type,"sender_id":sender_id,"sender_name":_clean(sender_name,120),"message":str(message or "").strip()[:12000],"metadata":meta,"reactions":[],"at":_now()};thread.setdefault("messages",[]).append(row);thread["messages"]=thread["messages"][-500:];thread["updated_at"]=_now();_save(items)
     _publish("agent_thread.message",{"thread_id":thread["id"],"thread_name":thread.get("name"),"message_id":row["id"],"sender_type":sender_type,"sender_id":sender_id,"sender_name":row["sender_name"],"message":row["message"],"team_job_id":meta.get("team_job_id"),"reply_to_message_id":meta.get("reply_to_message_id")},f"thread-message:{row['id']}")
     return row
@@ -112,8 +127,8 @@ def agent_to_agent_task(sender_id_or_name:str,target_id_or_name:str,task:str,thr
         if agent["id"] not in thread.get("participant_ids",[]):add_participant(thread["id"],agent["id"]);thread=get_thread(thread["id"]) or thread
     task=_clean(task,12000)
     if not task:raise ValueError("A task is required.")
-    job=create_team_job(task,[target],requested_by=sender["name"]);start_team_job(job["id"])
-    row=post_message(thread["id"],"agent",sender["id"],sender["name"],f"@{target['name']} {task}",{"team_job_id":job["id"],"to_agent_ids":[target["id"]],"mentions":[target["name"]],"materialize_replies":True,"source":"agent_delegate"})
+    job=create_team_job(task,[target],requested_by=sender["name"],interaction_mode="task");start_team_job(job["id"])
+    row=post_message(thread["id"],"agent",sender["id"],sender["name"],f"@{target['name']} {task}",{"team_job_id":job["id"],"to_agent_ids":[target["id"]],"mentions":[target["name"]],"materialize_replies":True,"source":"agent_delegate","interaction_mode":"task"})
     return {"thread":get_thread(thread["id"]) or thread,"message":row,"job":job,"sender":sender,"target":target}
 def remove_agent_from_threads(agent_id:str)->int:
     items=_load();changed=0
@@ -135,14 +150,15 @@ def _materialize_job_results(thread_id:str)->dict[str,Any]|None:
         if not job_id or meta.get("source")=="team_job" or not bool(meta.get("materialize_replies",str(origin.get("sender_type") or "")=="user")):continue
         job=get_team_job(str(job_id))
         if not job:continue
+        mode=str(job.get("interaction_mode") or meta.get("interaction_mode") or "task")
         emitted={str(x) for x in meta.get("materialized_handoff_ids") or []}
         for handoff in job.get("handoffs") or []:
             status=str(handoff.get("status") or "")
             if status not in {"completed","failed","cancelled"}:continue
             hid=str(handoff.get("id") or "")
             if not hid or hid in emitted:continue
-            name=str(handoff.get("to_agent_name") or "Agent");agent_id=str(handoff.get("to_agent_id") or "") or None;body=str(handoff.get("result") or "Completed the assigned task.") if status=="completed" else f"{status.title()}: {str(handoff.get('error') or 'The assigned task did not complete.')[:1500]}"
-            reply={"id":"msg_"+uuid.uuid4().hex[:10],"sender_type":"agent","sender_id":agent_id,"sender_name":name,"message":body[:12000],"reactions":[],"metadata":{"team_job_id":job["id"],"handoff_id":hid,"reply_to_message_id":origin.get("id"),"source":"team_job","status":status},"at":handoff.get("finished_at") or job.get("finished_at") or _now()}
+            name=str(handoff.get("to_agent_name") or "Agent");agent_id=str(handoff.get("to_agent_id") or "") or None;body=_visible_agent_reply(str(handoff.get("result") or "Completed the assigned task."),mode) if status=="completed" else f"{status.title()}: {str(handoff.get('error') or 'The assigned task did not complete.')[:1500]}"
+            reply={"id":"msg_"+uuid.uuid4().hex[:10],"sender_type":"agent","sender_id":agent_id,"sender_name":name,"message":body[:12000],"reactions":[],"metadata":{"team_job_id":job["id"],"handoff_id":hid,"reply_to_message_id":origin.get("id"),"source":"team_job","status":status,"interaction_mode":mode},"at":handoff.get("finished_at") or job.get("finished_at") or _now()}
             thread.setdefault("messages",[]).append(reply);new_replies.append(reply);emitted.add(hid);changed=True
         meta["materialized_handoff_ids"]=sorted(emitted)
     if changed:
@@ -153,10 +169,10 @@ def _materialize_job_results(thread_id:str)->dict[str,Any]|None:
 def _sync_jobs(thread:dict[str,Any])->dict[str,Any]:
     thread=_materialize_job_results(str(thread.get("id"))) or thread;result=dict(thread);messages=[]
     for row in thread.get("messages") or []:
-        copy=dict(row);job_id=(row.get("metadata") or {}).get("team_job_id")
+        copy=dict(row);meta=row.get("metadata") or {};job_id=meta.get("team_job_id")
         if job_id:
-            job=get_team_job(str(job_id))
-            if job:copy["job"]={"id":job["id"],"status":job.get("status"),"agents":job.get("agent_names") or [],"final_output":job.get("final_output"),"replan_count":job.get("replan_count",0),"handoffs":[{"agent":h.get("to_agent_name"),"status":h.get("status"),"result":h.get("result"),"error":h.get("error"),"recovery_of":h.get("recovery_of")} for h in job.get("handoffs") or []]}
+            job=get_team_job(str(job_id));mode=str((job or {}).get("interaction_mode") or meta.get("interaction_mode") or "task")
+            if job and mode!="chat" and meta.get("source")!="team_job":copy["job"]={"id":job["id"],"status":job.get("status"),"agents":job.get("agent_names") or [],"interaction_mode":mode,"replan_count":job.get("replan_count",0),"handoffs":[{"agent":h.get("to_agent_name"),"status":h.get("status"),"error":h.get("error"),"recovery_of":h.get("recovery_of")} for h in job.get("handoffs") or []]}
         messages.append(copy)
     result["messages"]=messages;return result
 def thread_card(thread:dict[str,Any])->dict[str,Any]:
@@ -204,5 +220,5 @@ def route_thread_command(message:str)->dict[str,Any]|None:
         if not agent:return {"message":"Agent was not found.","card":None}
         if not thread:return {"message":"Agent chat was not found.","card":None}
         if agent["id"] not in thread.get("participant_ids",[]):return {"message":f"{agent['name']} is not a participant in that chat.","card":None}
-        job=create_team_job(task,[agent],requested_by="user");start_team_job(job["id"]);post_message(thread["id"],"user",None,"User",f"@{agent['name']} {task}",{"team_job_id":job["id"],"to_agent_ids":[agent["id"]],"mentions":[agent["name"]],"materialize_replies":True});return {"message":f"Asked {agent['name']} in “{thread['name']}”.","card":thread_card(get_thread(thread["id"]) or thread)}
+        mode=_interaction_mode(task);job=create_team_job(task,[agent],requested_by="user",interaction_mode=mode);start_team_job(job["id"]);post_message(thread["id"],"user",None,"User",f"@{agent['name']} {task}",{"team_job_id":job["id"],"to_agent_ids":[agent["id"]],"mentions":[agent["name"]],"materialize_replies":True,"interaction_mode":mode});return {"message":f"Asked {agent['name']} in “{thread['name']}”.","card":thread_card(get_thread(thread["id"]) or thread)}
     return None
