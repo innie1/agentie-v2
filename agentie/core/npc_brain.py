@@ -14,15 +14,9 @@ _ACKS={
     "can you help me":"Yes. Tell me what you want to accomplish.","are you there":"Yes. I’m here.",
 }
 
-ROLE_PROFILES={
-    "coding":{"roles":{"cto","developer","coder","engineer","programmer","software engineer","technical lead"},"focus":"engineering"},
-    "research":{"roles":{"researcher","analyst","market researcher","research analyst"},"focus":"research"},
-    "writing":{"roles":{"writer","content writer","content creator","copywriter","social media manager","document writer"},"focus":"writing"},
-    "planning":{"roles":{"ceo","manager","chief of staff","planner","project manager","operations manager"},"focus":"planning"},
-    "critique":{"roles":{"critic","reviewer","risk reviewer"},"focus":"critique and risk review"},
-    "verification":{"roles":{"verifier","fact checker","qa verifier","quality verifier"},"focus":"verification"},
-    "data":{"roles":{"data analyst","business analyst","analytics specialist"},"focus":"data analysis"},
-}
+# Local deterministic response profiles are capability behaviors, not employee
+# classes. A title such as CTO, Researcher or Chief of Staff does not select one.
+_CAPABILITY_FOCUS={"coding":"engineering","research":"research","planning":"planning"}
 
 def _normalized(text):
     value=str(text or "").casefold().strip();value=value.replace("what's","what is").replace("whats","what is")
@@ -55,11 +49,24 @@ def job_title(goal,max_words=8):
     return " ".join(display[:max_words]).strip() or "Agent Job"
 
 def role_profile(agent):
-    role=_normalized(agent.get("role"));joined=" ".join(_normalized(agent.get(k)) for k in ("role","name","purpose","base"));best=(0,"general")
-    for kind,p in ROLE_PROFILES.items():
-        score=(5 if role in p["roles"] else 0)+sum(1 for r in p["roles"] if r and r in joined)
-        if score>best[0]:best=(score,kind)
-    return best[1]
+    """Return only an explicitly granted local capability profile.
+
+    Job titles remain identity/context. They do not silently grant coding,
+    research, planning, delegation, or any other runtime behavior.
+    """
+    permissions=dict(agent.get("permissions") or {})
+    if bool(permissions.get("delegate")):return "planning"
+    try:
+        from agentie.core.agent_access import skill_allowed
+        if skill_allowed(agent,"code-execution"):return "coding"
+        if skill_allowed(agent,"research"):return "research"
+        if skill_allowed(agent,"planning"):return "planning"
+    except Exception:
+        skills={str(x).casefold() for x in agent.get("skills") or []}
+        if "code-execution" in skills:return "coding"
+        if "research" in skills:return "research"
+        if "planning" in skills:return "planning"
+    return "general"
 
 def _adapt(agent,message):
     p=get_instruction_profile(agent);comm=p.get("communication") or {};manual=_normalized(p.get("manual_instructions"));text=str(message)
@@ -182,8 +189,8 @@ def _judgment_escalation(agent,message):
     ]
     if goal:lines.append(f"Agent goal to optimize for: {goal}")
     if responsibilities:lines.append("Relevant responsibilities: "+"; ".join(responsibilities[:8]))
-    if kind=="planning":
-        lines.append("As a manager/Chief-of-Staff-style agent, prioritize by expected goal impact, urgency, dependencies, reversibility, and risk. Challenge poor sequencing or low-value work. Identify a capability gap only when the existing team truly lacks it; do not recommend a duplicate specialist.")
+    if bool((agent.get("permissions") or {}).get("delegate")):
+        lines.append("This agent has explicit delegation authority. Prioritize by expected goal impact, urgency, dependencies, reversibility, and risk. Challenge poor sequencing or low-value work. Identify a capability gap only when the existing team truly lacks it; do not recommend a duplicate agent.")
         lines.append("Existing Agentie team: "+_team_snapshot(agent))
     if _consequential_subject(norm):lines.append("The proposed subject includes a potentially consequential action. You may recommend for or against it, but do not execute it from this advice request. If execution is later chosen, state that Agentie's normal permission/approval gate still applies.")
     lines.append("User's original judgment question: "+str(message).strip())
@@ -191,17 +198,17 @@ def _judgment_escalation(agent,message):
 
 def _role_local_response(agent,message):
     kind=role_profile(agent);norm=_normalized(message);words=set(norm.split())
-    if kind=="general" or not norm:return None
-    if re.fullmatch(r"(?:what is|what s) your role",norm):return _result(agent,f"I’m your {agent.get('role') or kind} agent. I focus on {ROLE_PROFILES[kind]['focus']} work and hand off tasks that belong to another specialist.",kind)
-    if re.fullmatch(r"(?:what are|what re|what is) you working on",norm):return _result(agent,f"I’m ready for the next {ROLE_PROFILES[kind]['focus']} task. If it needs another specialty, I’ll route it instead of pretending it is mine.",kind)
+    if not norm:return None
+    if re.fullmatch(r"(?:what is|what s) your role",norm):
+        role=str(agent.get("role") or "configured agent");goal=str(agent.get("goal") or agent.get("purpose") or "").strip()
+        suffix=f" My configured goal is: {goal}" if goal else ""
+        return _result(agent,f"I’m your {role} agent.{suffix}",kind)
+    if re.fullmatch(r"(?:what are|what re|what is) you working on",norm):return _result(agent,f"I’m ready for work within my configured job: {agent.get('role') or 'general ownership'}.",kind)
+    if kind=="general":return None
     checklist=("checklist" in words or re.search(r"\b(?:how should|how do we|how do i)\b",norm))
     if kind=="coding" and checklist and re.search(r"\b(?:test|debug|deploy|build|implement|release|code|engineering)\b",norm):return _result(agent,"Engineering checklist: reproduce or define the goal, inspect the existing implementation, make the smallest safe change, run targeted tests, then run the full regression suite before deployment.",kind)
     if kind=="research" and checklist and re.search(r"\b(?:research|investigate|compare|verify|sources?)\b",norm):return _result(agent,"Research checklist: define the question, gather multiple credible sources, compare claims and dates, note disagreements, then summarize findings with evidence and uncertainty.",kind)
-    if kind=="writing" and checklist and re.search(r"\b(?:writing|content|post|article|copy|document)\b",norm):return _result(agent,"Content checklist: define the audience and goal, lead with one clear idea, keep the wording on-brand, remove filler, then finish with the intended action or takeaway.",kind)
     if kind=="planning" and checklist and re.search(r"\b(?:plan|launch|project|roadmap|organize|strategy)\b",norm):return _result(agent,"Planning checklist: define the outcome, identify constraints, break work into owners and milestones, order dependencies, then track risks and next actions.",kind)
-    if kind=="critique" and checklist:return _result(agent,"Critique checklist: identify the intended goal, test assumptions, look for contradictions and failure modes, rank the biggest risks, then suggest the smallest improvements that address them.",kind)
-    if kind=="verification" and checklist:return _result(agent,"Verification checklist: define the claim or expected result, reproduce the evidence, check independent signals, flag anything unsupported, then state what is verified, uncertain, or false.",kind)
-    if kind=="data" and checklist:return _result(agent,"Data-analysis checklist: define the decision question, inspect data quality, choose the relevant measures, calculate reproducibly, compare segments or periods, then report the result with assumptions and limitations.",kind)
     return None
 
 def try_npc_response(agent,message,session_id=None):
