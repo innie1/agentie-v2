@@ -1,14 +1,14 @@
 from __future__ import annotations
 
-import json
-import re
+import json,re
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 from agentie.core import agent_registry
 from agentie.core.mcp_client import list_servers
 from agentie.core.skill_registry import all_skills
-from agentie.tools.approval_tools import approval_is_granted, create_approval
+from agentie.tools.approval_tools import approval_is_granted,create_approval
+
 WORKSPACE=Path.cwd()/"workspace";GLOBAL_ACCESS_FILE=WORKSPACE/"capability_access.json"
 def _now():return datetime.now().astimezone().isoformat(timespec="seconds")
 def _load_global():
@@ -25,8 +25,8 @@ def _mutate_agent(key,fn):
 def global_skill_allowed(x):return str(x).lower() in set(_load_global()["skills"])
 def global_mcp_allowed(x):return str(x).lower() in set(_load_global()["mcp_servers"])
 def set_global_skill_access(x,allowed):
-    sid=str(x).lower();
-    if sid not in all_skills():raise ValueError("Skill was not found.")
+    sid=str(x).lower()
+    if sid not in all_skills():raise ValueError("Skill or capability was not found.")
     data=_load_global();s=set(data["skills"]);(s.add if allowed else s.discard)(sid);data["skills"]=sorted(s);_save_global(data);return global_access_snapshot()
 def set_global_mcp_access(x,allowed):
     sid=str(x).lower();registered={str(i.get("name") or "").lower() for i in list_servers()}
@@ -34,12 +34,15 @@ def set_global_mcp_access(x,allowed):
     data=_load_global();s=set(data["mcp_servers"]);(s.add if allowed else s.discard)(sid);data["mcp_servers"]=sorted(s);_save_global(data);return global_access_snapshot()
 def _sets(agent):
     p=dict(agent.get("permissions") or {});return ({str(x).lower() for x in agent.get("skills",[])},{str(x).lower() for x in p.get("blocked_skills",[])},{str(x).lower() for x in p.get("mcp_servers",[])},{str(x).lower() for x in p.get("blocked_mcp_servers",[])})
+def _explicit_mode(agent):return str((agent.get("permissions") or {}).get("capability_mode") or "legacy").casefold()=="explicit"
 def skill_allowed(agent,sid):
     sid=str(sid).lower();skill=all_skills().get(sid)
     if not skill or not skill.get("enabled"):return False
     allow,block,_,_=_sets(agent)
     if sid in block:return False
     if sid in allow or global_skill_allowed(sid):return True
+    if _explicit_mode(agent):return False
+    # Backward compatibility for agents created before the platform builder.
     bases={str(x).lower() for x in skill.get("agents",[])};return "*" in bases or str(agent.get("base") or "general").lower() in bases
 def mcp_allowed(agent,name):
     key=str(name).lower();_,_,allow,block=_sets(agent)
@@ -47,7 +50,7 @@ def mcp_allowed(agent,name):
     return key in allow or global_mcp_allowed(key)
 def set_skill_access(agent_id,sid,mode):
     sid=str(sid).lower();mode=str(mode or "inherit").lower()
-    if sid not in all_skills():raise ValueError("Skill was not found.")
+    if sid not in all_skills():raise ValueError("Skill or capability was not found.")
     def fn(t):
         skills={str(x).lower() for x in t.get("skills",[])};p=dict(t.get("permissions") or {});block={str(x).lower() for x in p.get("blocked_skills",[])};skills.discard(sid);block.discard(sid)
         if mode=="allow":skills.add(sid)
@@ -66,35 +69,28 @@ def set_mcp_access(agent_id,name,mode):
         p["mcp_servers"]=sorted(allow);p["blocked_mcp_servers"]=sorted(block);t["permissions"]=p
     return _mutate_agent(agent_id,fn)
 def global_access_snapshot():
-    p=_load_global();return {"skills":[{"id":sid,"name":s.get("name",sid),"allowed":sid in p["skills"]} for sid,s in all_skills().items()],"mcp_servers":[{"name":str(i.get("name") or ""),"allowed":str(i.get("name") or "").lower() in p["mcp_servers"]} for i in list_servers()],"updated_at":p.get("updated_at")}
+    p=_load_global();return {"skills":[{"id":sid,"name":s.get("name",sid),"allowed":sid in p["skills"],"kind":s.get("kind")} for sid,s in all_skills().items()],"mcp_servers":[{"name":str(i.get("name") or ""),"allowed":str(i.get("name") or "").lower() in p["mcp_servers"]} for i in list_servers()],"updated_at":p.get("updated_at")}
 def access_snapshot(agent_id):
     agent=agent_registry.get_agent(agent_id)
     if not agent:raise ValueError("Agent was not found.")
     allow,block,mallow,mblock=_sets(agent);skills=[]
     for sid,s in sorted(all_skills().items(),key=lambda x:str(x[1].get("name",x[0])).lower()):
-        role="*" in s.get("agents",[]) or str(agent.get("base")) in s.get("agents",[]);mode="block" if sid in block else "allow" if sid in allow else "inherit";skills.append({"id":sid,"name":s.get("name",sid),"description":s.get("description",""),"capabilities":list(s.get("capabilities") or []),"permissions":list(s.get("permissions") or []),"enabled":bool(s.get("enabled")),"inherited":role,"global_allowed":global_skill_allowed(sid),"mode":mode,"effective":skill_allowed(agent,sid),"runtime":s.get("runtime")})
+        role="*" in s.get("agents",[]) or str(agent.get("base")) in s.get("agents",[]);mode="block" if sid in block else "allow" if sid in allow else "inherit";skills.append({"id":sid,"name":s.get("name",sid),"description":s.get("description",""),"capabilities":list(s.get("capabilities") or []),"permissions":list(s.get("permissions") or []),"kind":s.get("kind"),"status":s.get("status"),"enabled":bool(s.get("enabled")),"inherited":False if _explicit_mode(agent) else role,"global_allowed":global_skill_allowed(sid),"mode":mode,"effective":skill_allowed(agent,sid),"runtime":s.get("runtime")})
     servers=[]
     for i in list_servers():
         name=str(i.get("name") or "");key=name.lower();mode="block" if key in mblock else "allow" if key in mallow else "inherit";servers.append({"name":name,"transport":i.get("transport","streamable_http"),"global_allowed":global_mcp_allowed(name),"mode":mode,"allowed":mcp_allowed(agent,name)})
-    return {"agent":agent,"skills":skills,"mcp_servers":servers}
+    return {"agent":agent,"capability_mode":"explicit" if _explicit_mode(agent) else "legacy","skills":skills,"mcp_servers":servers}
 def _mentioned_mcp(message):
     low=str(message or "").lower()
     if re.match(r"^\s*(?:add|remove|inspect|list|show)\s+(?:an?\s+)?mcp\b",low):return None
-    servers=list_servers()
-    by_name={str(i.get("name") or "").strip().lower():str(i.get("name") or "").strip() for i in servers if i.get("name")}
-    whatsapp=by_name.get("whatsapp")
-    local_whatsapp_setting=bool(re.match(r"^\s*(?:set|assign|enable|disable|show)\b.*\bwhatsapp\b.*\b(?:support agent|support mode|settings|contact routing)\b",low))
-    natural_whatsapp=bool("whatsapp" in low and re.search(r"\b(?:check|list|read|open|search|find|send|reply|message|messages|template|mark|history)\b",low))
+    servers=list_servers();by_name={str(i.get("name") or "").strip().lower():str(i.get("name") or "").strip() for i in servers if i.get("name")}
+    whatsapp=by_name.get("whatsapp");local_whatsapp_setting=bool(re.match(r"^\s*(?:set|assign|enable|disable|show)\b.*\bwhatsapp\b.*\b(?:support agent|support mode|settings|contact routing)\b",low));natural_whatsapp=bool("whatsapp" in low and re.search(r"\b(?:check|list|read|open|search|find|send|reply|message|messages|template|mark|history)\b",low))
     if whatsapp and natural_whatsapp and not local_whatsapp_setting:return whatsapp
-    google=by_name.get("google-workspace")
-    natural_google=bool(re.search(r"\b(?:gmail|google\s+(?:mail|drive|docs?|sheets?|slides?|calendar|contacts?|workspace))\b",low) and re.search(r"\b(?:check|list|show|read|open|search|find|send|reply|draft|create|make|update|edit|delete|remove|share|upload|download|schedule|email)\b",low))
+    google=by_name.get("google-workspace");natural_google=bool(re.search(r"\b(?:gmail|google\s+(?:mail|drive|docs?|sheets?|slides?|calendar|contacts?|workspace))\b",low) and re.search(r"\b(?:check|list|show|read|open|search|find|send|reply|draft|create|make|update|edit|delete|remove|share|upload|download|schedule|email)\b",low))
     if google and natural_google:return google
-    canva=by_name.get("canva")
-    natural_canva=bool("canva" in low and re.search(r"\b(?:show|list|search|find|create|make|generate|edit|update|export|download|comment|design)\b",low))
+    canva=by_name.get("canva");natural_canva=bool("canva" in low and re.search(r"\b(?:show|list|search|find|create|make|generate|edit|update|export|download|comment|design)\b",low))
     if canva and natural_canva:return canva
-    agentmail=by_name.get("agentmail")
-    local_agentmail_setting=bool(re.match(r"^\s*(?:set|save|remember)\b",low) or re.search(r"\b(?:agentmail settings|email history|agentmail history)\b",low))
-    natural_email=bool(re.search(r"\b(?:check|list|read|open|search|send|email|mail|reply)\b",low) and re.search(r"\b(?:email|emails|e-mail|mail|inbox|inboxes|message|messages|thread|threads)\b",low))
+    agentmail=by_name.get("agentmail");local_agentmail_setting=bool(re.match(r"^\s*(?:set|save|remember)\b",low) or re.search(r"\b(?:agentmail settings|email history|agentmail history)\b",low));natural_email=bool(re.search(r"\b(?:check|list|read|open|search|send|email|mail|reply)\b",low) and re.search(r"\b(?:email|emails|e-mail|mail|inbox|inboxes|message|messages|thread|threads)\b",low))
     if agentmail and natural_email and not local_agentmail_setting:return agentmail
     for i in servers:
         name=str(i.get("name") or "").strip()
@@ -107,7 +103,8 @@ def _mentioned_skill(message):
     if re.match(r"^\s*(?:search(?:\s+the)?\s+web|web search|search online|look up online|find online)\b",low):return "research"
     if re.match(r"^\s*(?:run|execute)\s+(?:this\s+)?(?:python|code)\b",low):return "code-execution"
     for sid,s in all_skills().items():
-        if "skill" in low and (sid.replace("-"," ") in low or str(s.get("name") or "").lower() in low):return sid
+        label=str(s.get("name") or "").lower()
+        if ("skill" in low or "using" in low) and (sid.replace("-"," ") in low or label in low):return sid
     return None
 def _permission_card(agent,kind,cid,command):
     action=f"agent_access:{agent['id']}:{kind}:{cid.lower()}"
