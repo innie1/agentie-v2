@@ -99,6 +99,14 @@ class PluginSetupRegressionTests(unittest.TestCase):
         self.assertIn("Configure", source)
         self.assertIn("'password'", source)
 
+    def test_successful_connection_rebuilds_card_without_stale_error(self):
+        source = Path("frontend/plugin_setup.js").read_text(encoding="utf-8")
+        self.assertIn("error:null,connected:true", source)
+        self.assertIn("setup.connected?'Connected'", source)
+        self.assertIn("mcp-setup-connected", source)
+        self.assertIn("Connected successfully.", source)
+        self.assertIn("button&&button.isConnected", source)
+
 
 if __name__ == "__main__":
     unittest.main()
