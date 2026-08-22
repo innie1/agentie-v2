@@ -16,7 +16,8 @@ def _clone_routines(source:dict[str,Any],target:dict[str,Any])->list[dict[str,An
         if str(item.get("status") or "active")=="deleted":continue
         try:
             if item.get("trigger_type")=="event":
-                row,_=create_event_routine(name=str(item.get("name") or "Routine"),event_type=str(item.get("event_type") or ""),action=str(item.get("action") or item.get("instructions") or ""),owner_agent_id=target["id"],skill_id=item.get("skill_id"),event_filters=dict(item.get("event_filters") or {}),approval_policy=dict(item.get("approval_policy") or {}),failure_policy=str(item.get("failure_policy") or "report"))
+                filters={str(k):(target["id"] if str(v)==str(source["id"]) else v) for k,v in dict(item.get("event_filters") or {}).items()}
+                row,_=create_event_routine(name=str(item.get("name") or "Routine"),event_type=str(item.get("event_type") or ""),action=str(item.get("action") or item.get("instructions") or ""),owner_agent_id=target["id"],skill_id=item.get("skill_id"),event_filters=filters,approval_policy=dict(item.get("approval_policy") or {}),failure_policy=str(item.get("failure_policy") or "report"))
             else:
                 trigger=str(item.get("trigger") or "daily at 09:00");action=str(item.get("action") or item.get("instructions") or "");name=str(item.get("name") or "Routine")
                 row,_=create_routine(f"Create a routine called {name} that {trigger} {action}",owner_agent_id=target["id"],skill_id=item.get("skill_id"),approval_policy=dict(item.get("approval_policy") or {}),failure_policy=str(item.get("failure_policy") or "report"))
