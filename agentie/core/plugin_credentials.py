@@ -167,4 +167,7 @@ def enrich_setup_failure(request_text: str, result: dict[str, Any] | None) -> di
     server = infer_server_name(request_text, message)
     if not server:
         return result
-    return setup_response(server, message)
+    response = setup_response(server, message)
+    if isinstance(response.get("card"), dict):
+        response["card"]["retry_command"] = str(request_text or "").strip()[:20000]
+    return response
