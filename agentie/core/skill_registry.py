@@ -111,8 +111,23 @@ def _workflow_skill_command(text:str,lower:str)->dict[str,Any]|None:
         item=create_workflow_skill(name=name,description=body,when_to_use=f"Use when the user asks for {name}.",steps=steps,expected_output=f"Complete {name} and return the verified result.",approval_boundaries=["Use Agentie's normal approval path for consequential actions."],status="draft");return {"message":f"Created draft reusable skill “{item['name']}”. Review it, then activate it when ready.","card":skill_card(item)}
     return None
 
+def _activity_command(text:str,lower:str)->dict[str,Any]|None:
+    if lower in {"activity","activity timeline","show activity","show activity timeline","show agent activity","agent activity","work activity"}:
+        from agentie.core.activity_feed import activity_note
+        return {"message":"Here is the unified Agentie activity timeline.","card":activity_note(limit=50)}
+    m=re.match(r"^(?:show|open|list)\s+(?:the\s+)?(?:activity|activity timeline|agent activity)\s+(?:for|of)\s+(.+)$",text,re.I)
+    if m:
+        from agentie.core.activity_feed import activity_note
+        from agentie.core.agent_registry import get_agent
+        agent=get_agent(m.group(1).strip(' .?!\"“”'))
+        if not agent:return {"message":"Agent was not found.","card":None}
+        return {"message":f"Here is recent activity for {agent['name']}.","card":activity_note(agent_id=agent["id"],limit=50)}
+    return None
+
 def route_skill_command(message:str)->dict[str,Any]|None:
     text=" ".join(message.strip().split());lower=text.lower().strip(" .?!")
+    activity=_activity_command(text,lower)
+    if activity is not None:return activity
     access=_global_access_command(text)
     if access is not None:return access
     workflow=_workflow_skill_command(text,lower)
