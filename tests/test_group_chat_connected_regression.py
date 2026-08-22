@@ -62,11 +62,23 @@ class ConnectedGroupChatRegressionTests(unittest.TestCase):
 
     def test_actual_platform_route_delivers_connected_chat_ui(self):
         routes=[r for r in main.app.routes if getattr(r,'path',None)=='/platform.js']
-        self.assertGreaterEqual(len(routes),2)
-        self.assertEqual(routes[0].endpoint.__name__,'enhanced_platform_js')
+        self.assertGreaterEqual(len(routes),1)
         response=asyncio.run(routes[0].endpoint());text=response.body.decode('utf-8')
+        self.assertTrue('__agentieNext4UI' in text or '/platform-next4.js' in text)
+        layer_routes=[r for r in main.app.routes if getattr(r,'path',None)=='/platform-next4.js']
+        self.assertEqual(len(layer_routes),1)
+        layer=asyncio.run(layer_routes[0].endpoint()).body.decode('utf-8')
         for marker in ('__agentieNext4UI','/platform/agent-chats','New group chat','n4-agent-pick','Skill Marketplace','/platform/google-events/status'):
+            self.assertIn(marker,layer)
+
+    def test_base_platform_loads_connected_layers_even_when_it_is_the_only_platform_route(self):
+        text=Path('frontend/platform.js').read_text(encoding='utf-8')
+        for marker in ('__agentiePlatformLayerLoader','/platform-automation.js','/platform-permission-guard.js','/platform-next4.js'):
             self.assertIn(marker,text)
+        api_source=Path('agentie/core/platform_next4_api.py').read_text(encoding='utf-8')
+        self.assertIn('@router.get("/platform-automation.js")',api_source)
+        self.assertIn('@router.get("/platform-permission-guard.js")',api_source)
+        self.assertIn('@router.get("/platform-next4.js")',api_source)
 
     def test_next4_group_chat_ui_fetches_real_agents_and_uses_checkboxes_not_participant_prompt(self):
         text=Path('frontend/platform_next4.js').read_text(encoding='utf-8')
