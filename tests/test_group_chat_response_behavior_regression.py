@@ -42,7 +42,7 @@ class GroupChatResponseBehaviorRegressionTests(unittest.TestCase):
             row=agent_threads.post_message(self.thread['id'],'user',None,'User','@CEO @Mira @Vera hi')
         job=team_orchestrator.get_team_job(row['metadata']['team_job_id'])
         self.assertEqual(job['interaction_mode'],'chat')
-        self.assertTrue(all(h['context']['interaction_mode']=='chat' for h in job['handoffs']))
+        self.assertTrue(all(h['context']=={'task':'hi'} for h in job['handoffs']))
         self.assertEqual(row['metadata']['interaction_mode'],'chat')
 
     def test_chat_worker_prompt_requests_normal_reply_not_handoff_report(self):
