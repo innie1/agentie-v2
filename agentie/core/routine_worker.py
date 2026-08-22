@@ -81,11 +81,12 @@ async def _execute_routine(routine:dict[str,Any],event:dict[str,Any]|None=None)-
     role=str(routine.get("agent_role") or "auto").strip().lower();owner=bool(routine.get("owner_agent_id"));job=create_job(_routine_session(routine),action,preferred_role=None if owner or role=="auto" else role);start_job(job["id"],_runner);record_run(routine["id"],job["id"],"started",{"event_id":(event or {}).get("id"),"trigger_type":routine.get("trigger_type","schedule")});owner_text=f" · {routine.get('owner_agent_name')}" if routine.get("owner_agent_name") else "";_push({"message":f"Routine started: {routine['name']}{owner_text}","card":{"type":"routine_run","routine_id":routine["id"],"routine_name":routine["name"],"owner_agent_id":routine.get("owner_agent_id"),"owner_agent_name":routine.get("owner_agent_name"),"event_id":(event or {}).get("id"),"job":job_card(job)}})
 async def _dispatch_internal_events()->None:
     for event in pending_events(100):
-        delivered={str(x) for x in event.get("delivered_routine_ids") or []}
+        delivered={str(x) for x in event.get("delivered_routine_ids") or []};event_source=str((event.get("payload") or {}).get("source") or "")
         for routine in event_routines_for(event):
-            if str(routine.get("id")) in delivered:continue
-            claimed=mark_event_routine_claimed(str(routine["id"]),datetime.now().astimezone()) or routine
-            await _execute_routine(claimed,event);mark_delivered(str(event["id"]),str(routine["id"]))
+            rid=str(routine.get("id"))
+            if rid in delivered or event_source==f"routine:{rid}":continue
+            claimed=mark_event_routine_claimed(rid,datetime.now().astimezone()) or routine
+            await _execute_routine(claimed,event);mark_delivered(str(event["id"]),rid)
         close_event(str(event["id"]))
 async def _loop()->None:
     while True:
