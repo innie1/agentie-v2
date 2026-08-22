@@ -80,7 +80,12 @@ def access_snapshot(agent_id):
 def _mentioned_mcp(message):
     low=str(message or "").lower()
     if re.match(r"^\s*(?:add|remove|inspect|list|show)\s+(?:an?\s+)?mcp\b",low):return None
-    for i in list_servers():
+    servers=list_servers()
+    agentmail=next((str(i.get("name") or "").strip() for i in servers if str(i.get("name") or "").lower()=="agentmail"),None)
+    local_agentmail_setting=bool(re.match(r"^\s*(?:set|save|remember)\b",low) or re.search(r"\b(?:agentmail settings|email history|agentmail history)\b",low))
+    natural_email=bool(re.search(r"\b(?:check|list|read|open|search|send|email|mail|reply)\b",low) and re.search(r"\b(?:email|emails|e-mail|mail|inbox|inboxes|message|messages|thread|threads)\b",low))
+    if agentmail and natural_email and not local_agentmail_setting:return agentmail
+    for i in servers:
         name=str(i.get("name") or "").strip()
         if name and name.lower() in low and ("mcp" in low or "plugin" in low or f"using {name.lower()}" in low):return name
     return None
