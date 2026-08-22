@@ -41,6 +41,21 @@ def presets() -> list[dict[str, Any]]:
             "connect_url":"https://console.agentmail.to",
             "docs_url":"https://docs.agentmail.to/knowledge-base/getting-api-key",
         }),
+        _preset("whatsapp","WhatsApp Cloud","Official Meta WhatsApp Cloud API for real customer messages, templates, delivery status and support routing.",f"{_python()} -m agentie.mcp_whatsapp_server","Python · Meta WhatsApp Business Cloud API credentials",["whatsapp","messages","templates","support","webhooks","delivery_status"],True,permission_groups=["whatsapp_read","whatsapp_write","send"],sensitive_tools=["send_whatsapp_text","send_whatsapp_template","mark_whatsapp_read"],environment={"WHATSAPP_GRAPH_VERSION":"v23.0"},setup={
+            "title":"WhatsApp Cloud setup",
+            "description":"Connect an official Meta WhatsApp Business Cloud API number. Agentie uses Meta's API directly; it does not automate WhatsApp Web.",
+            "fields":[
+                {"env":"WHATSAPP_ACCESS_TOKEN","label":"WhatsApp access token","placeholder":"EA...","secret":True,"help":"Use a permanent/system-user token with WhatsApp messaging permissions."},
+                {"env":"WHATSAPP_PHONE_NUMBER_ID","label":"Phone number ID","placeholder":"123456789012345","secret":False,"help":"This is the Meta Phone Number ID, not the visible WhatsApp phone number."},
+                {"env":"WHATSAPP_VERIFY_TOKEN","label":"Webhook verify token","placeholder":"Choose a private random value","secret":True,"help":"You create this value yourself, then enter the exact same value in Meta's webhook configuration."},
+                {"env":"WHATSAPP_APP_SECRET","label":"Meta app secret","placeholder":"Meta app secret","secret":True,"help":"Used to verify X-Hub-Signature-256 on incoming webhook requests."},
+            ],
+            "get_key_url":"https://developers.facebook.com/apps/",
+            "connect_url":"https://developers.facebook.com/apps/",
+            "docs_url":"https://developers.facebook.com/docs/whatsapp/cloud-api/",
+            "webhook_path":"/webhooks/whatsapp",
+            "webhook_help":"Meta needs a public HTTPS callback URL that points to this Agentie webhook. Use the same verify token saved above.",
+        }),
         _preset("google-workspace","Google Workspace","Real Google Workspace tools for Gmail, Drive, Docs, Sheets, Slides, Calendar and Contacts.",_npx("-y","@dguido/google-workspace-mcp"),"Node.js / npx · Google OAuth desktop client",["gmail","drive","docs","sheets","slides","calendar","contacts"],True,permission_groups=["google_read","google_write","email_read","email_write","calendar_read","calendar_write","files_read","files_write"],sensitive_tools=["sendEmail","deleteEmail","modifyEmail","createEvent","updateEvent","deleteEvent","deleteItem","emptyTrash","shareFile","removePermission","createContact","updateContact","deleteContact"],environment={"GOOGLE_WORKSPACE_SERVICES":"drive,docs,sheets,slides,calendar,gmail,contacts","GOOGLE_WORKSPACE_TOON_FORMAT":"true"},setup={
             "title":"Google Workspace setup",
             "description":"Create a Google OAuth Desktop app, save its client ID and secret here, then connect your Google account. Gmail, Drive, Docs, Sheets, Slides, Calendar and Contacts are enabled.",
