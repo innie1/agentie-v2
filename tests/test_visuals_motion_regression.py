@@ -94,6 +94,12 @@ class VisualsMotionRegressionTests(unittest.TestCase):
             self.assertEqual(result["card"]["visual_kind"], "motion_graphic")
             self.assertEqual(result["card"]["duration_seconds"], 10)
 
+    def test_natural_request_can_name_the_svg_file(self):
+        with TemporaryDirectory() as tmp, patch.object(file_service, "UPLOADS", Path(tmp)), patch.object(visual_artifacts, "UPLOADS", Path(tmp)):
+            result = skill_registry.route_skill_command("Create a flowchart called sales.svg: Lead -> Close")
+            self.assertEqual(result["card"]["name"], "Agentie-sales.svg")
+            self.assertTrue(Path(tmp, "Agentie-sales.svg").exists())
+
     def test_request_without_enough_structure_asks_for_nodes_instead_of_faking_a_diagram(self):
         result = visual_artifacts.try_visual_request("", "Create a diagram for our laundry business")
         self.assertIsNotNone(result)
