@@ -52,8 +52,8 @@ def create_team_job(task,agents,requested_by="user",project_id=None,interaction_
     for a in agents:
         task_text=str(task).strip()
         if project:
-            scoped=project_context(project,a.get("role") or a.get("base"),task_text,agent_name=a.get("name"));context={"task":task_text,"project_id":project.get("id"),"scoped_brief":scoped,"interaction_mode":mode}
-        else:context={"task":task_text,"interaction_mode":mode}
+            scoped=project_context(project,a.get("role") or a.get("base"),task_text,agent_name=a.get("name"));context={"task":task_text,"project_id":project.get("id"),"scoped_brief":scoped}
+        else:context={"task":task_text}
         h={"id":"ho_"+uuid.uuid4().hex[:8],"from":requested_by,"to_agent_id":a["id"],"to_agent_name":a["name"],"task":task_text,"context":context,"status":"queued","result":None,"error":None,"attempts":0,"progress_summary":None,"status_checked_at":None};hs.append(h)
     job={"id":jid,"task":str(task).strip(),"status":"queued","requested_by":requested_by,"project_id":project.get("id") if project else None,"interaction_mode":mode,"agent_ids":[a["id"] for a in agents],"agent_names":[a["name"] for a in agents],"handoffs":hs,"created_at":now,"updated_at":now,"final_output":None,"completion_notified_at":None}
     with _LOCK:items=_load();items.append(job);_save(items)
@@ -66,7 +66,7 @@ def _mirror(agent,role,content,metadata):
     except Exception:pass
 async def _worker(jid,h):
     from agentie.core.runner import run_agent
-    a=get_agent(str(h["to_agent_id"]));pid=h.get("context",{}).get("project_id");mode=str(h.get("context",{}).get("interaction_mode") or "task")
+    a=get_agent(str(h["to_agent_id"]));pid=h.get("context",{}).get("project_id");job=get_team_job(jid) or {};mode=str(job.get("interaction_mode") or "task")
     if not a:
         if pid:update_agent_work_status(pid,str(h.get("to_agent_id") or h.get("to_agent_name") or ""),"failed","Agent no longer exists.")
         return h["id"],None,"Agent no longer exists."
@@ -75,7 +75,9 @@ async def _worker(jid,h):
             if x["id"]==h["id"]:x.update(status="working",started_at=_now(),attempts=int(x.get("attempts",0))+1,error=None,progress_summary=f"Working on {x.get('task') or j.get('task')}.",status_checked_at=_now())
     _mutate(jid,start)
     if pid:update_agent_work_status(pid,a["id"],"working")
-    brief=str(h.get("context",{}).get("scoped_brief") or h["task"]);visible=(f"Group chat message: {h['task']}" if mode=="chat" else f"Project handoff: {h['task']}");_mirror(a,"user",visible,{"routed_by":"agent_chat" if mode=="chat" else "project_handoff","team_job_id":jid,"project_id":pid,"interaction_mode":mode})
+    brief=str(h.get("context",{}).get("scoped_brief") or h["task"]);visible=f"Project handoff: {h['task']}"
+    if mode=="chat":visible=f"Group chat message: {h['task']}"
+    _mirror(a,"user",visible,{"routed_by":"agent_chat" if mode=="chat" else "project_handoff","team_job_id":jid,"project_id":pid,"interaction_mode":mode})
     if mode=="chat":
         prompt=f"You are {a['name']}, the {a['role']} agent, replying directly inside an Agentie group chat. Respond naturally as yourself to the user's message. Keep ordinary conversation concise, usually 1-3 sentences, unless the user clearly asks for detail. Do not output headings such as Deliverable or Handoff Summary. Do not provide internal status reports, workflow commentary, handoff metadata, or a generic description of your role unless the user asks. Do not say you are ready or operational unless that directly answers the message. Just reply to the user naturally.\n\nUser message: {brief}"
     else:
