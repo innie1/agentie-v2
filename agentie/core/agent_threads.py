@@ -5,7 +5,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from agentie.core.agent_registry import get_agent,list_agents
+from agentie.core.agent_registry import get_agent
 from agentie.core.team_orchestrator import create_team_job,get_team_job,start_team_job
 
 WORKSPACE=Path.cwd()/"workspace";THREADS=WORKSPACE/"agent_threads.json"
@@ -43,10 +43,31 @@ def add_participant(thread_id:str,agent_id_or_name:str)->dict[str,Any]:
     if not agent:raise ValueError("Agent was not found.")
     if agent["id"] not in thread.setdefault("participant_ids",[]):thread["participant_ids"].append(agent["id"]);thread.setdefault("participant_names",[]).append(agent["name"]);thread["updated_at"]=_now();_save(items)
     return thread
+
+def _mentioned_agents(thread:dict[str,Any],message:str)->list[dict[str,Any]]:
+    found=[];text=str(message or "")
+    for aid,name in zip(thread.get("participant_ids") or [],thread.get("participant_names") or []):
+        if re.search(rf"(?<!\w)@{re.escape(str(name))}(?![A-Za-z0-9_-])",text,re.I):
+            agent=get_agent(str(aid))
+            if agent:found.append(agent)
+    return found
+def _task_without_mentions(message:str,agents:list[dict[str,Any]])->str:
+    task=str(message or "")
+    for agent in agents:task=re.sub(rf"(?<!\w)@{re.escape(str(agent.get('name') or ''))}(?![A-Za-z0-9_-])"," ",task,flags=re.I)
+    return _clean(task,12000).strip(" ,.;:-") or _clean(message,12000)
+
 def post_message(thread_id:str,sender_type:str,sender_id:str|None,sender_name:str,message:str,metadata:dict[str,Any]|None=None)->dict[str,Any]:
     items=_load();thread=next((x for x in items if str(x.get("id"))==str(thread_id) or str(x.get("name","")).casefold()==str(thread_id).casefold()),None)
     if not thread:raise ValueError("Agent thread was not found.")
-    row={"id":"msg_"+uuid.uuid4().hex[:10],"sender_type":sender_type,"sender_id":sender_id,"sender_name":_clean(sender_name,120),"message":str(message or "").strip()[:12000],"metadata":metadata or {},"at":_now()};thread.setdefault("messages",[]).append(row);thread["messages"]=thread["messages"][-500:];thread["updated_at"]=_now();_save(items);return row
+    meta=dict(metadata or {})
+    # @mentions are real execution targets. Multiple mentions become one existing
+    # team job, preserving one visible collaboration thread instead of spawning a
+    # second chat-only executor.
+    if sender_type=="user" and not meta.get("team_job_id"):
+        agents=_mentioned_agents(thread,message)
+        if agents:
+            task=_task_without_mentions(message,agents);job=create_team_job(task,agents,requested_by="user");start_team_job(job["id"]);meta.update({"team_job_id":job["id"],"to_agent_ids":[a["id"] for a in agents],"mentions":[a["name"] for a in agents]})
+    row={"id":"msg_"+uuid.uuid4().hex[:10],"sender_type":sender_type,"sender_id":sender_id,"sender_name":_clean(sender_name,120),"message":str(message or "").strip()[:12000],"metadata":meta,"at":_now()};thread.setdefault("messages",[]).append(row);thread["messages"]=thread["messages"][-500:];thread["updated_at"]=_now();_save(items);return row
 def remove_agent_from_threads(agent_id:str)->int:
     items=_load();changed=0
     for thread in items:
@@ -57,8 +78,34 @@ def remove_agent_from_threads(agent_id:str)->int:
         thread["updated_at"]=_now();changed+=1
     if changed:_save(items)
     return changed
+
+def _materialize_job_results(thread_id:str)->dict[str,Any]|None:
+    items=_load();thread=next((x for x in items if str(x.get("id"))==str(thread_id)),None)
+    if not thread:return None
+    changed=False
+    for origin in list(thread.get("messages") or []):
+        meta=origin.setdefault("metadata",{});job_id=meta.get("team_job_id")
+        if not job_id:continue
+        job=get_team_job(str(job_id))
+        if not job:continue
+        emitted={str(x) for x in meta.get("materialized_handoff_ids") or []}
+        for handoff in job.get("handoffs") or []:
+            status=str(handoff.get("status") or "")
+            if status not in {"completed","failed","cancelled"}:continue
+            hid=str(handoff.get("id") or "")
+            if not hid or hid in emitted:continue
+            name=str(handoff.get("to_agent_name") or "Agent");agent_id=str(handoff.get("to_agent_id") or "") or None
+            if status=="completed":body=str(handoff.get("result") or "Completed the assigned task.")
+            else:body=f"{status.title()}: {str(handoff.get('error') or 'The assigned task did not complete.')[:1500]}"
+            reply={"id":"msg_"+uuid.uuid4().hex[:10],"sender_type":"agent","sender_id":agent_id,"sender_name":name,"message":body[:12000],"metadata":{"team_job_id":job["id"],"handoff_id":hid,"reply_to_message_id":origin.get("id"),"source":"team_job","status":status},"at":handoff.get("finished_at") or job.get("finished_at") or _now()}
+            thread.setdefault("messages",[]).append(reply);emitted.add(hid);changed=True
+        meta["materialized_handoff_ids"]=sorted(emitted)
+    if changed:
+        thread["messages"]=thread["messages"][-500:];thread["updated_at"]=_now();_save(items)
+    return thread
+
 def _sync_jobs(thread:dict[str,Any])->dict[str,Any]:
-    result=dict(thread);messages=[]
+    thread=_materialize_job_results(str(thread.get("id"))) or thread;result=dict(thread);messages=[]
     for row in thread.get("messages") or []:
         copy=dict(row);job_id=(row.get("metadata") or {}).get("team_job_id")
         if job_id:
@@ -87,14 +134,12 @@ def route_thread_command(message:str)->dict[str,Any]|None:
     if m:
         thread=get_thread(m.group(1).strip(' .?!\"“”'))
         if not thread:return {"message":"Agent chat was not found.","card":None}
-        post_message(thread["id"],"user",None,"User",m.group(2));return {"message":f"Posted to “{thread['name']}”.","card":thread_card(get_thread(thread["id"]) or thread)}
-    # Asking an agent inside a thread creates a real existing team job and links
-    # its live result into the thread; the thread is not a second execution engine.
+        row=post_message(thread["id"],"user",None,"User",m.group(2));mentions=(row.get("metadata") or {}).get("mentions") or [];verb=f"Asked {', '.join(mentions)} in" if mentions else "Posted to";return {"message":f"{verb} “{thread['name']}”.","card":thread_card(get_thread(thread["id"]) or thread)}
     m=re.match(r"^(?:ask|tell|have)\s+(.+?)\s+in\s+(?:agent|group|team)?\s*chat\s+(.+?)\s+(?:to\s+)?(.+)$",text,re.I)
     if m:
         agent=get_agent(m.group(1).strip());thread=get_thread(m.group(2).strip(' .?!\"“”'));task=m.group(3).strip()
         if not agent:return {"message":"Agent was not found.","card":None}
         if not thread:return {"message":"Agent chat was not found.","card":None}
         if agent["id"] not in thread.get("participant_ids",[]):return {"message":f"{agent['name']} is not a participant in that chat.","card":None}
-        job=create_team_job(task,[agent],requested_by="user");start_team_job(job["id"]);post_message(thread["id"],"user",None,"User",f"@{agent['name']} {task}",{"team_job_id":job["id"],"to_agent_id":agent["id"]});return {"message":f"Asked {agent['name']} in “{thread['name']}”.","card":thread_card(get_thread(thread["id"]) or thread)}
+        job=create_team_job(task,[agent],requested_by="user");start_team_job(job["id"]);post_message(thread["id"],"user",None,"User",f"@{agent['name']} {task}",{"team_job_id":job["id"],"to_agent_ids":[agent["id"]],"mentions":[agent["name"]]});return {"message":f"Asked {agent['name']} in “{thread['name']}”.","card":thread_card(get_thread(thread["id"]) or thread)}
     return None
