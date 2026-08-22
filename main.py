@@ -25,6 +25,7 @@ from agentie.core.memory_store import add_message,recent_messages
 from agentie.core.observability import finish_trace,get_trace,record_event,record_route,recent_traces,start_trace,summary_card,trace_card
 from agentie.core.office_artifacts import try_office_request
 from agentie.core.pdf_service import try_pdf_request
+from agentie.core.platform_next4_api import router as platform_next4_router
 from agentie.core.plugin_credentials import apply_all_credentials,clear_credentials,enrich_setup_failure,public_setup_state,save_credentials,start_oauth_connection
 from agentie.core.provider_gate import local_fallback_message,provider_allowed
 from agentie.core.reference_router import remember_active_from_card,try_active_reference
@@ -44,6 +45,7 @@ from agentie.tools.productivity_tools import REMINDERS
 
 app=FastAPI(title="Agentie API",version="1.10.1",description="Local-first Agentie runtime with persistent user-defined agents, skills, routines, collaboration, plugins, approvals, memory and local artifact generation")
 app.include_router(whatsapp_router)
+app.include_router(platform_next4_router)
 FRONTEND_DIR=Path(__file__).parent/"frontend";FRONTEND_FILE=FRONTEND_DIR/"index.html";CARDS_JS=FRONTEND_DIR/"cards.js";EVENTS_JS=FRONTEND_DIR/"events.js";UPLOAD_JS=FRONTEND_DIR/"upload.js";PLUGINS_JS=FRONTEND_DIR/"plugins.js";PLUGIN_SETUP_JS=FRONTEND_DIR/"plugin_setup.js";PLUGIN_ACCESS_JS=FRONTEND_DIR/"plugin_access.js";BROWSER_SCREEN_JS=FRONTEND_DIR/"browser_screen.js";UI_UPGRADE_JS=FRONTEND_DIR/"ui_upgrade.js";PLATFORM_JS=FRONTEND_DIR/"platform.js"
 class AgentRequest(BaseModel):
     message:str=Field(min_length=1,max_length=20_000);agent_type:str=Field(default="general",pattern="^(general|research|coding|manager|github)$");session_id:str|None=Field(default=None,max_length=200)
@@ -124,7 +126,7 @@ async def startup_event():apply_all_credentials();start_routine_worker()
 @app.get("/")
 async def chat_ui():
     if not FRONTEND_FILE.exists():raise HTTPException(404,"Frontend not found.")
-    html=FRONTEND_FILE.read_text(encoding="utf-8")+'\n<script src="/cards.js?v=201"></script>\n<script src="/events.js?v=201"></script>\n<script src="/upload.js?v=201"></script>\n<script src="/plugins.js?v=207"></script>\n<script src="/plugin-setup.js?v=207"></script>\n<script src="/plugin-access.js?v=203"></script>\n<script src="/browser-screen.js?v=201"></script>\n<script src="/ui-upgrade.js?v=203"></script>\n<script src="/platform.js?v=210"></script>\n';return HTMLResponse(html,headers={"Cache-Control":"no-store, no-cache, must-revalidate, max-age=0"})
+    html=FRONTEND_FILE.read_text(encoding="utf-8")+'\n<script src="/cards.js?v=201"></script>\n<script src="/events.js?v=201"></script>\n<script src="/upload.js?v=201"></script>\n<script src="/plugins.js?v=207"></script>\n<script src="/plugin-setup.js?v=207"></script>\n<script src="/plugin-access.js?v=203"></script>\n<script src="/browser-screen.js?v=201"></script>\n<script src="/ui-upgrade.js?v=203"></script>\n<script src="/platform.js?v=211"></script>\n';return HTMLResponse(html,headers={"Cache-Control":"no-store, no-cache, must-revalidate, max-age=0"})
 @app.get("/cards.js")
 async def cards_js():return Response(CARDS_JS.read_text(encoding="utf-8"),media_type="application/javascript",headers={"Cache-Control":"no-store"})
 @app.get("/events.js")
