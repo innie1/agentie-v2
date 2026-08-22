@@ -19,7 +19,6 @@ def _add(tools,extra):
         if id(tool) not in seen:tools.append(tool);seen.add(id(tool))
     return tools
 
-
 def _plugin_inspect_tool(agent:dict[str,Any]):
     @function_tool
     async def inspect_plugin(server: str) -> str:
@@ -29,11 +28,9 @@ def _plugin_inspect_tool(agent:dict[str,Any]):
         if not mcp_allowed(agent,server):return f"{agent.get('name') or 'This agent'} is not allowed to use MCP/plugin '{server}'."
         try:info=await inspect_server(server)
         except Exception as exc:return f"Could not inspect plugin '{server}': {str(exc)[:500]}"
-        tools=[]
-        for item in info.get("tools") or []:tools.append({"name":item.get("name"),"description":item.get("description"),"input_schema":item.get("input_schema") or {}})
+        tools=[{"name":item.get("name"),"description":item.get("description"),"input_schema":item.get("input_schema") or {}} for item in info.get("tools") or []]
         return json.dumps({"server":server,"tools":tools},ensure_ascii=False)
     return inspect_plugin
-
 
 def _plugin_tool(agent:dict[str,Any]):
     @function_tool
@@ -55,18 +52,17 @@ def _plugin_tool(agent:dict[str,Any]):
             return json.dumps({"status":"approval_required","approval_id":approval.get("id"),"server":server,"tool":tool,"message":"A real Agentie approval was created. Stop this action and tell the user approval is required before retrying."},ensure_ascii=False)
         try:result=await execute_tool(server,tool,arguments)
         except Exception as exc:return f"Plugin '{server}' tool '{tool}' failed: {str(exc)[:700]}"
+        try:
+            from agentie.core.external_triggers import publish_external_event
+            publish_external_event("plugin.tool.completed",{"agent_id":agent.get("id"),"agent_name":agent.get("name"),"server":server,"tool":tool,"arguments":arguments,"message":result.get("message"),"result":result.get("card")},source="persistent_agent_plugin")
+        except Exception:pass
         return json.dumps({"status":"completed","server":server,"tool":tool,"message":result.get("message"),"result":result.get("card")},ensure_ascii=False)
     return use_plugin
-
 
 def _delegate_tool(agent:dict[str,Any]):
     @function_tool
     async def delegate_to_agent(agent_name: str, task: str, thread_id: str = "") -> str:
-        """Delegate bounded work to another existing Agentie agent.
-
-        Creates a real Team Job and visible Agent Chat. The target keeps its own
-        private memory and permissions; only the bounded task/result are shared.
-        """
+        """Delegate bounded work to another existing Agentie agent."""
         try:
             from agentie.core.agent_threads import agent_to_agent_task
             result=agent_to_agent_task(str(agent.get("id") or agent.get("name") or ""),agent_name,task,thread_id or None)
@@ -74,15 +70,10 @@ def _delegate_tool(agent:dict[str,Any]):
         return json.dumps({"status":"started","team_job_id":result["job"]["id"],"thread_id":result["thread"]["id"],"from_agent":result["sender"]["name"],"to_agent":result["target"]["name"],"task":result["job"]["task"],"message":"The target agent is working in a visible Agent Chat. Do not claim completion until its real result returns."},ensure_ascii=False)
     return delegate_to_agent
 
-
 def _gap_tool(agent:dict[str,Any]):
     @function_tool
     async def analyze_team_capability_gap(goal: str) -> str:
-        """Check whether existing configured agents cover a goal before recommending another agent.
-
-        This tool never creates an agent. It returns the best existing owners or a
-        proposed editable agent configuration for the user to review.
-        """
+        """Check existing configured agents before recommending another agent. Never creates one."""
         try:
             from agentie.core.capability_planner import analyze_capability_gap
             result=analyze_capability_gap(goal)
@@ -90,7 +81,6 @@ def _gap_tool(agent:dict[str,Any]):
         draft=result.get("suggested_agent") or {};payload={"covered":result.get("covered"),"recommendation":result.get("recommendation"),"best_match":result.get("best_match"),"matches":result.get("matches"),"suggested_agent":{"job":draft.get("job"),"goal":draft.get("goal"),"skills":[{"id":x.get("id"),"name":x.get("name")} for x in draft.get("skills") or []],"plugins":[{"id":x.get("id"),"name":x.get("name"),"installed":x.get("installed")} for x in draft.get("plugins") or []]} if draft else None,"message":"Reuse an existing agent when coverage is strong; recommend a new agent only when there is a real ownership/capability gap. Do not create it without the user's explicit action."}
         return json.dumps(payload,ensure_ascii=False)
     return analyze_team_capability_gap
-
 
 def tools_for_persistent_agent(agent:dict[str,Any])->list:
     """Build model tools from effective grants, never from a job-title class."""
