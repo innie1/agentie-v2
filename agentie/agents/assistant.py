@@ -25,25 +25,29 @@ Rules:
 - Keep answers concise unless the user asks for detail.
 """.strip()
 
+
 def _model_settings()->ModelSettings:
     max_tokens=int(os.getenv("AGENTIE_MAX_OUTPUT_TOKENS","4096"));max_tokens=max(256,min(max_tokens,16384));return ModelSettings(max_tokens=max_tokens)
-def _specialist(profile:str)->Agent:
-    return Agent(name=f"Agentie {profile.title()} Specialist",instructions=SYSTEM_INSTRUCTIONS+f"\n\nYou are the {profile} compatibility specialist. Focus on that specialty.",model=get_model(),model_settings=_model_settings(),tools=tools_for(profile))
 
-def build_assistant(agent_type:str="general",mcp_servers=None,role_info:dict|None=None,persistent_instructions:str|None=None,persistent_agent:dict|None=None)->Agent:
+
+def _specialist(profile:str,provider_info:dict|None=None)->Agent:
+    return Agent(name=f"Agentie {profile.title()} Specialist",instructions=SYSTEM_INSTRUCTIONS+f"\n\nYou are the {profile} compatibility specialist. Focus on that specialty.",model=get_model(provider_info),model_settings=_model_settings(),tools=tools_for(profile))
+
+
+def build_assistant(agent_type:str="general",mcp_servers=None,role_info:dict|None=None,persistent_instructions:str|None=None,persistent_agent:dict|None=None,provider_info:dict|None=None)->Agent:
     if persistent_agent:
         name=str(persistent_agent.get("name") or "Agent")
         job=str(persistent_agent.get("role") or "configured job")
         instructions=SYSTEM_INSTRUCTIONS+f"\n\nYou are {name}. Your configured job/ownership is: {job}."
         if persistent_instructions:instructions+="\n\nPersistent identity, rules, memory preferences and configured responsibilities:\n"+str(persistent_instructions).strip()
-        return Agent(name=name,instructions=instructions,model=get_model(),model_settings=_model_settings(),tools=tools_for_persistent_agent(persistent_agent),mcp_servers=list(mcp_servers or []))
+        return Agent(name=name,instructions=instructions,model=get_model(provider_info),model_settings=_model_settings(),tools=tools_for_persistent_agent(persistent_agent),mcp_servers=list(mcp_servers or []))
     # Backward-compatible base-agent runtime. This path is not the model for a
     # user-created persistent agent.
     profile=agent_type if agent_type in {"general","research","coding","manager","github"} else "general";role_info=role_info or {"name":profile,"base":profile,"instruction":f"Act in the {profile} role."};tool_profile=str(role_info.get("base") or profile)
     if tool_profile not in {"general","research","coding","manager","github"}:tool_profile=profile
     tools=list(tools_for(tool_profile))
     if tool_profile=="manager":
-        research=_specialist("research");coding=_specialist("coding");github=_specialist("github");tools.extend([research.as_tool(tool_name="delegate_research",tool_description="Delegate bounded evidence or research work."),coding.as_tool(tool_name="delegate_coding",tool_description="Delegate bounded coding, file, data, or document work."),github.as_tool(tool_name="delegate_github",tool_description="Delegate bounded GitHub repository inspection work.")])
+        research=_specialist("research",provider_info);coding=_specialist("coding",provider_info);github=_specialist("github",provider_info);tools.extend([research.as_tool(tool_name="delegate_research",tool_description="Delegate bounded evidence or research work."),coding.as_tool(tool_name="delegate_coding",tool_description="Delegate bounded coding, file, data, or document work."),github.as_tool(tool_name="delegate_github",tool_description="Delegate bounded GitHub repository inspection work.")])
     role_name=str(role_info.get("name") or profile);role_instruction=str(role_info.get("instruction") or "");instructions=SYSTEM_INSTRUCTIONS+f"\n\nCompatibility base agent: {profile}. Runtime role: {role_name}.\n{role_instruction}"
     if persistent_instructions:instructions+="\n\nPersistent instructions:\n"+str(persistent_instructions).strip()
-    return Agent(name=f"Agentie {role_name.title()} Agent",instructions=instructions,model=get_model(),model_settings=_model_settings(),tools=tools,mcp_servers=list(mcp_servers or []) if tool_profile in {"general","manager"} else [])
+    return Agent(name=f"Agentie {role_name.title()} Agent",instructions=instructions,model=get_model(provider_info),model_settings=_model_settings(),tools=tools,mcp_servers=list(mcp_servers or []) if tool_profile in {"general","manager"} else [])
