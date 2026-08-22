@@ -15,9 +15,11 @@ class AgentDecisionBehaviorRegressionTests(unittest.TestCase):
         self.prompt_patch = patch.object(agent_prompt, "PROMPTS_FILE", root / "agent_instruction_profiles.json")
         self.agent_patch.start()
         self.prompt_patch.start()
-        self.ceo = agent_registry.create_agent("CEO", "Chief of Staff", "manager", purpose="Grow the company and coordinate the team")["agent"]
-        self.mira = agent_registry.create_agent("Mira", "critic", "research", purpose="Challenge weak assumptions and research risks")["agent"]
-        self.ben = agent_registry.create_agent("Ben", "Sales & Outreach", "general", purpose="Increase qualified sales")["agent"]
+        self.ceo = agent_registry.create_agent("CEO", "Chief of Staff", purpose="Grow the company and coordinate the team", permissions={"delegate": True}, skills=["planning"])["agent"]
+        self.mira = agent_registry.create_agent("Mira", "Market research and risk owner", purpose="Challenge weak assumptions and research risks", skills=["research"], responsibilities=["Research markets and competitors", "Challenge weak assumptions"])["agent"]
+        self.ben = agent_registry.create_agent("Ben", "Sales & Outreach", purpose="Increase qualified sales", responsibilities=["Run qualified sales outreach"])["agent"]
+        self.alex = agent_registry.create_agent("Alex", "Technical implementation owner", purpose="Build and implement applications", responsibilities=["Build the app", "Implement technical plans"])["agent"]
+        self.vera = agent_registry.create_agent("Vera", "Verification owner", purpose="Verify launch readiness and quality", responsibilities=["Verify completed work", "Check launch readiness"])["agent"]
 
     def tearDown(self):
         self.prompt_patch.stop()
@@ -47,13 +49,13 @@ class AgentDecisionBehaviorRegressionTests(unittest.TestCase):
         self.assertIn("RISKS/UNCERTAINTY", prompt)
         self.assertIn("Chief of Staff", prompt)
 
-    def test_manager_judgment_sees_existing_team_and_avoids_duplicate_specialists(self):
+    def test_explicit_delegation_judgment_sees_existing_team_and_avoids_duplicates(self):
         result = try_npc_response(self.ceo, "Which should we prioritize first, more sales outreach or more market research?")
         prompt = result.get("escalate_message", "")
         self.assertIn("Existing Agentie team", prompt)
-        self.assertIn("Mira (critic)", prompt)
+        self.assertIn("Mira (Market research and risk owner)", prompt)
         self.assertIn("Ben (Sales & Outreach)", prompt)
-        self.assertIn("do not recommend a duplicate specialist", prompt)
+        self.assertIn("do not recommend a duplicate agent", prompt)
         self.assertIn("urgency", prompt)
         self.assertIn("reversibility", prompt)
 
@@ -64,9 +66,8 @@ class AgentDecisionBehaviorRegressionTests(unittest.TestCase):
         self.assertIn("do not execute it", prompt)
         self.assertIn("permission/approval gate", prompt)
 
-    def test_local_role_checklist_precedes_judgment_escalation(self):
-        researcher = agent_registry.create_agent("Researcher", "Researcher", "research", purpose="Research markets")["agent"]
-        research = try_npc_response(researcher, "How should we research this?")
+    def test_local_checklists_follow_explicit_capability_and_delegate_grants(self):
+        research = try_npc_response(self.mira, "How should we research this?")
         planning = try_npc_response(self.ceo, "How should we plan this?")
         self.assertEqual(research.get("routed_by"), "npc_brain")
         self.assertEqual(research.get("npc_role"), "research")
@@ -89,12 +90,13 @@ class AgentDecisionBehaviorRegressionTests(unittest.TestCase):
             "Should we research the market, build an app, and verify it before launch?", self.ceo
         ))
 
-    def test_explicit_multistage_execution_still_uses_manager_autopilot(self):
+    def test_explicit_multistage_execution_uses_configured_agent_autopilot(self):
         plan = manager_autopilot.build_autopilot_plan(
-            "Research the market, build the app, then verify it is ready to launch.", self.ceo
+            "Research the market; build the app; then verify it is ready to launch.", self.ceo
         )
         self.assertIsNotNone(plan)
         self.assertGreaterEqual(len(plan["steps"]), 2)
+        self.assertTrue({step["agent"]["name"] for step in plan["steps"]}.issubset({"Mira", "Alex", "Vera"}))
 
     def test_global_assistant_contract_preserves_approval_and_judgment_rules(self):
         text = Path("agentie/agents/assistant.py").read_text(encoding="utf-8")
