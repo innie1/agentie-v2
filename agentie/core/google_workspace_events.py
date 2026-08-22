@@ -187,7 +187,7 @@ def _records_from_result(result: dict[str, Any]) -> list[dict[str, Any]]:
     ids = []
     for pattern in (r'"(?:id|messageId|eventId|fileId)"\s*:\s*"([^"\n]+)"', r"\b(?:id|messageId|eventId|fileId)\s*:\s*([^\s,}\]]+)"):
         for match in re.finditer(pattern, text, re.I):
-            value = match.group(1).strip('"\'')
+            value = match.group(1).strip().strip("\"'")
             if value and value not in ids:
                 ids.append(value)
     return [{"id": x} for x in ids]
@@ -259,7 +259,7 @@ async def _poll_gmail(data: dict[str, Any], info: dict[str, Any]) -> int:
                 continue
             publish_external_event("email.received", _event_payload(row, source_type="gmail"), source="google_workspace", external_id=f"gmail:{rid}")
             emitted += 1
-    data["gmail_seen_ids"] = list(dict.fromkeys(ids + list(previous)))[:300]
+    data["gmail_seen_ids"] = list(dict.fromkeys(ids + sorted(previous)))[:300]
     return emitted
 
 
@@ -288,7 +288,7 @@ async def _poll_calendar(data: dict[str, Any], info: dict[str, Any]) -> int:
                 continue
             publish_external_event("calendar.event.started", _event_payload(row, source_type="calendar"), source="google_workspace", external_id=f"calendar:{rid}")
             emitted += 1
-    data["calendar_seen_ids"] = list(dict.fromkeys(ids + list(previous)))[:300]
+    data["calendar_seen_ids"] = list(dict.fromkeys(ids + sorted(previous)))[:300]
     return emitted
 
 
