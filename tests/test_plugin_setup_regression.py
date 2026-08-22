@@ -47,6 +47,7 @@ class PluginSetupRegressionTests(unittest.TestCase):
         self.assertIn(secret, raw)
         state = plugin_credentials.public_setup_state("agentmail")
         self.assertTrue(state["configured"])
+        self.assertTrue(state["has_saved_credentials"])
         self.assertTrue(state["fields"][0]["configured"])
         self.assertNotIn(secret, json.dumps(state))
 
@@ -75,27 +76,38 @@ class PluginSetupRegressionTests(unittest.TestCase):
         plugin_credentials.save_credentials("custom-service", {"CUSTOM_SERVICE_TOKEN": "secret"})
         state = plugin_credentials.public_setup_state("custom-service")
         self.assertTrue(state["custom_env_supported"])
+        self.assertTrue(state["configured"])
+        self.assertTrue(state["has_saved_credentials"])
         self.assertEqual(state["fields"], [])
         self.assertEqual(plugin_credentials.server_environment("custom-service")["CUSTOM_SERVICE_TOKEN"], "secret")
+        self.assertNotIn("secret", json.dumps(state))
 
     def test_invalid_environment_variable_is_rejected(self):
         with self.assertRaises(ValueError):
             plugin_credentials.save_credentials("agentmail", {"BAD KEY NAME": "secret"})
 
-    def test_main_wires_both_inline_recovery_and_plugin_setup_endpoints(self):
+    def test_main_wires_inline_recovery_setup_oauth_and_test_endpoints(self):
         source = Path("main.py").read_text(encoding="utf-8")
         self.assertIn('/plugins/setup/{server_name}', source)
+        self.assertIn('/plugins/connect/{server_name}', source)
+        self.assertIn('/plugins/test/{server_name}', source)
+        self.assertIn('start_oauth_connection', source)
         self.assertIn('enrich_setup_failure(request.message,mcp)', source)
         self.assertIn('enrich_setup_failure(effective,preflight)', source)
         self.assertIn('/plugin-setup.js', source)
         self.assertIn('apply_all_credentials()', source)
 
-    def test_frontend_supports_inline_card_and_plugins_page_configure(self):
+    def test_frontend_supports_inline_card_plugins_page_oauth_and_secret_confirmation(self):
         source = Path("frontend/plugin_setup.js").read_text(encoding="utf-8")
         self.assertIn("card.type==='mcp_setup'", source)
         self.assertIn("data-setup-mcp", source)
-        self.assertIn("Save & test", source)
-        self.assertIn("Get API key", source)
+        self.assertIn("Save credentials", source)
+        self.assertIn("Connect account", source)
+        self.assertIn("Test connection", source)
+        self.assertIn("OAuth credentials", source)
+        self.assertIn("confirmClearSetup", source)
+        self.assertIn("Clear saved secret?", source)
+        self.assertIn("data-confirm-clear", source)
         self.assertIn("Configure", source)
         self.assertIn("'password'", source)
 
