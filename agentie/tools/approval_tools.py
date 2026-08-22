@@ -42,6 +42,12 @@ def get_approval(approval_id: str):
     for item in _load():
         if item.get("id") == clean_id:return item
     return None
+def recent_approvals(*,agent_id: str | None = None,status: str | None = None,limit: int = 100) -> list[dict]:
+    """Public read-only approval history used by activity and workflow runtimes."""
+    items=[dict(x) for x in _load()]
+    if agent_id:items=[x for x in items if str((x.get("metadata") or {}).get("agent_id") or "")==str(agent_id)]
+    if status:items=[x for x in items if str(x.get("status") or "")==str(status)]
+    return list(reversed(items[-max(1,min(int(limit),500)):]))
 def approval_is_granted(action: str, approval_id: str | None = None) -> bool:
     parts = _mcp_parts(action)
     if parts and mcp_tool_is_read_only(parts[1]):return True
@@ -131,7 +137,12 @@ def resolve_approval(approval_id: str, approved: bool, remember: bool = False):
             else:item["status"] = "approved" if approved else "denied"
             item["resolved_at"] = datetime.now(timezone.utc).isoformat()
             if approved and not remember:_execute_approved_action(item)
-            _save(items);return item
+            _save(items)
+            try:
+                from agentie.core.automation_events import publish_event
+                meta=item.get("metadata") or {};publish_event("approval.resolved",{"approval_id":item.get("id"),"status":item.get("status"),"approved":bool(approved),"remember":bool(remember),"agent_id":meta.get("agent_id"),"agent_name":meta.get("agent_name"),"kind":meta.get("kind"),"server":meta.get("server"),"tool":meta.get("tool")},source="approval_tools",dedupe_key=f"approval:{item.get('id')}:resolved")
+            except Exception:pass
+            return item
     raise ValueError("Approval not found.")
 def list_persistent_mcp_permissions() -> list[dict]:
     out = []
