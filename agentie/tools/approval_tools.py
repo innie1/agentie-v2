@@ -55,8 +55,7 @@ def approval_is_granted(action: str, approval_id: str | None = None) -> bool:
     clean_id = str(approval_id or "").removesuffix(":always") if approval_id else None
     for item in items:
         if item.get("action") == action and item.get("status") == "approved" and not item.get("consumed_at") and (clean_id is None or item.get("id") == clean_id):
-            if parts:
-                item["consumed_at"] = datetime.now(timezone.utc).isoformat();item["status"] = "consumed";_save(items)
+            if parts:item["consumed_at"] = datetime.now(timezone.utc).isoformat();item["status"] = "consumed";_save(items)
             return True
     return False
 def consume_approval(action: str) -> bool:
@@ -75,6 +74,19 @@ def create_approval(action: str, reason: str, metadata: dict | None = None):
         parts = _mcp_parts(action)
         if parts:item["metadata"] = {"kind": "mcp", "server": parts[0], "tool": parts[1]}
     items.append(item);_save(items);return item
+def create_background_mcp_approval(action: str, reason: str, *, agent_id: str, agent_name: str, server: str, tool: str, command: str = ""):
+    item=create_approval(action,reason,{"kind":"mcp","server":server,"tool":tool,"background":True,"agent_id":agent_id,"agent_name":agent_name,"command":command})
+    return item
+def poll_background_approval_events(limit: int = 20) -> list[dict]:
+    """Surface background/delegated MCP approvals once through the normal approval card."""
+    items=_load();events=[];changed=False;now=datetime.now(timezone.utc).isoformat()
+    for item in items:
+        meta=item.get("metadata") or {}
+        if item.get("status")!="pending" or not meta.get("background") or item.get("background_notified_at"):continue
+        events.append({"message":f"{meta.get('agent_name') or 'An agent'} needs approval to use {meta.get('server') or 'a plugin'} / {meta.get('tool') or 'tool'}.","card":{"type":"approvals","items":[item]}});item["background_notified_at"]=now;changed=True
+        if len(events)>=max(1,limit):break
+    if changed:_save(items)
+    return events
 def _execute_approved_action(item: dict):
     meta = item.get("metadata") or {};kind=meta.get("kind")
     if kind == "agent_delete":
@@ -131,8 +143,7 @@ def list_persistent_mcp_permissions() -> list[dict]:
 def revoke_persistent_mcp_permission(approval_id: str) -> bool:
     items = _load()
     for item in items:
-        if item.get("id") == approval_id and item.get("status") == "always":
-            item["status"] = "revoked";item["revoked_at"] = datetime.now(timezone.utc).isoformat();_save(items);return True
+        if item.get("id") == approval_id and item.get("status") == "always":item["status"] = "revoked";item["revoked_at"] = datetime.now(timezone.utc).isoformat();_save(items);return True
     return False
 @function_tool
 def request_approval(action: str, reason: str) -> str:return json.dumps(create_approval(action, reason))
