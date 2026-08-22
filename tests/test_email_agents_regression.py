@@ -4,7 +4,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from agentie.core import agent_registry, capability_preflight
+from agentie.core import agent_access, agent_registry, capability_preflight
 
 
 LEGACY_INFO = {
@@ -117,6 +117,13 @@ class EmailAgentsRegressionTests(unittest.TestCase):
         card = capability_preflight._history_card(self.ben_session)
         self.assertIn("Customer order", card["card"]["content"])
         self.assertIn("Ben", card["card"]["title"])
+
+    def test_natural_email_uses_existing_per_agent_mcp_permission_detector(self):
+        with patch.object(agent_access, "list_servers", return_value=[{"name": "agentmail"}]):
+            self.assertEqual(agent_access._mentioned_mcp("Check my email"), "agentmail")
+            self.assertEqual(agent_access._mentioned_mcp("Email client@example.com saying hello"), "agentmail")
+            self.assertIsNone(agent_access._mentioned_mcp("Show email history"))
+            self.assertIsNone(agent_access._mentioned_mcp("Set my AgentMail inbox to inbox_123"))
 
     def test_main_passes_active_session_to_email_capability_preflight(self):
         source = Path("main.py").read_text(encoding="utf-8")
