@@ -42,12 +42,6 @@ def _candidate(task:str,failed_agent_id:str,attempted:set[str])->tuple[dict[str,
     return None,0.0
 
 def replan_failed_handoff(job_id:str,handoff_id:str)->dict[str,Any]:
-    """Add one bounded replacement handoff to an autopilot job.
-
-    Only an explicitly delegation-enabled manager can trigger automatic replanning.
-    The replacement receives the failed bounded task/context, never the failed
-    agent's private conversation or memory.
-    """
     from agentie.core import team_orchestrator as team
     job=get_team_job(job_id)
     if not job:return {"action":"stop","reason":"Team job was not found."}
@@ -76,6 +70,21 @@ def replan_failed_handoff(job_id:str,handoff_id:str)->dict[str,Any]:
     created=next((x for x in updated.get("handoffs") or [] if str(x.get("id"))==new_id),None)
     if not created:return {"action":"already_replanned","handoff_id":failed.get("recovery_handoff_id")}
     return {"action":"reassigned","automatic":True,"classification":policy["classification"],"handoff":created,"agent":agent,"score":score}
+
+def finalize_recovery(job_id:str,failed_handoff_id:str,replacement_handoff_id:str)->dict[str,Any]|None:
+    from agentie.core import team_orchestrator as team
+    def apply(job):
+        failed=next((x for x in job.get("handoffs") or [] if str(x.get("id"))==str(failed_handoff_id)),None);replacement=next((x for x in job.get("handoffs") or [] if str(x.get("id"))==str(replacement_handoff_id)),None)
+        if not failed or not replacement:return
+        if replacement.get("status")=="completed":failed["status"]="recovered";failed["progress_summary"]=f"Recovered by {replacement.get('to_agent_name')}.";failed["recovered_by_handoff_id"]=replacement_handoff_id
+        active=[x for x in job.get("handoffs") or [] if x.get("status") in {"queued","working"}]
+        unresolved=[x for x in job.get("handoffs") or [] if x.get("status")=="failed"]
+        if active:job["status"]="working"
+        elif unresolved:job["status"]="partial" if any(x.get("status") in {"completed","recovered"} for x in job.get("handoffs") or []) else "failed"
+        else:job["status"]="completed";job["finished_at"]=team._now()
+        outputs=[f"{x['to_agent_name']}:\n{x['result']}" for x in job.get("handoffs") or [] if x.get("status")=="completed" and x.get("result")]
+        job["final_output"]="\n\n---\n\n".join(outputs) if outputs else job.get("final_output")
+    return team._mutate(job_id,apply)
 
 def recovery_note(job_id:str)->dict[str,Any]:
     job=get_team_job(job_id)
