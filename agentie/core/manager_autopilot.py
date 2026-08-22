@@ -28,12 +28,6 @@ def _advice_only(goal:str)->bool:
     return advice and not proceed
 
 def _artifact_compound_request(goal:str)->bool:
-    """Keep file-producing multi-step workflows on Agentie's artifact/job engine.
-
-    The generic configured-agent planner coordinates ownership. It must not steal
-    compound requests whose final deliverable is a real PDF/DOCX/XLSX/PPTX/etc.,
-    because the existing job engine owns artifact creation, progress and output.
-    """
     text=" ".join(str(goal or "").strip().split())
     if not (_ARTIFACT_RE.search(text) and _ARTIFACT_CREATE_RE.search(text)):return False
     return bool(re.search(r"\b(?:then|after|and then|after that)\b|;",text,re.I))
@@ -56,10 +50,7 @@ def build_autopilot_plan(goal:str,manager:dict[str,Any])->dict[str,Any]|None:
     for index,clause in enumerate(clauses,1):
         agent=best_agent(clause,exclude_id=str(manager.get("id")),min_score=.16)
         if not agent:continue
-        # A plan is built from actual configured agents. No hidden research /
-        # coding / verification employee classes are created or assumed.
-        score=match_score(clause,agent)
-        steps.append({"phase":f"step_{index}","label":clause[:80],"agent":agent,"task":clause,"score":score})
+        score=match_score(clause,agent);steps.append({"phase":f"step_{index}","label":clause[:80],"agent":agent,"task":clause,"score":score})
     if len(steps)<2:return None
     return {"goal":goal.strip(),"manager":manager,"steps":steps,"missing":[],"sequential":bool(re.search(r"\b(?:then|after that|and then)\b",goal,re.I) or ";" in goal)}
 
@@ -68,9 +59,7 @@ def _configure(job_id:str,plan:dict[str,Any])->dict[str,Any]:
     steps=list(plan["steps"]);by_agent={}
     for step in steps:by_agent.setdefault(str(step["agent"]["id"]),[]).append(step)
     def apply(job):
-        job["autopilot"]=True;job["autopilot_manager_id"]=plan["manager"]["id"];job["autopilot_manager_name"]=plan["manager"]["name"];job["autopilot_goal"]=plan["goal"];job["autopilot_kind"]="configured_agent_plan";job["autopilot_sequential"]=bool(plan.get("sequential"));ordered=[]
-        # create_team_job deduplicates agents, so combine all clauses owned by the
-        # same user-created agent into that agent's bounded assignment.
+        job["autopilot"]=True;job["autopilot_manager_id"]=plan["manager"]["id"];job["autopilot_manager_name"]=plan["manager"]["name"];job["autopilot_goal"]=plan["goal"];job["autopilot_kind"]="configured_agent_plan";job["autopilot_sequential"]=bool(plan.get("sequential"));job.setdefault("replan_count",0);job.setdefault("recovery_history",[]);ordered=[]
         for handoff in job.get("handoffs",[]):
             owned=by_agent.get(str(handoff.get("to_agent_id")),[])
             if not owned:continue
@@ -82,25 +71,14 @@ def _configure(job_id:str,plan:dict[str,Any])->dict[str,Any]:
         job["autopilot_order"]=ordered
     return team._mutate(job_id,apply) or get_team_job(job_id) or {}
 
-# Backward-compatible helper name for older internal callers. Semantics are now
-# generic configured-agent planning rather than fixed specialist phases.
 _configure_team_job=_configure
 
 def _inject_dependency(job_id:str,next_hid:str,previous:dict[str,Any],goal:str)->dict[str,Any]|None:
-    """Share only the completed predecessor result with the next agent.
-
-    Sequential collaboration needs the previous work product, but this must not
-    turn into unrestricted cross-agent memory sharing. The next handoff receives
-    only the predecessor's explicit result plus the shared goal.
-    """
     from agentie.core import team_orchestrator as team
     result=str(previous.get("result") or "").strip()
     if not result:return get_team_job(job_id)
-    previous_name=str(previous.get("to_agent_name") or "Previous agent")
-    previous_id=str(previous.get("id") or "")
-    brief=(f"Dependency from {previous_name}. Use only this dependency result for the next assigned step; "
-           f"only this dependency is shared, not the previous agent's private memory or conversation.\n\n"
-           f"Shared goal: {goal}\n\nDependency result:\n{result[:12000]}")
+    previous_name=str(previous.get("to_agent_name") or "Previous agent");previous_id=str(previous.get("id") or "")
+    brief=(f"Dependency from {previous_name}. Use only this dependency result for the next assigned step; only this dependency is shared, not the previous agent's private memory or conversation.\n\nShared goal: {goal}\n\nDependency result:\n{result[:12000]}")
     def apply(job):
         target=next((x for x in job.get("handoffs",[]) if str(x.get("id"))==str(next_hid)),None)
         if not target:return
@@ -113,22 +91,35 @@ def _wait_terminal(job_id,hid):
         if not job:return None
         h=next((x for x in job.get("handoffs",[]) if x.get("id")==hid),None)
         if not h:return None
-        if h.get("status") in {"completed","failed","cancelled"}:return h
+        if h.get("status") in {"completed","failed","cancelled","recovered"}:return h
+
+def _recover(job_id:str,failed:dict[str,Any])->dict[str,Any]|None:
+    from agentie.core.failure_recovery import finalize_recovery,replan_failed_handoff
+    decision=replan_failed_handoff(job_id,str(failed.get("id") or ""))
+    if decision.get("action")!="reassigned":return None
+    replacement=decision.get("handoff") or {};hid=str(replacement.get("id") or "")
+    if not hid:return None
+    start_team_job(job_id,{hid});done=_wait_terminal(job_id,hid)
+    if done and done.get("status")=="completed":finalize_recovery(job_id,str(failed.get("id") or ""),hid);return done
+    return None
 
 def _controller(job_id:str)->None:
     try:
         job=get_team_job(job_id)
         if not job:return
-        order=list(job.get("autopilot_order") or [])
+        order=list(job.get("autopilot_order") or []);goal=str(job.get("autopilot_goal") or job.get("task") or "")
         if not job.get("autopilot_sequential"):
-            start_team_job(job_id);return
-        goal=str(job.get("autopilot_goal") or job.get("task") or "")
+            start_team_job(job_id)
+            for hid in order:
+                done=_wait_terminal(job_id,hid)
+                if done and done.get("status")=="failed":_recover(job_id,done)
+            return
         for index,hid in enumerate(order):
             while True:
-                start_team_job(job_id,{hid});time.sleep(.06);current=get_team_job(job_id)
-                h=next((x for x in (current or {}).get("handoffs",[]) if x.get("id")==hid),None)
+                start_team_job(job_id,{hid});time.sleep(.06);current=get_team_job(job_id);h=next((x for x in (current or {}).get("handoffs",[]) if x.get("id")==hid),None)
                 if not h or h.get("status")!="queued":break
             done=_wait_terminal(job_id,hid)
+            if done and done.get("status")=="failed":done=_recover(job_id,done)
             if not done or done.get("status")!="completed":break
             if index+1<len(order):_inject_dependency(job_id,order[index+1],done,goal)
     finally:
@@ -152,9 +143,8 @@ def maybe_manager_autopilot(message:str,session_id:str|None)->dict[str,Any]|None
     if not text or re.match(r"^(show|list|delete|remove|rename|remember|set|create an agent|make an agent|delegate|handoff|hand off|have |ask |tell |retry|pause|resume|cancel|approve|deny)",lower):return None
     plan=build_autopilot_plan(text,manager)
     if not plan:return None
-    job=start_autopilot_job(plan,session_id)
-    owners=[]
+    job=start_autopilot_job(plan,session_id);owners=[]
     for step in plan["steps"]:
         name=step["agent"]["name"]
         if name not in owners:owners.append(name)
-    return {"message":f"{manager['name']} split this into {len(plan['steps'])} configured work item(s) across {', '.join(owners)}.","card":{"type":"team_job",**{k:v for k,v in job.items() if k!="handoffs"},"handoffs":[{"id":h["id"],"agent":h["to_agent_name"],"status":h["status"],"summary":h.get("progress_summary"),"error":h.get("error")} for h in job.get("handoffs",[])],"agents":job.get("agent_names",[]),"final_output":job.get("final_output")}}
+    return {"message":f"{manager['name']} split this into {len(plan['steps'])} configured work item(s) across {', '.join(owners)}. If a bounded worker fails, the coordinator can re-plan to another credible configured owner without bypassing approval or missing-input boundaries.","card":{"type":"team_job",**{k:v for k,v in job.items() if k!="handoffs"},"handoffs":[{"id":h["id"],"agent":h["to_agent_name"],"status":h["status"],"summary":h.get("progress_summary"),"error":h.get("error")} for h in job.get("handoffs",[])],"agents":job.get("agent_names",[]),"final_output":job.get("final_output")}}
