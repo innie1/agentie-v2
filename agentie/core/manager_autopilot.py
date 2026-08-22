@@ -99,8 +99,8 @@ def _advice_only(goal: str) -> bool:
     advice = bool(re.search(r"\b(?:what do you think|do you think|your opinion|should we|should i|would you recommend|do you recommend|which (?:one )?is better|which should we|which should i|best option|good idea|bad idea|worth it|what should we prioritize|what should i prioritize|what would you do)\b", low))
     if not advice:
         return False
-    explicit_execution = bool(re.search(r"\b(?:research|investigate|build|implement|develop|create|write|draft|prepare|verify|test|execute|run|perform)\b", low))
-    return not explicit_execution
+    explicit_proceed = bool(re.search(r"\b(?:go ahead|do it|proceed|start (?:it|now|the work)|execute (?:it|that)|make it happen|carry it out)\b", low))
+    return not explicit_proceed
 
 
 def _autopilot_worthy(goal: str) -> bool:
