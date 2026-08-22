@@ -34,6 +34,20 @@ def _save(items: list[dict[str, Any]], store: Path | None = None) -> None:
     path.write_text(json.dumps(items, indent=2, ensure_ascii=False), encoding="utf-8")
 
 
+def _purge_agent_team_membership(agent_id:str)->None:
+    try:
+        from agentie.core import agent_teams
+        teams=agent_teams._load();changed=False
+        for team in teams:
+            ids=[str(x) for x in team.get("member_ids") or []]
+            if str(agent_id) not in ids:continue
+            team["member_ids"]=[x for x in ids if x!=str(agent_id)]
+            if str(team.get("lead_agent_id") or "")==str(agent_id):team["lead_agent_id"]=None;team["lead_agent_name"]=None
+            team["updated_at"]=_now();changed=True
+        if changed:agent_teams._save(teams)
+    except Exception:pass
+
+
 def remember_deleted(entity_type: str, entity_id: str, name: str | None = None, metadata: dict[str, Any] | None = None, store: Path | None = None) -> dict[str, Any]:
     kind = str(entity_type or "").strip().casefold()
     eid = str(entity_id or "").strip()
@@ -44,6 +58,7 @@ def remember_deleted(entity_type: str, entity_id: str, name: str | None = None, 
         items = _load(store)
         existing = next((x for x in items if str(x.get("entity_type", "")).casefold() == kind and str(x.get("entity_id", "")) == eid), None)
         if existing:
+            if kind=="agent":_purge_agent_team_membership(eid)
             return dict(existing)
         item = {
             "entity_type": kind,
@@ -54,6 +69,7 @@ def remember_deleted(entity_type: str, entity_id: str, name: str | None = None, 
         }
         items.append(item)
         _save(items, store)
+        if kind=="agent":_purge_agent_team_membership(eid)
         return dict(item)
 
 
