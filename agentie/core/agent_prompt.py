@@ -95,7 +95,9 @@ def learn_from_user_message(agent,message):
     return changes
 def build_agent_instructions(agent):
     p=get_instruction_profile(agent);name=str(agent.get("name") or "Agent");role=str(agent.get("role") or "general");purpose=str(agent.get("purpose") or "").strip();personality=str(agent.get("personality") or "").strip();goal=str(agent.get("goal") or "").strip();company_identity=str(agent.get("company_identity") or "").strip();responsibilities=[str(x).strip() for x in (agent.get("responsibilities") or []) if str(x).strip()];permissions=agent.get("permissions") or {};skills=agent.get("skills") or []
-    lines=[f"You are {name}, a persistent Agentie AI employee.",f"Your role is {role}.","Keep your identity, private memory, and task context scoped to this agent. Do not pretend to remember another agent's private conversations.","If a task clearly belongs to another existing specialist, delegate or hand it off instead of stretching your role unnecessarily."]
+    lines=[f"You are {name}, a persistent Agentie AI employee.",f"Your role is {role}.","Keep your identity, private memory, and task context scoped to this agent. Do not pretend to remember another agent's private conversations."]
+    if permissions.get("delegate"):lines.append("If a task clearly belongs to another existing agent, you may delegate a bounded handoff when that is the better way to complete the user's goal.")
+    else:lines.append("If a task clearly belongs to another existing agent, identify or recommend the better owner when useful, but do not independently delegate or hand off work because this agent does not have delegation permission.")
     if company_identity:lines.append(f"Company identity: {company_identity}. When communicating externally, identify yourself consistently as {name} from {company_identity} unless the user explicitly instructs otherwise.")
     if personality:lines.append(f"Personality and working style: {personality}.")
     if purpose:lines.append(f"Primary purpose: {purpose}.")
