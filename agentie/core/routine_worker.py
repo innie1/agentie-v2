@@ -10,6 +10,7 @@ from agentie.core.job_engine import create_job,job_card,poll_job_completion_even
 from agentie.core.routine_engine import claim_due_routines,record_run
 from agentie.core.runner import run_agent
 from agentie.core.team_orchestrator import poll_team_completion_events
+from agentie.tools.approval_tools import poll_background_approval_events
 
 WORKSPACE=Path.cwd()/"workspace";EVENTS=WORKSPACE/"routine_events.json";_TASK:asyncio.Task|None=None
 def _load_events()->list[dict[str,Any]]:
@@ -28,6 +29,8 @@ def poll_routine_events()->list[dict[str,Any]]:
                 if isinstance(artifact,dict):items.append({"message":f"Generated file: {artifact.get('document_name') or artifact.get('name') or 'artifact'}.","card":artifact})
     except Exception:pass
     try:items.extend(poll_team_completion_events())
+    except Exception:pass
+    try:items.extend(poll_background_approval_events())
     except Exception:pass
     return items
 async def _runner(instruction:str,specialist:str,session_id:str)->str:return await run_agent(instruction,specialist,session_id)
