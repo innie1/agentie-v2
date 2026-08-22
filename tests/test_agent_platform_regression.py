@@ -129,9 +129,10 @@ class AgentPlatformRegressionTests(unittest.TestCase):
     def test_persistent_runtime_tools_are_permission_driven_not_job_title_driven(self):
         source = Path("agentie/tools/persistent_tools.py").read_text(encoding="utf-8")
         self.assertIn("skill_allowed(agent", source)
+        self.assertIn("mcp_allowed(agent", source)
+        self.assertIn("use_plugin", source)
         self.assertNotIn('agent.get("base")', source)
         self.assertNotIn('agent.get("role")', source)
-        self.assertIn("granted MCP", source)
 
 
 if __name__ == "__main__":
