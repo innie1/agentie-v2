@@ -74,6 +74,9 @@ class AgentDecisionBehaviorRegressionTests(unittest.TestCase):
         self.assertIsNone(manager_autopilot.build_autopilot_plan(
             "Should we spend more on advertising or focus on sales outreach first?", self.ceo
         ))
+        self.assertIsNone(manager_autopilot.build_autopilot_plan(
+            "Should we research the market, build an app, and verify it before launch?", self.ceo
+        ))
 
     def test_explicit_multistage_execution_still_uses_manager_autopilot(self):
         plan = manager_autopilot.build_autopilot_plan(
