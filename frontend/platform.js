@@ -40,3 +40,10 @@
   function addPlatformButtons(){const sidebar=document.querySelector('.sidebar'),search=sidebar?.querySelector('.agent-search');if(!sidebar||!search)return;let anchor=search;if(!sidebar.querySelector('.platform-chats-launch')){const b=document.createElement('button');b.type='button';b.className='platform-chats-launch';b.textContent='💬 Agent chats';b.onclick=openChats;anchor.after(b);anchor=b}if(!sidebar.querySelector('.platform-skills-launch')){const b=document.createElement('button');b.type='button';b.className='platform-skills-launch';b.textContent='⚡ Reusable Skills';b.onclick=showSkills;anchor.after(b);anchor=b}if(!sidebar.querySelector('.platform-activity-launch')){const b=document.createElement('button');b.type='button';b.className='platform-activity-launch';b.textContent='◷ Activity';b.onclick=showActivity;anchor.after(b)}}
   let queued=false;new MutationObserver(()=>{if(queued)return;queued=true;requestAnimationFrame(()=>{queued=false;addSkillButton();addPlatformButtons()})}).observe(document.body,{childList:true,subtree:true});setTimeout(()=>{addSkillButton();addPlatformButtons()},120);
 })();
+
+(()=>{
+  if(window.__agentiePlatformLayerLoader)return;window.__agentiePlatformLayerLoader=true;
+  const layers=['/platform-automation.js?v=1','/platform-permission-guard.js?v=1','/platform-next4.js?v=1'];
+  const load=index=>{if(index>=layers.length)return;const script=document.createElement('script');script.src=layers[index];script.async=false;script.onload=()=>load(index+1);script.onerror=()=>console.error('Agentie platform layer failed to load:',layers[index]);document.head.appendChild(script)};
+  load(0);
+})();
