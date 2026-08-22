@@ -105,8 +105,9 @@ class GoogleCanvaMCPRegressionTests(unittest.TestCase):
         self.assertIn("mcp-remote-client", popen.call_args.args[0])
         self.assertNotIn("CANVA_API_KEY", popen.call_args.kwargs["env"])
 
-    def test_explicit_gmail_is_not_claimed_by_agentmail_preflight(self):
+    def test_explicit_google_email_is_not_claimed_by_agentmail_preflight(self):
         self.assertFalse(capability_preflight._agentmail_intent("Check my Gmail"))
+        self.assertFalse(capability_preflight._agentmail_intent("Check my Google Mail"))
         self.assertTrue(capability_preflight._agentmail_intent("Check my email"))
 
     def test_natural_permission_routing_separates_google_canva_and_agentmail(self):
