@@ -16,6 +16,17 @@ from agentie.core.whatsapp_cloud import (
 mcp = FastMCP("Agentie WhatsApp Cloud")
 
 
+def _agent(agent_id: str = "", agent_name: str = "", agent_role: str = "", company_identity: str = "") -> dict[str, str] | None:
+    if not any((agent_id, agent_name, agent_role, company_identity)):
+        return None
+    return {
+        "id": str(agent_id or ""),
+        "name": str(agent_name or ""),
+        "role": str(agent_role or ""),
+        "company_identity": str(company_identity or ""),
+    }
+
+
 @mcp.tool()
 def list_whatsapp_messages(
     limit: int = 20,
@@ -37,9 +48,16 @@ def get_whatsapp_message(message_id: str) -> dict[str, Any]:
 
 
 @mcp.tool()
-def send_whatsapp_text(to: str, text: str) -> dict[str, Any]:
+def send_whatsapp_text(
+    to: str,
+    text: str,
+    agent_id: str = "",
+    agent_name: str = "",
+    agent_role: str = "",
+    company_identity: str = "",
+) -> dict[str, Any]:
     """Send a real WhatsApp text message through Meta WhatsApp Cloud API."""
-    return send_text_message(to, text)
+    return send_text_message(to, text, agent=_agent(agent_id, agent_name, agent_role, company_identity))
 
 
 @mcp.tool()
@@ -48,6 +66,10 @@ def send_whatsapp_template(
     template_name: str,
     language_code: str = "en_US",
     components_json: str = "[]",
+    agent_id: str = "",
+    agent_name: str = "",
+    agent_role: str = "",
+    company_identity: str = "",
 ) -> dict[str, Any]:
     """Send an approved WhatsApp template message through Meta WhatsApp Cloud API."""
     try:
@@ -56,7 +78,13 @@ def send_whatsapp_template(
         raise ValueError("components_json must be valid JSON.") from exc
     if not isinstance(components, list):
         raise ValueError("components_json must decode to a JSON list.")
-    return send_template_message(to, template_name, language_code, components)
+    return send_template_message(
+        to,
+        template_name,
+        language_code,
+        components,
+        agent=_agent(agent_id, agent_name, agent_role, company_identity),
+    )
 
 
 @mcp.tool()
