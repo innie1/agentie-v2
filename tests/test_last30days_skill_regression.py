@@ -8,13 +8,17 @@ from agentie.core.skill_registry import all_skills, route_skill_command
 
 
 class Last30DaysSkillRegressionTests(unittest.TestCase):
-    def test_skill_defaults_to_native_python311_runtime(self):
+    def test_skill_defaults_to_native_python311_capability_runtime(self):
         skill=all_skills()['last30days']
-        self.assertEqual(skill.get('kind'),'native_external_compatible')
+        # Built-ins are capability packages; reusable user workflows use
+        # kind='workflow'. The optional upstream implementation remains metadata,
+        # not a separate employee/skill class.
+        self.assertEqual(skill.get('kind'),'capability')
         self.assertEqual(skill.get('repository'),LAST30_REPO)
         self.assertIn('recent_research',skill.get('capabilities',[]))
         self.assertTrue(skill['runtime']['ready'])
         self.assertEqual(skill['runtime']['python'],'3.11+')
+        self.assertEqual(skill['runtime']['engine'],'Agentie native')
 
     def test_native_engine_has_real_multi_source_lanes(self):
         names=[name for name,_ in native_last30days.SOURCE_LANES]
