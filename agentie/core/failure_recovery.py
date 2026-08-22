@@ -12,7 +12,6 @@ _PERMISSION=re.compile(r"\b(?:approval|required permission|not allowed|permissio
 _INPUT=re.compile(r"\b(?:missing input|needs? (?:an? )?input|required input|provide .* value|secret field|password)\b",re.I)
 _AGENT=re.compile(r"\b(?:agent no longer exists|agent was not found|missing agent)\b",re.I)
 _TOOL=re.compile(r"\b(?:tool .* failed|plugin .* failed|mcp .* failed|browser .* failed|execution failed)\b",re.I)
-
 def classify_failure(error:str)->str:
     text=str(error or "")
     if _PERMISSION.search(text):return "permission_or_approval"
@@ -21,26 +20,22 @@ def classify_failure(error:str)->str:
     if _TRANSIENT.search(text):return "transient"
     if _TOOL.search(text):return "tool_failure"
     return "unknown"
-
 def recovery_policy(error:str,attempts:int=1)->dict[str,Any]:
     kind=classify_failure(error)
     if kind in {"permission_or_approval","missing_input"}:return {"classification":kind,"action":"ask_user","automatic":False,"reason":"The next step needs user authority or information; Agentie must not bypass it."}
     if attempts>=3:return {"classification":kind,"action":"stop","automatic":False,"reason":"The work has already failed repeatedly."}
     return {"classification":kind,"action":"replan","automatic":True,"reason":"Try another configured owner if one is a credible match."}
-
 def _safe_context(handoff:dict[str,Any])->dict[str,Any]:
     source=dict(handoff.get("context") or {});out={"task":str(handoff.get("task") or "")}
     for key in ("project_id","scoped_brief","autopilot_goal","dependency_handoff_id","dependency_agent_name"):
         if key in source:out[key]=source[key]
     return out
-
 def _candidate(task:str,failed_agent_id:str,attempted:set[str])->tuple[dict[str,Any]|None,float]:
     for row in rank_agents(task,exclude_id=failed_agent_id,limit=8):
         agent=row.get("agent");score=float(row.get("score") or 0)
         if not agent or str(agent.get("id")) in attempted or score<.16:continue
         return agent,score
     return None,0.0
-
 def replan_failed_handoff(job_id:str,handoff_id:str)->dict[str,Any]:
     from agentie.core import team_orchestrator as team
     job=get_team_job(job_id)
@@ -52,40 +47,32 @@ def replan_failed_handoff(job_id:str,handoff_id:str)->dict[str,Any]:
     policy=recovery_policy(str(failed.get("error") or ""),int(failed.get("attempts") or 1))
     if not policy["automatic"]:return {**policy,"handoff_id":handoff_id}
     if failed.get("recovery_handoff_id"):return {"action":"already_replanned","handoff_id":failed.get("recovery_handoff_id")}
-    attempted={str(x.get("to_agent_id") or "") for x in job.get("handoffs") or [] if x.get("recovery_of")==handoff_id or str(x.get("id"))==str(handoff_id)}
+    attempted={str(manager["id"])}|{str(x.get("to_agent_id") or "") for x in job.get("handoffs") or [] if x.get("recovery_of")==handoff_id or str(x.get("id"))==str(handoff_id)}
     agent,score=_candidate(str(failed.get("task") or job.get("task") or ""),str(failed.get("to_agent_id") or ""),attempted)
     if not agent:return {**policy,"action":"ask_user","automatic":False,"reason":"No other configured agent is a strong enough match for the failed bounded task."}
     new_id="ho_"+uuid.uuid4().hex[:8];now=team._now();replacement={"id":new_id,"from":manager["id"],"to_agent_id":agent["id"],"to_agent_name":agent["name"],"task":str(failed.get("task") or ""),"context":_safe_context(failed),"status":"queued","result":None,"error":None,"attempts":0,"progress_summary":None,"status_checked_at":None,"recovery_of":handoff_id,"recovery_reason":policy["classification"],"match_score":score}
     def apply(current):
         source=next((x for x in current.get("handoffs") or [] if str(x.get("id"))==str(handoff_id)),None)
         if not source or source.get("recovery_handoff_id"):return
-        source["recovery_handoff_id"]=new_id;source["recovery_action"]="reassigned"
-        current.setdefault("handoffs",[]).append(replacement)
+        source["recovery_handoff_id"]=new_id;source["recovery_action"]="reassigned";current.setdefault("handoffs",[]).append(replacement)
         if agent["id"] not in current.setdefault("agent_ids",[]):current["agent_ids"].append(agent["id"])
         if agent["name"] not in current.setdefault("agent_names",[]):current["agent_names"].append(agent["name"])
-        current["status"]="working";current["finished_at"]=None;current["completion_notified_at"]=None
-        current["replan_count"]=int(current.get("replan_count") or 0)+1
-        current.setdefault("recovery_history",[]).append({"failed_handoff_id":handoff_id,"replacement_handoff_id":new_id,"from_agent":failed.get("to_agent_name"),"to_agent":agent["name"],"classification":policy["classification"],"at":now})
-    updated=team._mutate(job_id,apply) or get_team_job(job_id) or job
-    created=next((x for x in updated.get("handoffs") or [] if str(x.get("id"))==new_id),None)
+        current["status"]="working";current["finished_at"]=None;current["completion_notified_at"]=None;current["replan_count"]=int(current.get("replan_count") or 0)+1;current.setdefault("recovery_history",[]).append({"failed_handoff_id":handoff_id,"replacement_handoff_id":new_id,"from_agent":failed.get("to_agent_name"),"to_agent":agent["name"],"classification":policy["classification"],"at":now})
+    updated=team._mutate(job_id,apply) or get_team_job(job_id) or job;created=next((x for x in updated.get("handoffs") or [] if str(x.get("id"))==new_id),None)
     if not created:return {"action":"already_replanned","handoff_id":failed.get("recovery_handoff_id")}
     return {"action":"reassigned","automatic":True,"classification":policy["classification"],"handoff":created,"agent":agent,"score":score}
-
 def finalize_recovery(job_id:str,failed_handoff_id:str,replacement_handoff_id:str)->dict[str,Any]|None:
     from agentie.core import team_orchestrator as team
     def apply(job):
         failed=next((x for x in job.get("handoffs") or [] if str(x.get("id"))==str(failed_handoff_id)),None);replacement=next((x for x in job.get("handoffs") or [] if str(x.get("id"))==str(replacement_handoff_id)),None)
         if not failed or not replacement:return
         if replacement.get("status")=="completed":failed["status"]="recovered";failed["progress_summary"]=f"Recovered by {replacement.get('to_agent_name')}.";failed["recovered_by_handoff_id"]=replacement_handoff_id
-        active=[x for x in job.get("handoffs") or [] if x.get("status") in {"queued","working"}]
-        unresolved=[x for x in job.get("handoffs") or [] if x.get("status")=="failed"]
+        active=[x for x in job.get("handoffs") or [] if x.get("status") in {"queued","working"}];unresolved=[x for x in job.get("handoffs") or [] if x.get("status")=="failed"]
         if active:job["status"]="working"
         elif unresolved:job["status"]="partial" if any(x.get("status") in {"completed","recovered"} for x in job.get("handoffs") or []) else "failed"
         else:job["status"]="completed";job["finished_at"]=team._now()
-        outputs=[f"{x['to_agent_name']}:\n{x['result']}" for x in job.get("handoffs") or [] if x.get("status")=="completed" and x.get("result")]
-        job["final_output"]="\n\n---\n\n".join(outputs) if outputs else job.get("final_output")
+        outputs=[f"{x['to_agent_name']}:\n{x['result']}" for x in job.get("handoffs") or [] if x.get("status")=="completed" and x.get("result")];job["final_output"]="\n\n---\n\n".join(outputs) if outputs else job.get("final_output")
     return team._mutate(job_id,apply)
-
 def recovery_note(job_id:str)->dict[str,Any]:
     job=get_team_job(job_id)
     if not job:raise ValueError("Team job was not found.")
