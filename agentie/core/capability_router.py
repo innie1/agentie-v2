@@ -315,7 +315,10 @@ def _canva_choice(text: str, server: dict[str, Any], info: dict[str, Any]) -> tu
     if re.search(r"\b(?:search|find|show|list)\b",low) and re.search(r"\b(?:design|designs|canva)\b",low):
         tool=_pick_name(info,("search-designs","search_designs","list-designs","list_designs"))
         if tool:
-            schema=_schema_for(info,tool);args={};query=_after(text,r"\b(?:search|find)\b.*?\b(?:canva|designs?)\b(?:\s+for)?\s+(.+)$")
+            schema=_schema_for(info,tool);args={}
+            query=_after(text,r"\b(?:search|find)\b.*?\bcanva\b(?:\s+designs?)?(?:\s+for)?\s+(.+)$")
+            if not query:
+                query=_after(text,r"\b(?:search|find)\b.*?\bdesigns?\b(?:\s+for)?\s+(.+)$")
             if query:_set_schema_value(schema,args,("query","search","term"),query)
             _set_schema_value(schema,args,("limit","pageSize"),10)
             if _arguments_complete(schema,args):return tool,args
