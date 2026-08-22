@@ -8,6 +8,7 @@ from typing import Any
 
 from agentie.core import agent_registry
 from agentie.core.mcp_client import _approval_response, _error_text, _filesystem_root, execute_tool, inspect_server, list_servers
+from agentie.core.whatsapp_preflight import route_whatsapp
 
 _FILE_EXTENSIONS = ("pdf","json","txt","md","csv","tsv","xlsx","xls","docx","doc","pptx","ppt","py","js","ts","yaml","yml","toml","ini","log","zip","sqlite","sqlite3")
 _EXT_PATTERN = "|".join(_FILE_EXTENSIONS)
@@ -414,6 +415,8 @@ async def _route_agentmail(text,session_id=None):
 async def route_capability_preflight(message,session_id=None):
     text=" ".join(str(message or "").strip().split())
     if not text:return None
+    whatsapp=await route_whatsapp(text,session_id)
+    if whatsapp is not None:return whatsapp
     agentmail=await _route_agentmail(text,session_id)
     if agentmail is not None:return agentmail
     if not (_filename(text) or _extension_search(text) or _allowed_directories_request(text) or _mutation_request(text)):return None
