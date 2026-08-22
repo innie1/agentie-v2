@@ -153,16 +153,26 @@ def create_agent(
     generated = _generated_employee_profile(role, "general", purpose)
     now = datetime.now().astimezone().isoformat(timespec="seconds")
     agent_id = "agt_" + uuid.uuid4().hex[:10]
-    safe_permissions = {"delegate": False, "shared_company_memory": "read"}
+    # All newly created persistent agents are permission-driven. Existing agents
+    # saved before this platform model remain legacy unless the user migrates them.
+    safe_permissions = {
+        "delegate": False,
+        "shared_company_memory": "read",
+        "capability_mode": "explicit",
+        "mcp_servers": [],
+        "blocked_skills": [],
+        "blocked_mcp_servers": [],
+    }
     safe_permissions.update(dict(permissions or {}))
+    safe_permissions["capability_mode"] = "explicit"
     item = {
         "id": agent_id,
         "name": name,
         "role": role,
-        # New persistent agents always start from the neutral runtime. The old
-        # base value remains only so older stored data and base-agent code work.
+        # New persistent agents always use the neutral runtime. Legacy base/runtime
+        # fields remain only for older stored agents and compatibility callers.
         "base": "general",
-        "runtime_profile": runtime_profile if runtime_profile in VALID_BASES else "general",
+        "runtime_profile": "general",
         "purpose": purpose,
         "personality": _clean(personality if personality is not None else generated["personality"], 800),
         "goal": _clean(goal if goal is not None else generated["goal"], 1600),
@@ -241,8 +251,8 @@ def update_agent_profile(
         if any(x is not target and str(x.get("name", "")).casefold() == clean.casefold() for x in agents):raise ValueError("Another agent already uses that name.")
         target["name"] = clean
     if role is not None:target["role"] = _clean(role, 500) or "General ownership"
-    # base is accepted for legacy callers but no longer inferred from a user's
-    # job title. Only an explicit valid compatibility value is stored.
+    # base/runtime remain accepted for existing legacy data migrations, but new
+    # persistent agents do not infer or switch them from a job title.
     if base is not None and base in VALID_BASES:target["base"] = base
     if runtime_profile is not None and runtime_profile in VALID_BASES:target["runtime_profile"] = runtime_profile
     if purpose is not None:target["purpose"] = _clean(purpose, 1600)
