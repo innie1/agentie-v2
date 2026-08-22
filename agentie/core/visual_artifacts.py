@@ -25,7 +25,7 @@ def _clean_label(value: str) -> str:
 
 
 def _extract_filename(message: str, suffix: str) -> str | None:
-    match = re.search(rf"\b(?:called|named|as)\s+[\"']?([^\"']+?\{re.escape(suffix)})\b", message, re.I)
+    match = re.search(rf"\b(?:called|named|as)\s+[\"']?([^\"']+?{re.escape(suffix)})\b", message, re.I)
     return match.group(1).strip() if match else None
 
 
