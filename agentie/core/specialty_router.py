@@ -15,7 +15,19 @@ def _active_agent_from_session(session_id:str|None)->dict[str,Any]|None:
 
 
 def _routing_key(from_agent_id:str,signature:str)->str:
+    # Legacy task-signature preference key retained for older saved preferences.
     return f"handoff:{from_agent_id}:{signature}"
+
+
+def _agent_preference_key(from_agent_id:str,to_agent_id:str)->str:
+    """Preference for work that the configured matcher selects for this agent.
+
+    This is intentionally keyed by the actual user-created agent rather than a
+    baked-in specialty label such as writing/research/coding. If future work is
+    again best matched to the same configured agent, an "Always accept" choice
+    can be honored without recreating hidden profession classes.
+    """
+    return f"handoff:{from_agent_id}:agent:{to_agent_id}"
 
 
 def best_specialist(task:str,exclude_id:str|None=None)->dict[str,Any]|None:
@@ -24,12 +36,17 @@ def best_specialist(task:str,exclude_id:str|None=None)->dict[str,Any]|None:
 
 def _start_handoff(current:dict[str,Any],specialist:dict[str,Any],task:str,session_id:str|None,signature:str,always:bool=False)->dict[str,Any]:
     if always:
-        set_memory("routing",_routing_key(str(current["id"]),signature),str(specialist["id"]),{"kind":"handoff_preference","from_agent_id":current["id"],"task_signature":signature,"to_agent_id":specialist["id"]})
+        metadata={"kind":"handoff_preference","from_agent_id":current["id"],"task_signature":signature,"to_agent_id":specialist["id"]}
+        # New platform preference: future work that the configured matcher again
+        # assigns to this same agent can auto-route. Keep the exact-signature row
+        # too so older saved behavior remains compatible.
+        set_memory("routing",_agent_preference_key(str(current["id"]),str(specialist["id"])),str(specialist["id"]),metadata)
+        set_memory("routing",_routing_key(str(current["id"]),signature),str(specialist["id"]),metadata)
     job=create_team_job(task,[specialist],requested_by=str(current["id"]));start_team_job(job["id"])
     if session_id:
         set_context(session_id,"active_team_job_id",job["id"]);set_context(session_id,"active_team_job_task",job["task"]);set_context(session_id,"pending_handoff",None)
     message=f"Handed this task to {specialist['name']} ({specialist['role']}) as {job['id']}."
-    if always:message+=f" I’ll prefer {specialist['name']} for similar work from {current['name']} unless you change that preference."
+    if always:message+=f" I’ll prefer {specialist['name']} whenever future work is again best matched to that configured agent, unless you change that preference."
     return {"message":message,"card":{"type":"agent_handoff","from_agent":{"id":current["id"],"name":current["name"],"role":current["role"]},"to_agent":{"id":specialist["id"],"name":specialist["name"],"role":specialist["role"]},"reason":"Best match for the configured job, responsibilities and capabilities","team_job":team_job_card(job)}}
 
 
@@ -64,7 +81,10 @@ def maybe_auto_delegate(message:str,session_id:str|None)->dict[str,Any]|None:
     # owner. Another agent must be materially better.
     if candidate_score<max(.18,current_score+.08):return None
     signature=task_signature(message)
-    preferred_id=get_memory("routing",_routing_key(str(current["id"]),signature))
+    # New platform preference follows the actual configured agent selected by
+    # matching. Fall back to the old exact-task signature for existing data.
+    preferred_id=get_memory("routing",_agent_preference_key(str(current["id"]),str(candidate["id"])))
+    if not preferred_id:preferred_id=get_memory("routing",_routing_key(str(current["id"]),signature))
     if preferred_id and str(preferred_id)==str(candidate.get("id")):
         return _start_handoff(current,candidate,message,session_id,signature,always=False)
     if session_id:set_context(session_id,"pending_handoff",{"from_agent_id":current["id"],"to_agent_id":candidate["id"],"task":message.strip(),"task_signature":signature})
