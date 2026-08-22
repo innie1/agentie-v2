@@ -3,6 +3,7 @@ import re
 from difflib import get_close_matches
 from typing import Any
 from agentie.core.agent_prompt import get_instruction_profile,learn_from_user_message
+from agentie.core.agent_registry import list_agents
 from agentie.core.memory_store import get_context,latest_assistant_text,recent_messages,set_context
 
 _ACKS={
@@ -145,6 +146,49 @@ def _contextual_followup(agent,message,session_id):
             set_context(session_id,"npc_last_followup",{"message":message,"kind":"context_reference"});return _escalate(agent,expanded,kind,.72)
     return None
 
+def _judgment_request(norm):
+    if not norm:return False
+    patterns=(
+        r"\bwhat do you think\b",r"\bdo you think\b",r"\byour opinion\b",r"\bwhat is your opinion\b",
+        r"\bshould (?:we|i)\b",r"\bwould you recommend\b",r"\bdo you recommend\b",r"\brecommend(?:ation|ations)?\b",
+        r"\bwhich (?:one )?is better\b",r"\bwhich should (?:we|i)\b",r"\bbest option\b",r"\bgood idea\b",r"\bbad idea\b",
+        r"\bworth it\b",r"\bwhat should (?:we|i) (?:do|choose|prioritize|prioritise)\b",r"\bwhat would you do\b",
+        r"\bwhat (?:are|is) the (?:main |biggest |key )?risks?\b",r"\bprioriti[sz]e\b",r"\btradeoffs?\b",
+    )
+    return any(re.search(pattern,norm) for pattern in patterns)
+
+def _consequential_subject(norm):
+    return bool(re.search(r"\b(?:send|email|publish|post|delete|remove|pay|spend|purchase|buy|transfer|refund|hire|fire|cancel|commit|push|merge|deploy|sign|submit)\b",norm))
+
+def _team_snapshot(agent):
+    rows=[]
+    for item in list_agents():
+        if str(item.get("id"))==str(agent.get("id")):continue
+        name=str(item.get("name") or "Agent").strip();role=str(item.get("role") or item.get("base") or "general").strip()
+        rows.append(f"{name} ({role})")
+    return ", ".join(rows[:20]) or "No other persistent agents are currently configured."
+
+def _judgment_escalation(agent,message):
+    norm=_normalized(message)
+    if not _judgment_request(norm):return None
+    kind=role_profile(agent);name=str(agent.get("name") or "Agent");role=str(agent.get("role") or kind);goal=str(agent.get("goal") or agent.get("purpose") or "").strip();responsibilities=[str(x).strip() for x in (agent.get("responsibilities") or []) if str(x).strip()]
+    lines=[
+        "This is an advice/judgment request, not an instruction to execute the proposed action.",
+        f"Answer as {name}, whose role is {role}. Use the persistent agent identity plus the company/project/memory context supplied with this turn.",
+        "Exercise real role-based judgment. Do not agree merely to be agreeable; if the proposed plan is weak, say so respectfully and recommend the better path.",
+        "Keep supported FACTS separate from your OPINION, your RECOMMENDATION, and the important RISKS/UNCERTAINTY. Use explicit labels when that distinction would otherwise be unclear.",
+        "Never invent supporting facts or confidence. If current/external evidence materially affects the recommendation, use an available real tool/MCP/research capability when appropriate or clearly say what still needs verification.",
+        "Keep the explanation proportionate: give the strongest reasons and tradeoffs, not generic filler.",
+    ]
+    if goal:lines.append(f"Agent goal to optimize for: {goal}")
+    if responsibilities:lines.append("Relevant responsibilities: "+"; ".join(responsibilities[:8]))
+    if kind=="planning":
+        lines.append("As a manager/Chief-of-Staff-style agent, prioritize by expected goal impact, urgency, dependencies, reversibility, and risk. Challenge poor sequencing or low-value work. Identify a capability gap only when the existing team truly lacks it; do not recommend a duplicate specialist.")
+        lines.append("Existing Agentie team: "+_team_snapshot(agent))
+    if _consequential_subject(norm):lines.append("The proposed subject includes a potentially consequential action. You may recommend for or against it, but do not execute it from this advice request. If execution is later chosen, state that Agentie's normal permission/approval gate still applies.")
+    lines.append("User's original judgment question: "+str(message).strip())
+    return _escalate(agent,"\n".join(lines),kind,.86)
+
 def _role_local_response(agent,message):
     kind=role_profile(agent);norm=_normalized(message);words=set(norm.split())
     if kind=="general" or not norm:return None
@@ -180,4 +224,6 @@ def try_npc_response(agent,message,session_id=None):
             history=recent_messages(session_id,limit=5,max_chars=4000)
             if history:
                 context="\n".join(("User" if x["role"]=="user" else "Assistant")+": "+x["content"] for x in history[-4:]);return _escalate(agent,"Continue the current task from this recent context without restarting it:\n"+context,role_profile(agent),.7)
+    judgment=_judgment_escalation(agent,message)
+    if judgment is not None:return judgment
     return _role_local_response(agent,message)
