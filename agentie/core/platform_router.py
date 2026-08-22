@@ -6,7 +6,7 @@ from typing import Any
 from agentie.core.agent_lifecycle import route_agent_lifecycle_command
 from agentie.core.agent_teams import route_team_structure_command
 from agentie.core.capability_planner import route_capability_gap_command
-from agentie.core.external_triggers import event_alias,normalize_event_type
+from agentie.core.external_triggers import normalize_event_type
 from agentie.core.failure_recovery import route_recovery_command
 from agentie.core.routine_engine import create_event_routine
 from agentie.core.skill_library import route_skill_library_command
@@ -17,8 +17,10 @@ _EVENT_ALIASES={
     "agent reply":"agent_thread.agent_reply","team reply":"agent_thread.agent_reply","group chat reply":"agent_thread.agent_reply",
     "file upload":"file.uploaded","file uploaded":"file.uploaded","new file":"file.uploaded",
     "whatsapp message":"whatsapp.message.received","incoming whatsapp message":"whatsapp.message.received",
-    "email":"email.received","incoming email":"email.received","new email":"email.received",
-    "calendar event":"calendar.event.started","calendar event starts":"calendar.event.started",
+    "email":"email.received","incoming email":"email.received","new email":"email.received","gmail message":"email.received","new gmail message":"email.received",
+    "calendar event":"calendar.event.started","calendar event starts":"calendar.event.started","google calendar event":"calendar.event.started",
+    "drive file changes":"drive.file.changed","google drive file changes":"drive.file.changed",
+    "drive folder changes":"drive.folder.changed","google drive folder changes":"drive.folder.changed",
 }
 
 def _owner_from_action(action:str)->tuple[str,str|None]:
@@ -37,7 +39,6 @@ def _event_routine_command(message:str)->dict[str,Any]|None:
     event_type=None
     if m:name=m.group(1).strip(' .?!\"“”');alias=m.group(2).casefold();action=m.group(3).strip(' .?!\"“”');event_type=_EVENT_ALIASES[alias]
     else:
-        # Generic external webhook syntax: "when webhook crm.lead.created arrives ..."
         generic=re.match(r"^(?:create|make|set up|setup|add)\s+(?:a\s+)?routine\s+(?:called|named|titled)\s+(.+?)\s+(?:that|which)\s+when\s+webhook\s+([a-zA-Z0-9._-]+)\s+(?:arrives?|fires?|happens?)\s+(.+)$",text,re.I)
         if not generic:return None
         name=generic.group(1).strip(' .?!\"“”');event_type=normalize_event_type(generic.group(2));action=generic.group(3).strip(' .?!\"“”')
