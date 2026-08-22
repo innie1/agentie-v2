@@ -5,6 +5,7 @@ from typing import Any
 
 from mcp.server.fastmcp import FastMCP
 
+from agentie.core.plugin_connection_validation import validate_plugin_connection
 from agentie.core.whatsapp_cloud import (
     get_message,
     list_messages,
@@ -94,4 +95,5 @@ def mark_whatsapp_read(message_id: str) -> dict[str, Any]:
 
 
 if __name__ == "__main__":
+    validate_plugin_connection("whatsapp")
     mcp.run(transport="stdio")
