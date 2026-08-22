@@ -3,7 +3,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from agentie.core import agent_access,agent_registry,file_service,skill_marketplace,skill_registry,workflow_skills
+from agentie.core import agent_access,agent_registry,automation_events,file_service,skill_marketplace,skill_registry,workflow_skills
 
 
 class SkillMarketplaceRegressionTests(unittest.TestCase):
@@ -15,6 +15,7 @@ class SkillMarketplaceRegressionTests(unittest.TestCase):
             patch.object(skill_registry,'WORKSPACE',root),patch.object(skill_registry,'SKILLS_DIR',skills),patch.object(skill_registry,'STATE',root/'skills_state.json'),
             patch.object(workflow_skills,'WORKSPACE',root),patch.object(workflow_skills,'SKILLS_DIR',skills),
             patch.object(file_service,'WORKSPACE',root),patch.object(file_service,'UPLOADS',root/'uploads'),patch.object(file_service,'EXTRACTED',root/'extracted'),
+            patch.object(automation_events,'WORKSPACE',root),patch.object(automation_events,'EVENTS',root/'automation_events.json'),
         ]
         for p in self.patches:p.start()
         self.agent=agent_registry.create_agent('Fina','Finance and invoice review owner',purpose='Review invoices and financial documents')['agent']
