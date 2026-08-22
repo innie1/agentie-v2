@@ -102,9 +102,6 @@ def _finish_controller(job_id:str)->None:
     from agentie.core import team_orchestrator as team
     job=get_team_job(job_id)
     if not job:return
-    # A failed sequential dependency can leave later planned handoffs queued. At
-    # controller exit those are blocked work, not live work. Mark them explicitly
-    # so the job cannot remain 'working' forever.
     if str(job.get("status") or "")=="working":
         running=[x for x in job.get("handoffs") or [] if x.get("status")=="working"]
         queued=[x for x in job.get("handoffs") or [] if x.get("status")=="queued"]
@@ -119,7 +116,8 @@ def _finish_controller(job_id:str)->None:
     if status in {"failed","partial","cancelled"}:
         team.publish_team_terminal(job_id);return
     def mark(current):current["autopilot_recovery_finalized"]=True
-    team._mutate(job_id,mark)
+    latest=team._mutate(job_id,mark) or get_team_job(job_id) or job
+    if str(latest.get("status") or "")=="completed":team._publish_terminal_event(latest,True)
 
 def _controller(job_id:str)->None:
     try:
