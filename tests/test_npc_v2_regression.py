@@ -8,7 +8,7 @@ class NPCV2RegressionTests(unittest.TestCase):
         # SQLite connections created during the test can remain alive until GC on
         # Windows. Ignore cleanup races here; DB_PATH already isolates every test.
         self.temp=tempfile.TemporaryDirectory(ignore_cleanup_errors=True);root=Path(self.temp.name)
-        self.agent={"id":"agt_npcv2","name":"Alex","role":"CTO","purpose":"Lead engineering","permissions":{"delegate":True},"skills":[]}
+        self.agent={"id":"agt_npcv2","name":"Alex","role":"CTO","purpose":"Lead engineering","permissions":{"capability_mode":"explicit"},"skills":[]}
         self.p1=patch.object(agent_prompt,"PROMPTS_FILE",root/"prompts.json");self.p1.start()
         self.p2=patch.object(memory_store,"DB_PATH",root/"memory.sqlite3");self.p2.start()
         self.p3=patch.object(team_orchestrator,"TEAM_FILE",root/"team_jobs.json");self.p3.start()
@@ -44,12 +44,18 @@ class NPCV2RegressionTests(unittest.TestCase):
     def test_continue_escalates_instead_of_pretending_completion(self):
         memory_store.add_message(self.session,"assistant","The first step is complete; the next step is implementation.")
         r=npc_brain.try_npc_response(self.agent,"continue",self.session);self.assertIn("escalate_message",r);self.assertEqual(r["routed_by"],"npc_context")
-    def test_critic_has_distinct_local_role_brain(self):
+    def test_job_title_alone_does_not_create_critic_runtime_class(self):
         critic={**self.agent,"id":"agt_critic","name":"Mira","role":"critic"}
-        r=npc_brain.try_npc_response(critic,"give me a checklist",self.session);self.assertEqual(r["npc_role"],"critique");self.assertIn("failure modes",r["message"].lower())
-    def test_verifier_has_distinct_local_role_brain(self):
+        self.assertEqual(npc_brain.role_profile(critic),"general")
+        self.assertIsNone(npc_brain.try_npc_response(critic,"give me a checklist",self.session))
+    def test_job_title_alone_does_not_create_verifier_runtime_class(self):
         verifier={**self.agent,"id":"agt_verify","name":"Vera","role":"verifier"}
-        r=npc_brain.try_npc_response(verifier,"give me a checklist",self.session);self.assertEqual(r["npc_role"],"verification");self.assertIn("verified",r["message"].lower())
+        self.assertEqual(npc_brain.role_profile(verifier),"general")
+        self.assertIsNone(npc_brain.try_npc_response(verifier,"give me a checklist",self.session))
+    def test_explicit_capability_still_enables_local_specialized_behavior(self):
+        coder={**self.agent,"skills":["code-execution"]}
+        r=npc_brain.try_npc_response(coder,"give me a debug checklist",self.session)
+        self.assertEqual(r["npc_role"],"coding");self.assertIn("regression",r["message"].lower())
     def test_complex_open_ended_work_still_falls_through(self):
         self.assertIsNone(npc_brain.try_npc_response(self.agent,"Design a complete distributed database architecture for a global banking platform",self.session))
 
