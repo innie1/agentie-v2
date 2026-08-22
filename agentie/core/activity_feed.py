@@ -25,6 +25,11 @@ def _sort_key(item:dict[str,Any]):
 def _event_matches_agent(payload:dict[str,Any],agent_id:str)->bool:
     if str(payload.get("agent_id") or "")==str(agent_id):return True
     return str(agent_id) in {str(x) for x in payload.get("agent_ids") or []}
+def _event_summary(payload:dict[str,Any])->str:
+    for key in ("message","task","body","subject","summary","name","label","item_id"):
+        value=payload.get(key)
+        if value:return str(value)[:300]
+    return ""
 
 def activity_items(*,agent_id:str|None=None,limit:int=60)->list[dict[str,Any]]:
     """Merge existing authoritative stores; never create a duplicate activity DB."""
@@ -51,8 +56,8 @@ def activity_items(*,agent_id:str|None=None,limit:int=60)->list[dict[str,Any]]:
     for event in recent_events(200):
         payload=dict(event.get("payload") or {})
         if agent_id and not _event_matches_agent(payload,str(agent_id)):continue
-        etype=str(event.get("type") or "event");summary=str(payload.get("message") or payload.get("task") or payload.get("body") or payload.get("name") or "")[:300]
-        rows.append({"id":"event:"+str(event.get("id")),"kind":"automation_event","title":"Automation event · "+etype,"status":"delivered" if event.get("closed_at") else "pending","at":event.get("created_at"),"agent_id":payload.get("agent_id"),"agent_name":payload.get("agent_name") or _name(payload.get("agent_id")),"summary":summary,"metadata":{"event_type":etype,"source":event.get("source"),"delivered_routine_ids":event.get("delivered_routine_ids") or [],"team_job_id":payload.get("team_job_id")}})
+        etype=str(event.get("type") or "event");summary=_event_summary(payload)
+        rows.append({"id":"event:"+str(event.get("id")),"kind":"automation_event","title":"Automation event · "+etype,"status":"delivered" if event.get("closed_at") else "pending","at":event.get("created_at"),"agent_id":payload.get("agent_id"),"agent_name":payload.get("agent_name") or _name(payload.get("agent_id")),"summary":summary,"metadata":{"event_type":etype,"source":event.get("source"),"delivered_routine_ids":event.get("delivered_routine_ids") or [],"team_job_id":payload.get("team_job_id"),"google_source":payload.get("google_source")}})
     unique={str(x["id"]):x for x in rows};items=sorted(unique.values(),key=_sort_key,reverse=True);return items[:max(1,min(int(limit),200))]
 
 def activity_note(*,agent_id:str|None=None,limit:int=40)->dict[str,Any]:
