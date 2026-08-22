@@ -48,8 +48,8 @@ def _preset_setup(server_name: str) -> dict[str, Any]:
 def server_environment(server_name: str) -> dict[str, str]:
     """Return only credentials assigned to this MCP server.
 
-    Curated credential fields also honor an already-set process environment
-    value so existing .env / shell setups continue to work unchanged.
+    Curated fields also honor a credential already present in Agentie's launch
+    environment so existing shell/.env setups continue to work unchanged.
     """
     server = str(server_name or "").strip().lower()
     values = dict(_load().get(server, {}))
@@ -61,15 +61,13 @@ def server_environment(server_name: str) -> dict[str, str]:
 
 
 def apply_all_credentials() -> None:
-    """Restore saved values for compatibility with other Agentie integrations.
+    """Load/validate the local credential store at startup.
 
-    MCP stdio processes receive server-scoped values through server_environment
-    rather than relying on ambient environment inheritance.
+    Secrets are not copied into Agentie's global process environment. The MCP
+    client requests server_environment(name) and passes only those values to
+    that specific stdio server process.
     """
-    for values in _load().values():
-        for env_name, secret in values.items():
-            if _ENV_NAME.fullmatch(env_name) and secret:
-                os.environ[env_name] = secret
+    _load()
 
 
 def save_credentials(server_name: str, values: dict[str, str]) -> dict[str, Any]:
@@ -89,7 +87,7 @@ def save_credentials(server_name: str, values: dict[str, str]) -> dict[str, Any]
             raise ValueError(f"Credential for {name} is too long.")
         if not value:
             continue
-        stored[name] = value;os.environ[name] = value;changed = True
+        stored[name] = value;changed = True
     if not changed:
         raise ValueError("Enter a credential before saving.")
     _save(data)
@@ -97,10 +95,7 @@ def save_credentials(server_name: str, values: dict[str, str]) -> dict[str, Any]
 
 
 def clear_credentials(server_name: str) -> dict[str, Any]:
-    server = str(server_name or "").strip().lower();data = _load();removed = data.pop(server, {});_save(data)
-    for env_name, old_value in removed.items():
-        if os.environ.get(env_name) == old_value:os.environ.pop(env_name, None)
-    return public_setup_state(server)
+    server = str(server_name or "").strip().lower();data = _load();data.pop(server, None);_save(data);return public_setup_state(server)
 
 
 def public_setup_state(server_name: str, error: str | None = None) -> dict[str, Any]:
