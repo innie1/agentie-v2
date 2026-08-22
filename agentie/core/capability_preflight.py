@@ -110,7 +110,9 @@ def _agentmail_config(text,session_id=None):
 
 
 def _agentmail_intent(text):
-    low=" ".join(str(text or "").lower().split());return bool(re.search(r"\b(?:email|e-mail|mail)\b",low) or "agentmail" in low or (re.search(r"\b(?:inbox|inboxes|message|messages|thread|threads)\b",low) and re.search(r"\b(?:check|list|show|read|open|search|reply)\b",low)))
+    low=" ".join(str(text or "").lower().split())
+    if re.search(r"\b(?:gmail|google\s+(?:mail|email))\b",low):return False
+    return bool(re.search(r"\b(?:email|e-mail|mail)\b",low) or "agentmail" in low or (re.search(r"\b(?:inbox|inboxes|message|messages|thread|threads)\b",low) and re.search(r"\b(?:check|list|show|read|open|search|reply)\b",low)))
 
 
 def _agentmail_body(text):
@@ -236,28 +238,33 @@ def _parse_mcp_payload(result):
 
 
 def _value(item,*keys):
+    if not isinstance(item,dict):return None
     for key in keys:
-        value=item.get(key)
-        if value not in (None,"",[]):return value
+        if item.get(key) not in (None,""):return item.get(key)
     return None
 
 
 def _address_text(value):
-    if isinstance(value,list):return ", ".join(_address_text(x) for x in value if x not in (None,""))
-    if isinstance(value,dict):return str(_value(value,"email","address","name") or "")
-    return str(value or "")
+    if isinstance(value,str):return value
+    if isinstance(value,list):return ", ".join(_address_text(x) for x in value if _address_text(x))
+    if isinstance(value,dict):return str(value.get("address") or value.get("email") or value.get("name") or "")
+    return ""
 
 
 def _routing_for_message(item):
-    text=(str(_value(item,"subject","text","body","preview","snippet") or "")+" "+_address_text(_value(item,"from","sender","fromAddress"))).casefold()
-    if not text.strip():return None
-    terms={"sales":{"sales","outreach","lead","leads","prospect","customer","client","quote","order","pipeline"},"marketing":{"marketing","content","campaign","social","brand","advert","promotion"},"finance":{"finance","account","invoice","payment","budget","cost","expense","revenue"},"research":{"research","market","competitor","analysis","evidence","survey"},"operations":{"operations","delivery","logistics","inventory","schedule","supplier","fulfilment","fulfillment"},"engineering":{"cto","developer","engineer","coding","software","technical","bug","api","database"}}
-    words=set(re.findall(r"[a-z0-9]+",text));scored=[]
+    if not isinstance(item,dict):return None
+    subject=str(_value(item,"subject","title") or "");sender=_address_text(_value(item,"from","sender","fromAddress"));recipients=_address_text(_value(item,"to","recipients","toAddresses"));preview=str(_value(item,"preview","snippet","text","body") or "")[:1600];content=" ".join([subject,sender,recipients,preview]).lower();words=set(re.findall(r"[a-z0-9]+",content));domain=(sender.rsplit("@",1)[-1].split(">",1)[0].strip() if "@" in sender else "").lower();scored=[]
     for agent in agent_registry.list_agents():
-        profile=f"{agent.get('name','')} {agent.get('role','')} {agent.get('purpose','')} {agent.get('goal','')}".casefold();profile_words=set(re.findall(r"[a-z0-9]+",profile));score=min(3,len(words&profile_words));name=str(agent.get("name") or "").strip().casefold()
-        if name and re.search(rf"\b{re.escape(name)}\b",text):score+=10
-        for domain,vocab in terms.items():
-            if words&vocab and (domain in profile or profile_words&vocab):score+=4
+        if not agent.get("active",True):continue
+        role=str(agent.get("role") or "").lower();name=str(agent.get("name") or "").lower();goal=str(agent.get("goal") or "").lower();responsibilities=" ".join(map(str,agent.get("responsibilities") or [])).lower();profile=" ".join([role,goal,responsibilities]);profile_words=set(re.findall(r"[a-z0-9]+",profile));score=0
+        if name and re.search(rf"\b{re.escape(name)}\b",content):score+=8
+        vocab=set()
+        if re.search(r"sales|outreach|business development|lead",profile):vocab|={"sales","lead","leads","client","customer","prospect","quote","pricing","outreach"}
+        if re.search(r"marketing|content|social|brand",profile):vocab|={"marketing","content","social","campaign","brand","copy","post"}
+        if re.search(r"finance|account|bookkeep",profile):vocab|={"invoice","payment","expense","finance","accounting","receipt","budget"}
+        if re.search(r"research|analyst|critic|verify",profile):vocab|={"research","source","evidence","report","verify","analysis"}
+        if re.search(r"technical|cto|engineer|developer|coding",profile):vocab|={"technical","github","code","bug","deploy","server","api","software"}
+        if words&vocab and (domain in profile or profile_words&vocab):score+=4
         scored.append((score,agent))
     scored.sort(key=lambda x:(-x[0],str(x[1].get("name") or "").casefold()))
     if not scored or scored[0][0]<4 or (len(scored)>1 and scored[1][0]==scored[0][0]):return None
