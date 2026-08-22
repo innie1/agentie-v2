@@ -81,10 +81,14 @@ def _presence(thread_card: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def connected_thread(thread: dict[str, Any]) -> dict[str, Any]:
-    card = agent_threads.thread_card(thread)
     current = agent_threads.get_thread(str(thread.get("id"))) or thread
-    card["owner_agent_id"] = current.get("owner_agent_id")
-    card["owner_agent_name"] = current.get("owner_agent_name")
+    owner_id = str(current.get("owner_agent_id") or "")
+    if owner_id and owner_id not in {str(x) for x in current.get("participant_ids") or []}:
+        current = set_thread_owner(str(current.get("id")), None)
+    card = agent_threads.thread_card(current)
+    latest = agent_threads.get_thread(str(current.get("id"))) or current
+    card["owner_agent_id"] = latest.get("owner_agent_id")
+    card["owner_agent_name"] = latest.get("owner_agent_name")
     card["presence"] = _presence(card)
     working = sum(1 for x in card["presence"] if x["status"] == "working")
     queued = sum(1 for x in card["presence"] if x["status"] == "queued")
