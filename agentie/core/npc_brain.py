@@ -224,6 +224,8 @@ def try_npc_response(agent,message,session_id=None):
             history=recent_messages(session_id,limit=5,max_chars=4000)
             if history:
                 context="\n".join(("User" if x["role"]=="user" else "Assistant")+": "+x["content"] for x in history[-4:]);return _escalate(agent,"Continue the current task from this recent context without restarting it:\n"+context,role_profile(agent),.7)
+    local=_role_local_response(agent,message)
+    if local is not None:return local
     judgment=_judgment_escalation(agent,message)
     if judgment is not None:return judgment
-    return _role_local_response(agent,message)
+    return None
