@@ -17,6 +17,12 @@ from agentie.core.workflow_skills import instruction_block,matching_workflow_ski
 from agentie.models.provider import get_provider_info
 
 _PROVIDER_COOLDOWNS:dict[str,dict]={};_PROVIDER_COOLDOWN_LOCK=threading.Lock()
+
+
+class _ProviderCooldownError(RuntimeError):
+    """Internal signal that a provider call was intentionally suppressed."""
+
+
 def _provider_key(info:dict)->str:return f"{info.get('provider','provider')}:{info.get('model','model')}".casefold()
 def provider_cooldown(info:dict|None=None)->dict|None:
     current=info or get_provider_info();key=_provider_key(current);now=time.time()
@@ -44,7 +50,7 @@ def _cooldown_error(info:dict)->RuntimeError|None:
     if not cooldown:return None
     remaining=max(1,int(float(cooldown.get("until") or 0)-time.time()));friendly=str(cooldown.get("message") or "The AI model is temporarily at its usage limit. Please try again shortly.")
     record_event("provider_cooldown",info.get("provider") or "provider",metadata={"model":info.get("model"),"remaining_seconds":remaining,"provider_calls":0})
-    return RuntimeError(f"{friendly} Agentie is temporarily suppressing repeated provider calls for about {remaining} more second(s).")
+    return _ProviderCooldownError(f"{friendly} Agentie is temporarily suppressing repeated provider calls for about {remaining} more second(s).")
 
 
 async def _invoke_provider(provider_info:dict,agent_type:str,effective_message:str,role_info:dict,persistent_instructions:str|None,persistent_agent:dict|None):
@@ -105,6 +111,12 @@ async def run_agent(message:str,agent_type:str="general",session_id:str|None=Non
         if own_trace:finish_trace(trace_id,"completed")
         return output
     except Exception as exc:
+        # A cooldown is a deliberate "do not call the provider" decision. Preserve
+        # its suppression message and do not accidentally restart/extend the cooldown.
+        if isinstance(exc,_ProviderCooldownError):
+            if session_id:set_context(session_id,"last_provider_failure",{"user_message":original_message,"error":str(exc),"model":failed_info.get("model"),"trace_id":trace_id,"model_mode":route.get("mode"),"model_tier":failed_info.get("tier"),"cooldown":True})
+            if own_trace:finish_trace(trace_id,"failed",str(exc))
+            raise
         friendly=_friendly_provider_error(exc)
         if friendly and "usage limit" in friendly.casefold() and str(failed_info.get("provider"))!="local":cooldown=_start_provider_cooldown(failed_info,friendly);record_event("provider_cooldown_started",failed_info.get("provider") or "provider",metadata={"model":failed_info.get("model"),"seconds":cooldown.get("seconds"),"provider_calls":0})
         if session_id:set_context(session_id,"last_provider_failure",{"user_message":original_message,"error":friendly or str(exc),"model":failed_info.get("model"),"trace_id":trace_id,"model_mode":route.get("mode"),"model_tier":failed_info.get("tier")})
