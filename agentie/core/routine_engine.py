@@ -6,14 +6,20 @@ from pathlib import Path
 from typing import Any
 
 WORKSPACE=Path.cwd()/"workspace";ROUTINES=WORKSPACE/"routines.json";RUNS=WORKSPACE/"routine_runs.json"
-
 def _load(path:Path,default):
     try:return json.loads(path.read_text(encoding="utf-8")) if path.exists() else default
     except Exception:return default
 def _save(path:Path,value):path.parent.mkdir(parents=True,exist_ok=True);path.write_text(json.dumps(value,indent=2,ensure_ascii=False),encoding="utf-8")
 def _norm(text:str)->str:return re.sub(r"[^a-z0-9: ]+","",re.sub(r"\s+"," ",str(text or "").strip().lower()))
-def _signature(trigger:str,action:str)->str:return f"{_norm(trigger)}|{_norm(action)}"
-def list_routines()->list[dict[str,Any]]:return _load(ROUTINES,[])
+def _signature(trigger:str,action:str,owner_agent_id:str|None=None)->str:return f"{owner_agent_id or ''}|{_norm(trigger)}|{_norm(action)}"
+def list_routines(owner_agent_id:str|None=None)->list[dict[str,Any]]:
+    items=_load(ROUTINES,[])
+    if owner_agent_id:items=[x for x in items if str(x.get("owner_agent_id") or "")==str(owner_agent_id)]
+    return items
+def delete_routines_for_agent(agent_id:str)->int:
+    items=_load(ROUTINES,[]);kept=[x for x in items if str(x.get("owner_agent_id") or "")!=str(agent_id)];removed=len(items)-len(kept)
+    if removed:_save(ROUTINES,kept)
+    return removed
 def _clock(raw:str|None,default="09:00")->str:
     if not raw:return default
     s=raw.lower().replace(" ","");m=re.match(r"(\d{1,2})(?::(\d{2}))?(am|pm)?$",s)
@@ -23,61 +29,61 @@ def _clock(raw:str|None,default="09:00")->str:
     if ap=="am" and h==12:h=0
     return f"{h%24:02d}:{minute%60:02d}"
 def _parse_trigger(text:str)->tuple[str,str]|None:
-    rules=[
-      (r"\bevery weekday(?:s)?(?: at\s+(\d{1,2}(?::\d{2})?\s*(?:am|pm)?))?\b",lambda m:f"weekdays at {_clock(m.group(1))}"),
-      (r"\b(?:every day|daily)(?: at\s+(\d{1,2}(?::\d{2})?\s*(?:am|pm)?))?\b",lambda m:f"daily at {_clock(m.group(1))}"),
-      (r"\bevery morning\b",lambda m:"daily at 08:00"),(r"\bevery afternoon\b",lambda m:"daily at 15:00"),(r"\bevery evening\b",lambda m:"daily at 19:00"),
-      (r"\bevery\s+(\d+(?:\.\d+)?)\s*(minutes?|mins?|hours?|hrs?)\b",lambda m:f"every {m.group(1)} {'hours' if m.group(2).lower().startswith(('hour','hr')) else 'minutes'}"),
-      (r"\bevery\s+(monday|tuesday|wednesday|thursday|friday|saturday|sunday)(?: at\s+(\d{1,2}(?::\d{2})?\s*(?:am|pm)?))?\b",lambda m:f"weekly {m.group(1).lower()} at {_clock(m.group(2))}"),]
+    rules=[(r"\bevery weekday(?:s)?(?: at\s+(\d{1,2}(?::\d{2})?\s*(?:am|pm)?))?\b",lambda m:f"weekdays at {_clock(m.group(1))}"),(r"\b(?:every day|daily)(?: at\s+(\d{1,2}(?::\d{2})?\s*(?:am|pm)?))?\b",lambda m:f"daily at {_clock(m.group(1))}"),(r"\bevery morning\b",lambda m:"daily at 08:00"),(r"\bevery afternoon\b",lambda m:"daily at 15:00"),(r"\bevery evening\b",lambda m:"daily at 19:00"),(r"\bevery\s+(\d+(?:\.\d+)?)\s*(minutes?|mins?|hours?|hrs?)\b",lambda m:f"every {m.group(1)} {'hours' if m.group(2).lower().startswith(('hour','hr')) else 'minutes'}"),(r"\bevery\s+(monday|tuesday|wednesday|thursday|friday|saturday|sunday)(?: at\s+(\d{1,2}(?::\d{2})?\s*(?:am|pm)?))?\b",lambda m:f"weekly {m.group(1).lower()} at {_clock(m.group(2))}")]
     for p,f in rules:
         m=re.search(p,text,re.I)
         if m:return f(m),m.group(0)
     return None
 def _name_for(action:str)->str:return " ".join(re.findall(r"[A-Za-z0-9]+",action)[:7]).title() or "Routine"
 def _parse_named_routine(text:str,trigger_phrase:str)->tuple[str|None,str]:
-    compact=" ".join(text.strip().split());explicit=None
-    m=re.match(r"^(?:please\s+)?(?:create|make|set up|setup|add)\s+(?:me\s+)?(?:a\s+)?routine\s+(?:called|named|titled)\s+(.+?)\s+(?:that|which|to)\s+(.+)$",compact,re.I)
+    compact=" ".join(text.strip().split());explicit=None;m=re.match(r"^(?:please\s+)?(?:create|make|set up|setup|add)\s+(?:me\s+)?(?:a\s+)?routine\s+(?:called|named|titled)\s+(.+?)\s+(?:that|which|to)\s+(.+)$",compact,re.I)
     if m:explicit=m.group(1).strip(' \"“”.,:;-');body=m.group(2).strip()
     else:body=re.sub(r"^(?:please\s+)?(?:create|make|set up|setup|add)\s+(?:me\s+)?(?:a\s+)?routine\s+(?:to|that|which)?\s*","",compact,flags=re.I).strip()
-    body=re.sub(re.escape(trigger_phrase)," ",body,flags=re.I);body=re.sub(r"\s+"," ",body).strip(" ,.;:-")
-    body=re.sub(r"^(checks|reminds|researches|summarizes|saves|runs|looks|tells|monitors|watches|visits|screenshots|captures)\b",lambda m:{'checks':'check','reminds':'remind','researches':'research','summarizes':'summarize','saves':'save','runs':'run','looks':'look','tells':'tell','monitors':'monitor','watches':'watch','visits':'visit','screenshots':'screenshot','captures':'capture'}[m.group(1).lower()],body,flags=re.I)
-    return explicit,body
-def create_routine(text:str,agent_role:str|None=None):
+    body=re.sub(re.escape(trigger_phrase)," ",body,flags=re.I);body=re.sub(r"\s+"," ",body).strip(" ,.;:-");body=re.sub(r"^(checks|reminds|researches|summarizes|saves|runs|looks|tells|monitors|watches|visits|screenshots|captures)\b",lambda m:{'checks':'check','reminds':'remind','researches':'research','summarizes':'summarize','saves':'save','runs':'run','looks':'look','tells':'tell','monitors':'monitor','watches':'watch','visits':'visit','screenshots':'screenshot','captures':'capture'}[m.group(1).lower()],body,flags=re.I);return explicit,body
+def _resolve_owner(owner_agent_id:str|None,text:str=""):
+    from agentie.core.agent_registry import get_agent
+    if owner_agent_id:
+        agent=get_agent(owner_agent_id)
+        if not agent:raise ValueError("Routine owner agent was not found.")
+        return agent
+    m=re.search(r"\bfor\s+(?:agent\s+)?([A-Za-z0-9 _.-]{1,80})\s*$",text,re.I)
+    if m:
+        agent=get_agent(m.group(1).strip())
+        if agent:return agent
+    return None
+def create_routine(text:str,agent_role:str|None=None,owner_agent_id:str|None=None,skill_id:str|None=None,approval_policy:dict[str,Any]|None=None,failure_policy:str="report"):
     parsed=_parse_trigger(text)
     if not parsed:raise ValueError("Tell me when it should run, for example every weekday at 9, every morning, or every 30 minutes.")
-    trigger,phrase=parsed;explicit_name,action=_parse_named_routine(text,phrase)
+    trigger,phrase=parsed;explicit_name,action=_parse_named_routine(text,phrase);owner=_resolve_owner(owner_agent_id,text)
+    if owner:action=re.sub(rf"\s+for\s+(?:agent\s+)?{re.escape(str(owner.get('name') or ''))}\s*$","",action,flags=re.I).strip()
     if not action:raise ValueError("Tell me what the routine should do.")
-    sig=_signature(trigger,action);items=list_routines();existing=next((x for x in items if x.get("signature")==sig and x.get("status")!="deleted"),None)
+    owner_id=str(owner.get("id")) if owner else None;sig=_signature(trigger,action,owner_id);items=list_routines();existing=next((x for x in items if x.get("signature")==sig and x.get("status")!="deleted"),None)
     if existing:return existing,False
-    if explicit_name:
-        needle=_norm(explicit_name);legacy=next((x for x in items if x.get('status')!='deleted' and _norm(str(x.get('trigger','')))==_norm(trigger) and (_norm(str(x.get('name',''))).startswith('called '+needle) or _norm(str(x.get('action',''))).startswith('called '+needle))),None)
-        if legacy:
-            legacy['name']=explicit_name;legacy['action']=action;legacy['agent_role']=agent_role or legacy.get('agent_role') or 'auto';legacy['signature']=sig;legacy['updated_at']=datetime.now().astimezone().isoformat(timespec='seconds');_save(ROUTINES,items);return legacy,False
-    now=datetime.now().astimezone().isoformat(timespec="seconds");item={"id":uuid.uuid4().hex[:8],"name":explicit_name or _name_for(action),"trigger":trigger,"action":action,"agent_role":agent_role or "auto","status":"active","created_at":now,"updated_at":now,"last_run":None,"signature":sig,"run_count":0};items.append(item);_save(ROUTINES,items);return item,True
+    now=datetime.now().astimezone().isoformat(timespec="seconds");item={"id":uuid.uuid4().hex[:8],"name":explicit_name or _name_for(action),"trigger":trigger,"action":action,"owner_agent_id":owner_id,"owner_agent_name":owner.get("name") if owner else None,"skill_id":skill_id,"instructions":action,"approval_policy":dict(approval_policy or {}),"failure_policy":failure_policy,"agent_role":agent_role or "auto","status":"active","created_at":now,"updated_at":now,"last_run":None,"signature":sig,"run_count":0};items.append(item);_save(ROUTINES,items);return item,True
 def update_routine(routine_id:str,**changes):
     items=list_routines();item=next((x for x in items if x.get("id")==routine_id),None)
     if not item:raise KeyError(routine_id)
-    for k in ["trigger","action","name","agent_role","status"]:
-        if changes.get(k):item[k]=changes[k]
-    item["signature"]=_signature(item["trigger"],item["action"]);item["updated_at"]=datetime.now().astimezone().isoformat(timespec="seconds");dup=next((x for x in items if x.get("id")!=routine_id and x.get("signature")==item["signature"] and x.get("status")!="deleted"),None)
+    for k in ["trigger","action","name","agent_role","status","owner_agent_id","owner_agent_name","skill_id","instructions","failure_policy"]:
+        if k in changes and changes.get(k) is not None:item[k]=changes[k]
+    if changes.get("approval_policy") is not None:item["approval_policy"]=dict(changes["approval_policy"])
+    item["signature"]=_signature(item["trigger"],item["action"],item.get("owner_agent_id"));item["updated_at"]=datetime.now().astimezone().isoformat(timespec="seconds");dup=next((x for x in items if x.get("id")!=routine_id and x.get("signature")==item["signature"] and x.get("status")!="deleted"),None)
     if dup:raise ValueError(f"That would duplicate routine {dup['id']} ({dup['name']}).")
     _save(ROUTINES,items);return item
-def find_routine(query:str):
-    q=_norm(query);items=[x for x in list_routines() if x.get("status")!="deleted"];exact=next((x for x in items if str(x.get("id")) in q),None)
+def find_routine(query:str,owner_agent_id:str|None=None):
+    q=_norm(query);items=[x for x in list_routines(owner_agent_id) if x.get("status")!="deleted"];exact=next((x for x in items if str(x.get("id")) in q),None)
     if exact:return exact
-    qwords=set(q.split());scored=[(len(qwords & set(_norm(f"{x.get('name','')} {x.get('action','')} {x.get('trigger','')}").split())),x) for x in items];scored.sort(key=lambda p:p[0],reverse=True);return scored[0][1] if scored and scored[0][0]>0 else (items[-1] if len(items)==1 else None)
-def route_routine_command(message:str):
+    qwords=set(q.split());scored=[(len(qwords&set(_norm(f"{x.get('name','')} {x.get('action','')} {x.get('trigger','')} {x.get('owner_agent_name','')}").split())),x) for x in items];scored.sort(key=lambda p:p[0],reverse=True);return scored[0][1] if scored and scored[0][0]>0 else (items[-1] if len(items)==1 else None)
+def route_routine_command(message:str,owner_agent_id:str|None=None):
     text=" ".join(message.strip().split());lower=text.lower()
     if re.search(r"\b(show|list|what are|my)\b.*\broutines?\b",lower) or lower in {"routines","show routines"}:
-        items=[x for x in list_routines() if x.get("status")!="deleted"];return {"message":f"You have {len(items)} routine(s).","card":{"type":"routines","items":items}}
+        items=[x for x in list_routines(owner_agent_id) if x.get("status")!="deleted"];return {"message":f"You have {len(items)} routine(s).","card":{"type":"routines","items":items}}
     implicit_verbs=["check ","research ","summarize ","save ","run ","look ","tell ","remind ","monitor ","watch ","visit ","screenshot ","capture "]
     if re.search(r"\b(create|make|set up|setup|add)\b.*\broutine\b",lower) or ("every " in lower and any(v in lower for v in implicit_verbs)):
-        rm=re.search(r"\b(?:using|with|as)\s+(?:the\s+)?([a-z][a-z -]{1,40})\s+agent\b",lower);role=rm.group(1).strip() if rm else None
-        try:item,created=create_routine(text,role)
+        try:item,created=create_routine(text,owner_agent_id=owner_agent_id)
         except ValueError as exc:return {"message":str(exc),"card":None}
-        return {"message":f"{'Created' if created else 'Reused existing'} routine “{item['name']}”.","card":{"type":"routine",**item,"duplicate_prevented":not created}}
+        owner=f" · owner: {item.get('owner_agent_name')}" if item.get("owner_agent_name") else "";return {"message":f"{'Created' if created else 'Reused existing'} routine “{item['name']}”{owner}.","card":{"type":"routine",**item,"duplicate_prevented":not created}}
     if "routine" in lower and re.search(r"\b(pause|resume|enable|disable|delete|remove|change|edit|rename)\b",lower):
-        item=find_routine(text)
+        item=find_routine(text,owner_agent_id)
         if not item:return {"message":"Which routine do you mean?","card":None}
         try:
             if re.search(r"\b(pause|disable)\b",lower):item=update_routine(item["id"],status="paused")
