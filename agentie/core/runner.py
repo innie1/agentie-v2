@@ -7,6 +7,7 @@ from agents.mcp import MCPServerStreamableHttp
 
 from agentie.agents.assistant import build_assistant
 from agentie.core.agent_prompt import agent_from_session,build_agent_instructions
+from agentie.core.agent_teams import team_context
 from agentie.core.memory_store import add_message,build_context_prompt,set_context
 from agentie.core.npc_brain import try_npc_response
 from agentie.core.observability import current_trace_id,finish_trace,record_event,record_model_error,record_model_result,start_trace
@@ -50,6 +51,8 @@ async def run_agent(message:str,agent_type:str="general",session_id:str|None=Non
             return output
         if npc is not None and npc.get("escalate_message"):message=str(npc["escalate_message"]);record_event("npc_context",str(persistent_agent.get("name") or "agent"),metadata={"session_id":session_id,"provider_calls":0})
         persistent_instructions=build_agent_instructions(persistent_agent)
+        teams=team_context(persistent_agent)
+        if teams:persistent_instructions += "\n\nUSER-CREATED TEAM CONTEXT:\n"+teams
         matched=matching_workflow_skills(original_message,persistent_agent,3)
         if matched:persistent_instructions += "\n\nRelevant active reusable skills for this request:\n\n"+"\n\n---\n\n".join(instruction_block(item) for item in matched)
     effective_message=build_context_prompt(session_id,message) if session_id else message
