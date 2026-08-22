@@ -214,18 +214,30 @@ async def _run(name: str, session_id: str | None) -> dict[str, Any]:
     return await _replay(item,session_id)
 
 
+def _skill_invocation(value:str)->tuple[str,dict[str,str]]:
+    text=" ".join(str(value or "").strip().split());inputs={};name=text
+    m=re.match(r"^(.+?)\s+with\s+(?:inputs?\s+)?(.+)$",text,re.I)
+    if m:
+        candidate=m.group(1).strip();tail=m.group(2).strip();pairs=re.findall(r"([A-Za-z0-9 _.-]{1,120})\s*=\s*(\"[^\"]*\"|'[^']*'|[^,;]+)",tail)
+        if pairs:
+            name=candidate
+            for key,val in pairs:inputs[key.strip()]=val.strip().strip("\"'")
+    return name,inputs
+
+
 async def _run_skill(name: str, session_id: str | None) -> dict[str, Any]:
-    skill=get_workflow_skill(name)
+    skill_name,inputs=_skill_invocation(name);skill=get_workflow_skill(skill_name)
     if not skill:return {"message":"Reusable Skill was not found.","card":None}
     if str(skill.get("status") or "draft")!="active":return {"message":f"Skill “{skill['name']}” is {skill.get('status') or 'draft'}. Review it and activate it before execution.","card":skill_card(skill)}
     source_id=str(skill.get("source_workflow_id") or "").strip()
-    if not source_id:
-        return {"message":f"Skill “{skill['name']}” is a reusable instruction workflow, but it has no deterministic taught-browser replay linked to it. An assigned agent can use its steps during normal work; Agentie will not fake a direct execution.","card":skill_card(skill)}
-    # The reusable Skill grant is the authorization to reuse its non-secret taught
-    # workflow. The source recording itself never contains protected values.
-    item=get_workflow(source_id,None)
-    if not item:return {"message":f"Skill “{skill['name']}” is linked to a taught workflow that no longer exists. Re-teach or edit the Skill before running it.","card":skill_card(skill)}
-    return await _replay(item,session_id,source_label=f"Skill {skill['name']}")
+    if source_id:
+        # Taught Skills preserve deterministic local replay instead of being
+        # converted into a model-driven approximation.
+        item=get_workflow(source_id,None)
+        if not item:return {"message":f"Skill “{skill['name']}” is linked to a taught workflow that no longer exists. Re-teach or edit the Skill before running it.","card":skill_card(skill)}
+        return await _replay(item,session_id,source_label=f"Skill {skill['name']}")
+    from agentie.core.workflow_skill_runtime import execute_workflow_skill
+    return await execute_workflow_skill(skill["id"],session_id,inputs=inputs,requested_by="user",source="chat")
 
 
 async def route_taught_workflow_request(message: str, session_id: str | None = None) -> dict[str, Any] | None:
