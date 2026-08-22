@@ -114,8 +114,17 @@ def public_setup_state(server_name: str, error: str | None = None) -> dict[str, 
     for field in setup.get("fields") or []:
         env_name = str(field.get("env") or field.get("id") or "").strip()
         if not env_name:continue
-        fields.append({"id":env_name,"env":env_name,"label":str(field.get("label") or env_name),"placeholder":str(field.get("placeholder") or ""),"secret":bool(field.get("secret",True)),"configured":bool(stored.get(env_name) or os.environ.get(env_name))})
-    required=[x for x in fields if x.get("id")]
+        fields.append({
+            "id":env_name,
+            "env":env_name,
+            "label":str(field.get("label") or env_name),
+            "placeholder":str(field.get("placeholder") or ""),
+            "help":str(field.get("help") or ""),
+            "secret":bool(field.get("secret",True)),
+            "required":bool(field.get("required",True)),
+            "configured":bool(stored.get(env_name) or os.environ.get(env_name)),
+        })
+    required=[x for x in fields if x.get("required")]
     configured=(all(bool(x.get("configured")) for x in required) if required else bool(stored))
     auth_mode=str(setup.get("auth_mode") or "").strip().lower() or None
     custom_env_supported=bool(fields) or not auth_mode
@@ -135,6 +144,8 @@ def public_setup_state(server_name: str, error: str | None = None) -> dict[str, 
         "get_key_url":setup.get("get_key_url"),
         "connect_url":setup.get("connect_url"),
         "docs_url":setup.get("docs_url"),
+        "webhook_path":setup.get("webhook_path"),
+        "webhook_help":setup.get("webhook_help"),
         "error":str(error or "")[:700] or None,
         "secret_storage":"local",
     }
