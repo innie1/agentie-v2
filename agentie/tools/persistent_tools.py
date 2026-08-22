@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import json
+import json,re
 from typing import Any
 
 from agents import function_tool
@@ -11,13 +11,21 @@ from agentie.tools import registry
 from agentie.tools.approval_tools import approval_is_granted,create_background_mcp_approval,list_approvals,request_approval
 from agentie.tools.basic_tools import get_current_utc_time
 
-
+_SECRET_KEY=re.compile(r"(?:password|passcode|secret|token|api[_ -]?key|private[_ -]?key|cvv|cvc|card[_ -]?number)",re.I)
 def _ids(items):return {id(x) for x in items}
 def _add(tools,extra):
     seen=_ids(tools)
     for tool in extra:
         if id(tool) not in seen:tools.append(tool);seen.add(id(tool))
     return tools
+def _safe_event_arguments(arguments:dict[str,Any])->dict[str,Any]:
+    out={}
+    for key,value in arguments.items():
+        name=str(key)[:120]
+        if _SECRET_KEY.search(name):out[name]="<redacted>"
+        elif isinstance(value,(str,int,float,bool)) or value is None:out[name]=str(value)[:500] if isinstance(value,str) else value
+        else:out[name]=f"<{type(value).__name__}>"
+    return out
 
 def _plugin_inspect_tool(agent:dict[str,Any]):
     @function_tool
@@ -48,13 +56,13 @@ def _plugin_tool(agent:dict[str,Any]):
         if tool not in discovered:return f"Plugin '{server}' does not expose tool '{tool}'. Available tools: {', '.join(sorted(discovered)[:40]) or 'none'}."
         action=_approval_action(server,tool,arguments)
         if not approval_is_granted(action):
-            approval=create_background_mcp_approval(action,f"Allow {agent.get('name') or 'this agent'} to run MCP {server}/{tool} with these arguments: {json.dumps(arguments,ensure_ascii=False)[:500]}",agent_id=str(agent.get('id') or ''),agent_name=str(agent.get('name') or 'Agent'),server=server,tool=tool,command=f"{server}/{tool}")
+            approval=create_background_mcp_approval(action,f"Allow {agent.get('name') or 'this agent'} to run MCP {server}/{tool} with these arguments: {json.dumps(_safe_event_arguments(arguments),ensure_ascii=False)[:500]}",agent_id=str(agent.get('id') or ''),agent_name=str(agent.get('name') or 'Agent'),server=server,tool=tool,command=f"{server}/{tool}")
             return json.dumps({"status":"approval_required","approval_id":approval.get("id"),"server":server,"tool":tool,"message":"A real Agentie approval was created. Stop this action and tell the user approval is required before retrying."},ensure_ascii=False)
         try:result=await execute_tool(server,tool,arguments)
         except Exception as exc:return f"Plugin '{server}' tool '{tool}' failed: {str(exc)[:700]}"
         try:
             from agentie.core.external_triggers import publish_external_event
-            publish_external_event("plugin.tool.completed",{"agent_id":agent.get("id"),"agent_name":agent.get("name"),"server":server,"tool":tool,"arguments":arguments,"message":result.get("message"),"result":result.get("card")},source="persistent_agent_plugin")
+            publish_external_event("plugin.tool.completed",{"agent_id":agent.get("id"),"agent_name":agent.get("name"),"server":server,"tool":tool,"arguments":_safe_event_arguments(arguments),"message":result.get("message"),"result":result.get("card")},source="persistent_agent_plugin")
         except Exception:pass
         return json.dumps({"status":"completed","server":server,"tool":tool,"message":result.get("message"),"result":result.get("card")},ensure_ascii=False)
     return use_plugin
