@@ -9,8 +9,10 @@ from agentie.core.external_triggers import publish_external_event,webhook_allowe
 from agentie.core.platform_next4_api import router as platform_next4_router
 from agentie.core.whatsapp_cloud import connection_state,ingest_webhook,verify_webhook_challenge,verify_webhook_signature
 
-router = APIRouter()
-router.include_router(platform_next4_router)
+# Use one router object for the connected platform surface.  main.py snapshots
+# router routes when it calls app.include_router(), so keeping Next4 routes on
+# this same object avoids relying on nested-router propagation/order.
+router = platform_next4_router
 
 def _whatsapp_body(message:dict)->str:
     kind=str(message.get("type") or "unknown")
