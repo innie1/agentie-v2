@@ -26,6 +26,8 @@ def _default() -> dict[str, Any]:
     return {
         "gmail_enabled": False,
         "calendar_enabled": False,
+        "gmail_baselined": False,
+        "calendar_baselined": False,
         "drive_watches": [],
         "gmail_seen_ids": [],
         "calendar_seen_ids": [],
@@ -69,13 +71,17 @@ def settings() -> dict[str, Any]:
 def update_settings(*, gmail_enabled: bool | None = None, calendar_enabled: bool | None = None) -> dict[str, Any]:
     data = _load()
     if gmail_enabled is not None:
+        changed = bool(data.get("gmail_enabled")) != bool(gmail_enabled)
         data["gmail_enabled"] = bool(gmail_enabled)
-        if not gmail_enabled:
+        if changed:
             data["gmail_seen_ids"] = []
+            data["gmail_baselined"] = False
     if calendar_enabled is not None:
+        changed = bool(data.get("calendar_enabled")) != bool(calendar_enabled)
         data["calendar_enabled"] = bool(calendar_enabled)
-        if not calendar_enabled:
+        if changed:
             data["calendar_seen_ids"] = []
+            data["calendar_baselined"] = False
     _save(data)
     return settings()
 
@@ -251,8 +257,9 @@ async def _poll_gmail(data: dict[str, Any], info: dict[str, Any]) -> int:
     rows = _records_from_result(result)
     ids = [x for x in (_record_id(row) for row in rows) if x]
     previous = set(map(str, data.get("gmail_seen_ids") or []))
+    baselined = bool(data.get("gmail_baselined"))
     emitted = 0
-    if previous:
+    if baselined:
         for row in rows:
             rid = _record_id(row)
             if not rid or rid in previous:
@@ -260,6 +267,7 @@ async def _poll_gmail(data: dict[str, Any], info: dict[str, Any]) -> int:
             publish_external_event("email.received", _event_payload(row, source_type="gmail"), source="google_workspace", external_id=f"gmail:{rid}")
             emitted += 1
     data["gmail_seen_ids"] = list(dict.fromkeys(ids + sorted(previous)))[:300]
+    data["gmail_baselined"] = True
     return emitted
 
 
@@ -271,7 +279,7 @@ async def _poll_calendar(data: dict[str, Any], info: dict[str, Any]) -> int:
     args = {
         "calendarId": "primary",
         "timeMin": (now - timedelta(minutes=3)).isoformat().replace("+00:00", "Z"),
-        "timeMax": (now + timedelta(minutes=3)).isoformat().replace("+00:00", "Z"),
+        "timeMax": now.isoformat().replace("+00:00", "Z"),
         "maxResults": 50,
         "singleEvents": True,
         "orderBy": "startTime",
@@ -280,8 +288,9 @@ async def _poll_calendar(data: dict[str, Any], info: dict[str, Any]) -> int:
     rows = _records_from_result(result)
     ids = [x for x in (_record_id(row) for row in rows) if x]
     previous = set(map(str, data.get("calendar_seen_ids") or []))
+    baselined = bool(data.get("calendar_baselined"))
     emitted = 0
-    if previous:
+    if baselined:
         for row in rows:
             rid = _record_id(row)
             if not rid or rid in previous:
@@ -289,6 +298,7 @@ async def _poll_calendar(data: dict[str, Any], info: dict[str, Any]) -> int:
             publish_external_event("calendar.event.started", _event_payload(row, source_type="calendar"), source="google_workspace", external_id=f"calendar:{rid}")
             emitted += 1
     data["calendar_seen_ids"] = list(dict.fromkeys(ids + sorted(previous)))[:300]
+    data["calendar_baselined"] = True
     return emitted
 
 
