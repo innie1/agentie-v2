@@ -118,6 +118,7 @@ def public_setup_state(server_name: str, error: str | None = None) -> dict[str, 
     required=[x for x in fields if x.get("id")]
     configured=(all(bool(x.get("configured")) for x in required) if required else bool(stored))
     auth_mode=str(setup.get("auth_mode") or "").strip().lower() or None
+    custom_env_supported=bool(fields) or not auth_mode
     return {
         "type":"mcp_setup",
         "server":server,
@@ -127,7 +128,7 @@ def public_setup_state(server_name: str, error: str | None = None) -> dict[str, 
         "configured":configured,
         "requires_credentials":bool(required),
         "has_saved_credentials":bool(stored),
-        "custom_env_supported":True,
+        "custom_env_supported":custom_env_supported,
         "auth_mode":auth_mode,
         "oauth_supported":bool(setup.get("oauth_command")),
         "connect_label":str(setup.get("connect_label") or "Connect account"),
