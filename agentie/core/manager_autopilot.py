@@ -80,27 +80,48 @@ def _wait_terminal(job_id,hid):
         h=next((x for x in job.get("handoffs",[]) if x.get("id")==hid),None)
         if not h:return None
         if h.get("status") in {"completed","failed","cancelled","recovered"}:return h
+
 def _recover(job_id:str,failed:dict[str,Any])->dict[str,Any]|None:
+    """Bounded multi-hop recovery. Approval/missing-input failures never bypass the user."""
+    from agentie.core.failure_recovery import MAX_REPLAN_HOPS,finalize_recovery_chain,replan_failed_handoff
+    current=failed
+    for _ in range(MAX_REPLAN_HOPS):
+        decision=replan_failed_handoff(job_id,str(current.get("id") or ""))
+        if decision.get("action")!="reassigned":return None
+        replacement=decision.get("handoff") or {};hid=str(replacement.get("id") or "")
+        if not hid:return None
+        start_team_job(job_id,{hid});done=_wait_terminal(job_id,hid)
+        if not done:return None
+        if done.get("status")=="completed":finalize_recovery_chain(job_id,hid);return done
+        if done.get("status")!="failed":return None
+        current=done
+    return None
+
+def _finish_controller(job_id:str)->None:
+    """Release delayed final-failure reporting only after recovery decisions finish."""
     from agentie.core import team_orchestrator as team
-    from agentie.core.failure_recovery import finalize_recovery,replan_failed_handoff
-    decision=replan_failed_handoff(job_id,str(failed.get("id") or ""))
-    if decision.get("action")!="reassigned":team.publish_team_terminal(job_id);return None
-    replacement=decision.get("handoff") or {};hid=str(replacement.get("id") or "")
-    if not hid:team.publish_team_terminal(job_id);return None
-    start_team_job(job_id,{hid});done=_wait_terminal(job_id,hid)
-    if done and done.get("status")=="completed":finalize_recovery(job_id,str(failed.get("id") or ""),hid);team.publish_team_terminal(job_id);return done
-    team.publish_team_terminal(job_id);return None
+    job=get_team_job(job_id)
+    if not job:return
+    status=str(job.get("status") or "")
+    if status in {"failed","partial","cancelled"}:
+        team.publish_team_terminal(job_id)
+        return
+    def mark(current):current["autopilot_recovery_finalized"]=True
+    team._mutate(job_id,mark)
+
 def _controller(job_id:str)->None:
     try:
         job=get_team_job(job_id)
         if not job:return
         order=list(job.get("autopilot_order") or []);goal=str(job.get("autopilot_goal") or job.get("task") or "")
         if not job.get("autopilot_sequential"):
-            start_team_job(job_id)
+            start_team_job(job_id);unresolved=False
             for hid in order:
                 done=_wait_terminal(job_id,hid)
-                if done and done.get("status")=="failed":_recover(job_id,done)
-            return
+                if done and done.get("status")=="failed":
+                    recovered=_recover(job_id,done)
+                    if not recovered:unresolved=True
+            _finish_controller(job_id);return
         for index,hid in enumerate(order):
             while True:
                 start_team_job(job_id,{hid});time.sleep(.06);current=get_team_job(job_id);h=next((x for x in (current or {}).get("handoffs",[]) if x.get("id")==hid),None)
@@ -109,6 +130,7 @@ def _controller(job_id:str)->None:
             if done and done.get("status")=="failed":done=_recover(job_id,done)
             if not done or done.get("status")!="completed":break
             if index+1<len(order):_inject_dependency(job_id,order[index+1],done,goal)
+        _finish_controller(job_id)
     finally:
         with _LOCK:_CONTROLLERS.pop(job_id,None)
 def start_autopilot_job(plan:dict[str,Any],session_id:str|None=None)->dict[str,Any]:
@@ -132,4 +154,4 @@ def maybe_manager_autopilot(message:str,session_id:str|None)->dict[str,Any]|None
     for step in plan["steps"]:
         name=step["agent"]["name"]
         if name not in owners:owners.append(name)
-    return {"message":f"{manager['name']} split this into {len(plan['steps'])} configured work item(s) across {', '.join(owners)}. If a bounded worker fails, the coordinator can re-plan to another credible configured owner without bypassing approval or missing-input boundaries.","card":{"type":"team_job",**{k:v for k,v in job.items() if k!="handoffs"},"handoffs":[{"id":h["id"],"agent":h["to_agent_name"],"status":h["status"],"summary":h.get("progress_summary"),"error":h.get("error")} for h in job.get("handoffs",[])],"agents":job.get("agent_names",[]),"final_output":job.get("final_output")}}
+    return {"message":f"{manager['name']} split this into {len(plan['steps'])} configured work item(s) across {', '.join(owners)}. Recoverable worker failures can be re-planned across multiple untried configured owners, while approval and missing-input boundaries still stop for you.","card":{"type":"team_job",**{k:v for k,v in job.items() if k!="handoffs"},"handoffs":[{"id":h["id"],"agent":h["to_agent_name"],"status":h["status"],"summary":h.get("progress_summary"),"error":h.get("error")} for h in job.get("handoffs",[])],"agents":job.get("agent_names",[]),"final_output":job.get("final_output")}}
