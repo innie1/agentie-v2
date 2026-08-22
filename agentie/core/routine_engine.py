@@ -6,16 +6,26 @@ from pathlib import Path
 from typing import Any
 
 WORKSPACE=Path.cwd()/"workspace";ROUTINES=WORKSPACE/"routines.json";RUNS=WORKSPACE/"routine_runs.json"
+_EVENT_PATTERNS=[
+    (r"\bwhen\s+(?:a\s+)?team\s+job\s+completes?\b","team_job.completed"),(r"\bwhen\s+(?:a\s+)?team\s+job\s+fails?\b","team_job.failed"),
+    (r"\bwhen\s+(?:a\s+)?skill\s+run\s+completes?\b","skill_run.completed"),(r"\bwhen\s+(?:a\s+)?skill\s+run\s+fails?\b","skill_run.failed"),(r"\bwhen\s+(?:a\s+)?skill\s+run\s+(?:needs|reaches)\s+approval\b","skill_run.awaiting_approval"),
+    (r"\bwhen\s+(?:an?\s+)?approval\s+(?:is\s+)?resolved\b","approval.resolved"),
+]
 def _load(path:Path,default):
     try:return json.loads(path.read_text(encoding="utf-8")) if path.exists() else default
     except Exception:return default
 def _save(path:Path,value):path.parent.mkdir(parents=True,exist_ok=True);path.write_text(json.dumps(value,indent=2,ensure_ascii=False),encoding="utf-8")
-def _norm(text:str)->str:return re.sub(r"[^a-z0-9: ]+","",re.sub(r"\s+"," ",str(text or "").strip().lower()))
-def _signature(trigger:str,action:str,owner_agent_id:str|None=None)->str:return f"{owner_agent_id or ''}|{_norm(trigger)}|{_norm(action)}"
+def _norm(text:str)->str:return re.sub(r"[^a-z0-9:._ -]+","",re.sub(r"\s+"," ",str(text or "").strip().lower()))
+def _signature(trigger:str,action:str,owner_agent_id:str|None=None,trigger_type:str="schedule",event_type:str|None=None)->str:return f"{owner_agent_id or ''}|{trigger_type}|{event_type or ''}|{_norm(trigger)}|{_norm(action)}"
 def list_routines(owner_agent_id:str|None=None)->list[dict[str,Any]]:
     items=_load(ROUTINES,[])
+    for item in items:item.setdefault("trigger_type","schedule")
     if owner_agent_id:items=[x for x in items if str(x.get("owner_agent_id") or "")==str(owner_agent_id)]
     return items
+def list_runs(*,routine_id:str|None=None,limit:int=200)->list[dict[str,Any]]:
+    items=_load(RUNS,[])
+    if routine_id:items=[x for x in items if str(x.get("routine_id"))==str(routine_id)]
+    return list(reversed(items[-max(1,min(int(limit),1000)):]))
 def delete_routines_for_agent(agent_id:str)->int:
     items=_load(ROUTINES,[]);kept=[x for x in items if str(x.get("owner_agent_id") or "")!=str(agent_id)];removed=len(items)-len(kept)
     if removed:_save(ROUTINES,kept)
@@ -33,6 +43,11 @@ def _parse_trigger(text:str)->tuple[str,str]|None:
     for p,f in rules:
         m=re.search(p,text,re.I)
         if m:return f(m),m.group(0)
+    return None
+def _parse_event_trigger(text:str)->tuple[str,str]|None:
+    for pattern,event_type in _EVENT_PATTERNS:
+        m=re.search(pattern,text,re.I)
+        if m:return event_type,m.group(0)
     return None
 def _name_for(action:str)->str:return " ".join(re.findall(r"[A-Za-z0-9]+",action)[:7]).title() or "Routine"
 def _parse_named_routine(text:str,trigger_phrase:str)->tuple[str|None,str]:
@@ -59,24 +74,46 @@ def create_routine(text:str,agent_role:str|None=None,owner_agent_id:str|None=Non
     if not action:raise ValueError("Tell me what the routine should do.")
     owner_id=str(owner.get("id")) if owner else None;sig=_signature(trigger,action,owner_id);items=list_routines();existing=next((x for x in items if x.get("signature")==sig and x.get("status")!="deleted"),None)
     if existing:return existing,False
-    now=datetime.now().astimezone().isoformat(timespec="seconds");item={"id":uuid.uuid4().hex[:8],"name":explicit_name or _name_for(action),"trigger":trigger,"action":action,"owner_agent_id":owner_id,"owner_agent_name":owner.get("name") if owner else None,"skill_id":skill_id,"instructions":action,"approval_policy":dict(approval_policy or {}),"failure_policy":failure_policy,"agent_role":agent_role or "auto","status":"active","created_at":now,"updated_at":now,"last_run":None,"signature":sig,"run_count":0};items.append(item);_save(ROUTINES,items);return item,True
+    now=datetime.now().astimezone().isoformat(timespec="seconds");item={"id":uuid.uuid4().hex[:8],"name":explicit_name or _name_for(action),"trigger_type":"schedule","trigger":trigger,"event_type":None,"event_filters":{},"action":action,"owner_agent_id":owner_id,"owner_agent_name":owner.get("name") if owner else None,"skill_id":skill_id,"instructions":action,"approval_policy":dict(approval_policy or {}),"failure_policy":failure_policy,"agent_role":agent_role or "auto","status":"active","created_at":now,"updated_at":now,"last_run":None,"signature":sig,"run_count":0};items.append(item);_save(ROUTINES,items);return item,True
+def create_event_routine(*,name:str,event_type:str,action:str,owner_agent_id:str|None=None,skill_id:str|None=None,event_filters:dict[str,Any]|None=None,approval_policy:dict[str,Any]|None=None,failure_policy:str="report"):
+    name=" ".join(str(name or "").strip().split())[:120];action=" ".join(str(action or "").strip().split())[:3000];event_type=str(event_type or "").strip().casefold()
+    if not name or not action or not event_type:raise ValueError("Event routine needs a name, event type, and action.")
+    owner=_resolve_owner(owner_agent_id);owner_id=str(owner.get("id")) if owner else None;trigger=f"when {event_type}";sig=_signature(trigger,action,owner_id,"event",event_type);items=list_routines();existing=next((x for x in items if x.get("signature")==sig and x.get("status")!="deleted"),None)
+    if existing:return existing,False
+    now=datetime.now().astimezone().isoformat(timespec="seconds");item={"id":uuid.uuid4().hex[:8],"name":name,"trigger_type":"event","trigger":trigger,"event_type":event_type,"event_filters":dict(event_filters or {}),"action":action,"owner_agent_id":owner_id,"owner_agent_name":owner.get("name") if owner else None,"skill_id":skill_id,"instructions":action,"approval_policy":dict(approval_policy or {}),"failure_policy":failure_policy,"agent_role":"auto","status":"active","created_at":now,"updated_at":now,"last_run":None,"signature":sig,"run_count":0};items.append(item);_save(ROUTINES,items);return item,True
 def update_routine(routine_id:str,**changes):
     items=list_routines();item=next((x for x in items if x.get("id")==routine_id),None)
     if not item:raise KeyError(routine_id)
-    for k in ["trigger","action","name","agent_role","status","owner_agent_id","owner_agent_name","skill_id","instructions","failure_policy"]:
+    for k in ["trigger_type","trigger","event_type","action","name","agent_role","status","owner_agent_id","owner_agent_name","skill_id","instructions","failure_policy"]:
         if k in changes and changes.get(k) is not None:item[k]=changes[k]
+    if changes.get("event_filters") is not None:item["event_filters"]=dict(changes["event_filters"])
     if changes.get("approval_policy") is not None:item["approval_policy"]=dict(changes["approval_policy"])
-    item["signature"]=_signature(item["trigger"],item["action"],item.get("owner_agent_id"));item["updated_at"]=datetime.now().astimezone().isoformat(timespec="seconds");dup=next((x for x in items if x.get("id")!=routine_id and x.get("signature")==item["signature"] and x.get("status")!="deleted"),None)
+    item["signature"]=_signature(item["trigger"],item["action"],item.get("owner_agent_id"),item.get("trigger_type","schedule"),item.get("event_type"));item["updated_at"]=datetime.now().astimezone().isoformat(timespec="seconds");dup=next((x for x in items if x.get("id")!=routine_id and x.get("signature")==item["signature"] and x.get("status")!="deleted"),None)
     if dup:raise ValueError(f"That would duplicate routine {dup['id']} ({dup['name']}).")
     _save(ROUTINES,items);return item
 def find_routine(query:str,owner_agent_id:str|None=None):
     q=_norm(query);items=[x for x in list_routines(owner_agent_id) if x.get("status")!="deleted"];exact=next((x for x in items if str(x.get("id")) in q),None)
     if exact:return exact
     qwords=set(q.split());scored=[(len(qwords&set(_norm(f"{x.get('name','')} {x.get('action','')} {x.get('trigger','')} {x.get('owner_agent_name','')}").split())),x) for x in items];scored.sort(key=lambda p:p[0],reverse=True);return scored[0][1] if scored and scored[0][0]>0 else (items[-1] if len(items)==1 else None)
+def event_routines_for(event:dict[str,Any])->list[dict[str,Any]]:
+    etype=str(event.get("type") or "").casefold();payload=dict(event.get("payload") or {});out=[]
+    for item in list_routines():
+        if item.get("status")!="active" or item.get("trigger_type")!="event" or str(item.get("event_type") or "").casefold()!=etype:continue
+        filters=dict(item.get("event_filters") or {})
+        if all(payload.get(k)==v for k,v in filters.items()):out.append(item)
+    return out
 def route_routine_command(message:str,owner_agent_id:str|None=None):
     text=" ".join(message.strip().split());lower=text.lower()
     if re.search(r"\b(show|list|what are|my)\b.*\broutines?\b",lower) or lower in {"routines","show routines"}:
         items=[x for x in list_routines(owner_agent_id) if x.get("status")!="deleted"];return {"message":f"You have {len(items)} routine(s).","card":{"type":"routines","items":items}}
+    event=_parse_event_trigger(text)
+    if event and re.search(r"\b(create|make|set up|setup|add)\b.*\broutine\b",lower):
+        event_type,phrase=event;explicit,action=_parse_named_routine(text,phrase);owner=_resolve_owner(owner_agent_id,text)
+        if owner:action=re.sub(rf"\s+for\s+(?:agent\s+)?{re.escape(str(owner.get('name') or ''))}\s*$","",action,flags=re.I).strip()
+        if not action:return {"message":"Tell me what the event routine should do.","card":None}
+        try:item,created=create_event_routine(name=explicit or _name_for(action),event_type=event_type,action=action,owner_agent_id=owner.get("id") if owner else None)
+        except ValueError as exc:return {"message":str(exc),"card":None}
+        return {"message":f"{'Created' if created else 'Reused existing'} event routine “{item['name']}”.","card":{"type":"routine",**item,"duplicate_prevented":not created}}
     implicit_verbs=["check ","research ","summarize ","save ","run ","look ","tell ","remind ","monitor ","watch ","visit ","screenshot ","capture "]
     if re.search(r"\b(create|make|set up|setup|add)\b.*\broutine\b",lower) or ("every " in lower and any(v in lower for v in implicit_verbs)):
         try:item,created=create_routine(text,owner_agent_id=owner_agent_id)
@@ -95,7 +132,7 @@ def route_routine_command(message:str,owner_agent_id:str|None=None):
         return {"message":f"Updated routine “{item['name']}”.","card":{"type":"routine",**item}}
     return None
 def _due(item:dict[str,Any],now:datetime)->bool:
-    if item.get("status")!="active":return False
+    if item.get("status")!="active" or item.get("trigger_type","schedule")!="schedule":return False
     last=datetime.fromisoformat(item["last_run"]) if item.get("last_run") else None;created=datetime.fromisoformat(item["created_at"]) if item.get('created_at') else now;trig=str(item.get("trigger","")).lower();m=re.match(r"every (\d+(?:\.\d+)?) (minutes|hours)",trig)
     if m:
         sec=float(m.group(1))*(3600 if m.group(2)=="hours" else 60);base=last or created;return (now-base).total_seconds()>=sec
@@ -111,5 +148,9 @@ def claim_due_routines(now:datetime|None=None):
         if _due(item,now):item["last_run"]=now.isoformat(timespec="seconds");item["run_count"]=int(item.get("run_count") or 0)+1;due.append(dict(item))
     if due:_save(ROUTINES,items)
     return due
-def record_run(routine_id:str,job_id:str|None,status="started"):
-    runs=_load(RUNS,[]);runs.append({"routine_id":routine_id,"job_id":job_id,"status":status,"at":datetime.now().astimezone().isoformat(timespec="seconds")});_save(RUNS,runs[-1000:])
+def mark_event_routine_claimed(routine_id:str,when:datetime|None=None)->dict[str,Any]|None:
+    when=when or datetime.now().astimezone();items=list_routines();item=next((x for x in items if str(x.get("id"))==str(routine_id)),None)
+    if not item:return None
+    item["last_run"]=when.isoformat(timespec="seconds");item["run_count"]=int(item.get("run_count") or 0)+1;item["updated_at"]=item["last_run"];_save(ROUTINES,items);return dict(item)
+def record_run(routine_id:str,job_id:str|None,status="started",metadata:dict[str,Any]|None=None):
+    runs=_load(RUNS,[]);row={"id":"rr_"+uuid.uuid4().hex[:10],"routine_id":routine_id,"job_id":job_id,"status":status,"at":datetime.now().astimezone().isoformat(timespec="seconds")};row.update(dict(metadata or {}));runs.append(row);_save(RUNS,runs[-1000:]);return row
