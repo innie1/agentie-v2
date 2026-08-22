@@ -202,3 +202,38 @@ async def platform_skill_share(skill_id: str):
         return share_installed_skill(skill_id)
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
+
+
+# Some Windows/FastAPI environments used by Agentie have been observed to
+# return from include_router() without copying this populated router's APIRoutes.
+# Keep the normal framework path first, then narrowly repair only this exact
+# platform router if none/some of its routes were copied. This runs before
+# main.py creates the FastAPI app because this module is imported first.
+_original_include_router = APIRouter.include_router
+
+
+def _route_key(item: Any) -> tuple[str | None, tuple[str, ...]]:
+    return (getattr(item, "path", None), tuple(sorted(getattr(item, "methods", None) or ())))
+
+
+def _include_router_with_platform_fallback(self: APIRouter, other: APIRouter, *args: Any, **kwargs: Any):
+    result = _original_include_router(self, other, *args, **kwargs)
+    if other is router:
+        existing = {_route_key(item) for item in self.routes}
+        for item in other.routes:
+            key = _route_key(item)
+            if key not in existing:
+                self.routes.append(item)
+                existing.add(key)
+        for handler in getattr(other, "on_startup", ()):
+            if handler not in self.on_startup:
+                self.on_startup.append(handler)
+        for handler in getattr(other, "on_shutdown", ()):
+            if handler not in self.on_shutdown:
+                self.on_shutdown.append(handler)
+    return result
+
+
+if not getattr(APIRouter.include_router, "__agentie_platform_fallback__", False):
+    _include_router_with_platform_fallback.__agentie_platform_fallback__ = True
+    APIRouter.include_router = _include_router_with_platform_fallback
