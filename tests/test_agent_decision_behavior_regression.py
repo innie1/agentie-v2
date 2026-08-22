@@ -64,6 +64,17 @@ class AgentDecisionBehaviorRegressionTests(unittest.TestCase):
         self.assertIn("do not execute it", prompt)
         self.assertIn("permission/approval gate", prompt)
 
+    def test_local_role_checklist_precedes_judgment_escalation(self):
+        researcher = agent_registry.create_agent("Researcher", "Researcher", "research", purpose="Research markets")["agent"]
+        research = try_npc_response(researcher, "How should we research this?")
+        planning = try_npc_response(self.ceo, "How should we plan this?")
+        self.assertEqual(research.get("routed_by"), "npc_brain")
+        self.assertEqual(research.get("npc_role"), "research")
+        self.assertIn("sources", research.get("message", "").lower())
+        self.assertEqual(planning.get("routed_by"), "npc_brain")
+        self.assertEqual(planning.get("npc_role"), "planning")
+        self.assertIn("milestones", planning.get("message", "").lower())
+
     def test_simple_acknowledgement_remains_provider_free_npc_response(self):
         result = try_npc_response(self.ceo, "ok")
         self.assertEqual(result.get("routed_by"), "npc_brain")
