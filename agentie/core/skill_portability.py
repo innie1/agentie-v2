@@ -8,6 +8,7 @@ from agentie.core.workflow_skills import create_workflow_skill,get_workflow_skil
 
 FORMAT="agentie.workflow-skill";VERSION=1
 _FIELDS=("name","description","when_to_use","required_inputs","required_access","steps","decision_rules","expected_output","validation_rules","approval_boundaries","failure_handling")
+_LIST_FIELDS=("required_inputs","required_access","steps","decision_rules","validation_rules","approval_boundaries")
 
 def export_skill(name_or_id:str)->dict[str,Any]:
     skill=get_workflow_skill(name_or_id)
@@ -22,7 +23,11 @@ def _manifest(data:Any)->dict[str,Any]:
     if version!=VERSION:raise ValueError(f"Unsupported Agentie Skill export version: {version}.")
     skill=data.get("skill")
     if not isinstance(skill,dict):raise ValueError("Skill export is missing its skill object.")
+    for field in _LIST_FIELDS:
+        value=skill.get(field,[])
+        if value is not None and not isinstance(value,list):raise ValueError(f"Imported Skill field '{field}' must be a list.")
     return skill
+def _items(raw:dict[str,Any],field:str)->list[str]:return [str(x) for x in (raw.get(field) or []) if str(x).strip()]
 def import_skill_from_upload(filename:str,*,status:str="draft")->dict[str,Any]:
     path=resolve_upload(filename)
     if path.suffix.lower()!=".json":raise ValueError("Skill import currently accepts an Agentie JSON export.")
@@ -32,7 +37,7 @@ def import_skill_from_upload(filename:str,*,status:str="draft")->dict[str,Any]:
     if not name:raise ValueError("Imported Skill has no name.")
     existing=get_workflow_skill(name)
     if existing:raise ValueError(f"A workflow Skill named “{name}” already exists. Rename or remove the existing Skill first.")
-    item=create_workflow_skill(name=name,description=str(raw.get("description") or ""),when_to_use=str(raw.get("when_to_use") or ""),required_inputs=list(raw.get("required_inputs") or []),required_access=list(raw.get("required_access") or []),steps=list(raw.get("steps") or []),decision_rules=list(raw.get("decision_rules") or []),expected_output=str(raw.get("expected_output") or ""),validation_rules=list(raw.get("validation_rules") or []),approval_boundaries=list(raw.get("approval_boundaries") or []),failure_handling=str(raw.get("failure_handling") or ""),source_workflow_id=None,status=status)
+    item=create_workflow_skill(name=name,description=str(raw.get("description") or ""),when_to_use=str(raw.get("when_to_use") or ""),required_inputs=_items(raw,"required_inputs"),required_access=_items(raw,"required_access"),steps=_items(raw,"steps"),decision_rules=_items(raw,"decision_rules"),expected_output=str(raw.get("expected_output") or ""),validation_rules=_items(raw,"validation_rules"),approval_boundaries=_items(raw,"approval_boundaries"),failure_handling=str(raw.get("failure_handling") or ""),source_workflow_id=None,status=status)
     return item
 def route_skill_portability_command(message:str)->dict[str,Any]|None:
     text=" ".join(str(message or "").strip().split())
