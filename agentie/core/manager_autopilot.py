@@ -98,14 +98,26 @@ def _recover(job_id:str,failed:dict[str,Any])->dict[str,Any]|None:
     return None
 
 def _finish_controller(job_id:str)->None:
-    """Release delayed final-failure reporting only after recovery decisions finish."""
+    """Release delayed final reporting only after all recovery decisions finish."""
     from agentie.core import team_orchestrator as team
     job=get_team_job(job_id)
     if not job:return
+    # A failed sequential dependency can leave later planned handoffs queued. At
+    # controller exit those are blocked work, not live work. Mark them explicitly
+    # so the job cannot remain 'working' forever.
+    if str(job.get("status") or "")=="working":
+        running=[x for x in job.get("handoffs") or [] if x.get("status")=="working"]
+        queued=[x for x in job.get("handoffs") or [] if x.get("status")=="queued"]
+        if queued and not running:
+            def block(current):
+                for h in current.get("handoffs") or []:
+                    if h.get("status")=="queued":h["status"]="cancelled";h["error"]="Blocked by an unresolved dependency or exhausted recovery path.";h["progress_summary"]="Not run because an earlier dependency could not be recovered.";h["finished_at"]=team._now()
+                done=[h for h in current.get("handoffs") or [] if h.get("status") in {"completed","recovered"}];bad=[h for h in current.get("handoffs") or [] if h.get("status") in {"failed","cancelled"}]
+                current["status"]="partial" if done and bad else "failed" if bad else "completed";current["finished_at"]=team._now()
+            job=team._mutate(job_id,block) or get_team_job(job_id) or job
     status=str(job.get("status") or "")
     if status in {"failed","partial","cancelled"}:
-        team.publish_team_terminal(job_id)
-        return
+        team.publish_team_terminal(job_id);return
     def mark(current):current["autopilot_recovery_finalized"]=True
     team._mutate(job_id,mark)
 
@@ -115,12 +127,10 @@ def _controller(job_id:str)->None:
         if not job:return
         order=list(job.get("autopilot_order") or []);goal=str(job.get("autopilot_goal") or job.get("task") or "")
         if not job.get("autopilot_sequential"):
-            start_team_job(job_id);unresolved=False
+            start_team_job(job_id)
             for hid in order:
                 done=_wait_terminal(job_id,hid)
-                if done and done.get("status")=="failed":
-                    recovered=_recover(job_id,done)
-                    if not recovered:unresolved=True
+                if done and done.get("status")=="failed":_recover(job_id,done)
             _finish_controller(job_id);return
         for index,hid in enumerate(order):
             while True:
