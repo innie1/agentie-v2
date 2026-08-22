@@ -76,8 +76,15 @@ class ManagerAutopilotRegressionTests(unittest.TestCase):
         self.assertNotIn('scoped_brief',verifier['context'])
 
     def test_artifact_compound_requests_stay_on_existing_job_engine(self):
-        self.assertIsNone(manager_autopilot.build_autopilot_plan(
-            'Research church management apps and then create a PDF report.',self.ceo))
+        prompts=(
+            'Research church management apps and then create a PDF report.',
+            'Research competitors and then create a PPTX presentation.',
+            'Analyze the figures and then produce an XLSX spreadsheet.',
+            'Research the requirements and then create a DOCX document.',
+        )
+        for prompt in prompts:
+            with self.subTest(prompt=prompt):
+                self.assertIsNone(manager_autopilot.build_autopilot_plan(prompt,self.ceo))
 
     def test_simple_writing_request_is_not_expanded_into_autopilot(self):
         self.assertIsNone(manager_autopilot.build_autopilot_plan('Write the launch post.',self.ceo))
