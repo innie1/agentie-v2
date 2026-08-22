@@ -12,6 +12,7 @@ from agentie.core.code_execution import route_code_command
 from agentie.core.external_skill_runtime import route_last30days
 from agentie.core.native_last30days import route as route_native_last30days, status as native_last30days_status
 from agentie.core.observability import current_trace_id, set_current_trace
+from agentie.core.visual_artifacts import try_visual_request
 from agentie.core.web_research_service import answer_web_search, search_sources, source_card, sources_only_requested
 
 WORKSPACE=Path.cwd()/"workspace"
@@ -92,6 +93,8 @@ def route_skill_command(message:str)->dict[str,Any]|None:
     text=" ".join(message.strip().split());lower=text.lower().strip(" .?!")
     access=_global_access_command(text)
     if access is not None:return access
+    visual=try_visual_request("",message)
+    if visual is not None:return visual
     native=route_native_last30days(message)
     if native is not None:return native
     external=route_last30days(message)
