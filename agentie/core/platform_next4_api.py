@@ -56,11 +56,17 @@ async def platform_model_router_js():
     return _frontend_script("model_router.js")
 
 
+@router.get("/platform-chat-focus-guard.js")
+async def platform_chat_focus_guard_js():
+    return _frontend_script("platform_chat_focus_guard.js")
+
+
 @router.get("/platform-next4.js")
 async def platform_next4_js():
-    # Keep one connected UI loader so existing /platform.js bootstrap remains
-    # stable while this additive model selector ships with the same surface.
-    return _frontend_bundle("platform_next4.js", "model_router.js")
+    # Keep one connected UI loader so existing /platform.js bootstrap remains stable.
+    # The focus guard preserves the live group-chat composer while polling refreshes
+    # messages/presence, and the model router remains additive on the same surface.
+    return _frontend_bundle("platform_next4.js", "platform_chat_focus_guard.js", "model_router.js")
 
 
 @router.get("/platform/model-routing/status")
