@@ -150,7 +150,7 @@ def _materialize_job_results(thread_id:str)->dict[str,Any]|None:
         if not job_id or meta.get("source")=="team_job" or not bool(meta.get("materialize_replies",str(origin.get("sender_type") or "")=="user")):continue
         job=get_team_job(str(job_id))
         if not job:continue
-        mode=str(job.get("interaction_mode") or meta.get("interaction_mode") or "task")
+        mode=str(job.get("interaction_mode") or meta.get("interaction_mode") or _interaction_mode(str(job.get("task") or "")))
         emitted={str(x) for x in meta.get("materialized_handoff_ids") or []}
         for handoff in job.get("handoffs") or []:
             status=str(handoff.get("status") or "")
@@ -171,7 +171,8 @@ def _sync_jobs(thread:dict[str,Any])->dict[str,Any]:
     for row in thread.get("messages") or []:
         copy=dict(row);meta=row.get("metadata") or {};job_id=meta.get("team_job_id")
         if job_id:
-            job=get_team_job(str(job_id));mode=str((job or {}).get("interaction_mode") or meta.get("interaction_mode") or "task")
+            job=get_team_job(str(job_id));mode=str((job or {}).get("interaction_mode") or meta.get("interaction_mode") or _interaction_mode(str((job or {}).get("task") or "")))
+            if meta.get("source")=="team_job":copy["message"]=_visible_agent_reply(str(copy.get("message") or ""),mode)
             if job and mode!="chat" and meta.get("source")!="team_job":copy["job"]={"id":job["id"],"status":job.get("status"),"agents":job.get("agent_names") or [],"interaction_mode":mode,"replan_count":job.get("replan_count",0),"handoffs":[{"agent":h.get("to_agent_name"),"status":h.get("status"),"error":h.get("error"),"recovery_of":h.get("recovery_of")} for h in job.get("handoffs") or []]}
         messages.append(copy)
     result["messages"]=messages;return result
