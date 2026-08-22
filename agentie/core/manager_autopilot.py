@@ -94,8 +94,19 @@ def _phase_names(goal: str) -> list[str]:
     return list(dict.fromkeys(phases))
 
 
+def _advice_only(goal: str) -> bool:
+    low = " ".join(str(goal or "").casefold().split())
+    advice = bool(re.search(r"\b(?:what do you think|do you think|your opinion|should we|should i|would you recommend|do you recommend|which (?:one )?is better|which should we|which should i|best option|good idea|bad idea|worth it|what should we prioritize|what should i prioritize|what would you do)\b", low))
+    if not advice:
+        return False
+    explicit_execution = bool(re.search(r"\b(?:research|investigate|build|implement|develop|create|write|draft|prepare|verify|test|execute|run|perform)\b", low))
+    return not explicit_execution
+
+
 def _autopilot_worthy(goal: str) -> bool:
     low = " ".join(str(goal or "").casefold().split())
+    if _advice_only(low):
+        return False
     if re.search(r"\b(pdf|docx|docs? file|word file|xlsx|spreadsheet|pptx|powerpoint)\b", low):
         return False
     # Building/implementing a software product is inherently multi-stage.
