@@ -18,9 +18,6 @@ DEFAULT_LOCAL_BASE_URL = "http://127.0.0.1:11434/v1"
 _STATUS_CACHE: dict[str, object] = {"at": 0.0, "value": None}
 _STATUS_LOCK = threading.Lock()
 
-# These are capability/complexity signals, not profession names. The point is
-# to keep ordinary language work local while routing tasks that need stronger
-# tool-use/reasoning reliability to the configured cloud model in Auto mode.
 _POWERFUL_PATTERNS: tuple[tuple[str, int, str], ...] = (
     (r"\b(?:commit|push|merge|pull request|repo(?:sitory)?|refactor|debug|implement|codebase)\b", 2, "coding_or_repo"),
     (r"\b(?:send|email|post|publish|delete|remove|pay|payment|purchase|buy|transfer|refund|cancel subscription)\b", 2, "consequential_action"),
@@ -153,11 +150,7 @@ def classify_task(message: str) -> dict:
     if instruction_markers >= 3:
         score += 1
         reasons.append("many_steps")
-    return {
-        "score": score,
-        "requires_powerful": score >= 2,
-        "reasons": list(dict.fromkeys(reasons)),
-    }
+    return {"score": score, "requires_powerful": score >= 2, "reasons": list(dict.fromkeys(reasons))}
 
 
 def choose_model_route(message: str, *, mode: str | None = None, local_available: bool | None = None, cloud_configured: bool | None = None) -> dict:
@@ -169,78 +162,36 @@ def choose_model_route(message: str, *, mode: str | None = None, local_available
         local_available = bool(local_runtime_status(verify=True).get("available"))
     if cloud_configured is None:
         cloud_configured = powerful_configured()
-
+    common = {"mode": selected_mode, "local_available": bool(local_available), "cloud_configured": bool(cloud_configured), "task": task}
     if selected_mode == "local":
-        return {
-            "mode": selected_mode,
-            "tier": "local",
-            "reason": "manual_local",
-            "local_available": bool(local_available),
-            "cloud_configured": bool(cloud_configured),
-            "task": task,
-            "allow_cloud_fallback": False,
-        }
+        return {**common, "tier": "local", "reason": "manual_local", "allow_cloud_fallback": False}
     if selected_mode == "powerful":
-        return {
-            "mode": selected_mode,
-            "tier": "powerful",
-            "reason": "manual_powerful",
-            "local_available": bool(local_available),
-            "cloud_configured": bool(cloud_configured),
-            "task": task,
-            "allow_cloud_fallback": False,
-        }
-
+        return {**common, "tier": "powerful", "reason": "manual_powerful", "allow_cloud_fallback": False}
     if not local_available:
-        return {
-            "mode": selected_mode,
-            "tier": "powerful",
-            "reason": "local_runtime_unavailable",
-            "local_available": False,
-            "cloud_configured": bool(cloud_configured),
-            "task": task,
-            "allow_cloud_fallback": False,
-        }
+        return {**common, "tier": "powerful", "reason": "local_runtime_unavailable", "allow_cloud_fallback": False}
     if task["requires_powerful"] and cloud_configured:
-        return {
-            "mode": selected_mode,
-            "tier": "powerful",
-            "reason": task["reasons"][0] if task["reasons"] else "complex_task",
-            "local_available": True,
-            "cloud_configured": True,
-            "task": task,
-            "allow_cloud_fallback": False,
-        }
+        return {**common, "tier": "powerful", "reason": task["reasons"][0] if task["reasons"] else "complex_task", "allow_cloud_fallback": False}
     return {
-        "mode": selected_mode,
+        **common,
         "tier": "local",
         "reason": "local_default" if not task["requires_powerful"] else "cloud_unavailable_best_effort_local",
-        "local_available": True,
-        "cloud_configured": bool(cloud_configured),
-        "task": task,
         "allow_cloud_fallback": bool(cloud_configured),
     }
 
 
 def should_escalate_local_error(exc: Exception) -> bool:
     text = str(exc or "").lower()
-    safe_signals = (
-        "connection refused",
-        "connection error",
-        "connecterror",
-        "failed to connect",
-        "model not found",
-        "model is unavailable",
-        "unsupported tool",
-        "tools are not supported",
-        "function calling",
-        "context length",
-        "context window",
-        "timed out",
-        "timeout",
-    )
     blocked_signals = ("approval", "permission", "unauthorized tool", "user input required")
-    return not any(x in text for x in blocked_signals) and any(x in text for x in safe_signals)
+    if any(x in text for x in blocked_signals):
+        return False
+    if "model" in text and ("not found" in text or "unavailable" in text or "does not exist" in text):
+        return True
+    safe_signals = (
+        "connection refused", "connection error", "connecterror", "failed to connect",
+        "unsupported tool", "tools are not supported", "function calling",
+        "context length", "context window", "timed out", "timeout",
+    )
+    return any(x in text for x in safe_signals)
 
 
 def routing_status(*, verify_local: bool = True) -> dict:
@@ -249,10 +200,7 @@ def routing_status(*, verify_local: bool = True) -> dict:
         "mode": get_mode(),
         "modes": ["local", "auto", "powerful"],
         "local": local,
-        "powerful": {
-            "provider": powerful_provider_name(),
-            "configured": powerful_configured(),
-        },
+        "powerful": {"provider": powerful_provider_name(), "configured": powerful_configured()},
         "policy": {
             "auto_prefers_local": True,
             "local_never_falls_back_to_cloud": True,
