@@ -23,19 +23,14 @@ def _add(tools,extra):
 def _plugin_inspect_tool(agent:dict[str,Any]):
     @function_tool
     async def inspect_plugin(server: str) -> str:
-        """Inspect one real MCP/plugin granted to this agent before using it.
-
-        Returns discovered tool names, descriptions, and input schemas. Never guess
-        a plugin tool name when this inspection can discover the provider contract.
-        """
+        """Inspect one real MCP/plugin granted to this agent before using it."""
         server=str(server or "").strip()
         if not server:return "Plugin server is required."
         if not mcp_allowed(agent,server):return f"{agent.get('name') or 'This agent'} is not allowed to use MCP/plugin '{server}'."
         try:info=await inspect_server(server)
         except Exception as exc:return f"Could not inspect plugin '{server}': {str(exc)[:500]}"
         tools=[]
-        for item in info.get("tools") or []:
-            tools.append({"name":item.get("name"),"description":item.get("description"),"input_schema":item.get("input_schema") or {}})
+        for item in info.get("tools") or []:tools.append({"name":item.get("name"),"description":item.get("description"),"input_schema":item.get("input_schema") or {}})
         return json.dumps({"server":server,"tools":tools},ensure_ascii=False)
     return inspect_plugin
 
@@ -43,13 +38,7 @@ def _plugin_inspect_tool(agent:dict[str,Any]):
 def _plugin_tool(agent:dict[str,Any]):
     @function_tool
     async def use_plugin(server: str, tool: str, arguments_json: str = "{}") -> str:
-        """Use one real MCP/plugin granted to this agent.
-
-        Inspect the provider first when needed, then call this with the exact server
-        name, exact tool name, and JSON-object arguments. Read-only MCP tools can
-        run automatically. Consequential tools create the normal Agentie approval
-        request and must be retried only after approval.
-        """
+        """Use one real MCP/plugin granted to this agent."""
         server=str(server or "").strip();tool=str(tool or "").strip()
         if not server or not tool:return "Plugin server and tool are required."
         if not mcp_allowed(agent,server):return f"{agent.get('name') or 'This agent'} is not allowed to use MCP/plugin '{server}'."
@@ -75,10 +64,8 @@ def _delegate_tool(agent:dict[str,Any]):
     async def delegate_to_agent(agent_name: str, task: str, thread_id: str = "") -> str:
         """Delegate bounded work to another existing Agentie agent.
 
-        This creates a real Team Job and a visible Agent Chat message. Use only when
-        this agent has explicit delegation permission and another configured agent
-        is a better owner for the bounded task. The target keeps its own private
-        memory and permissions; only the task/result are shared through the thread.
+        Creates a real Team Job and visible Agent Chat. The target keeps its own
+        private memory and permissions; only the bounded task/result are shared.
         """
         try:
             from agentie.core.agent_threads import agent_to_agent_task
@@ -86,6 +73,23 @@ def _delegate_tool(agent:dict[str,Any]):
         except Exception as exc:return f"Could not delegate to {agent_name}: {str(exc)[:700]}"
         return json.dumps({"status":"started","team_job_id":result["job"]["id"],"thread_id":result["thread"]["id"],"from_agent":result["sender"]["name"],"to_agent":result["target"]["name"],"task":result["job"]["task"],"message":"The target agent is working in a visible Agent Chat. Do not claim completion until its real result returns."},ensure_ascii=False)
     return delegate_to_agent
+
+
+def _gap_tool(agent:dict[str,Any]):
+    @function_tool
+    async def analyze_team_capability_gap(goal: str) -> str:
+        """Check whether existing configured agents cover a goal before recommending another agent.
+
+        This tool never creates an agent. It returns the best existing owners or a
+        proposed editable agent configuration for the user to review.
+        """
+        try:
+            from agentie.core.capability_planner import analyze_capability_gap
+            result=analyze_capability_gap(goal)
+        except Exception as exc:return f"Capability-gap analysis failed: {str(exc)[:700]}"
+        draft=result.get("suggested_agent") or {};payload={"covered":result.get("covered"),"recommendation":result.get("recommendation"),"best_match":result.get("best_match"),"matches":result.get("matches"),"suggested_agent":{"job":draft.get("job"),"goal":draft.get("goal"),"skills":[{"id":x.get("id"),"name":x.get("name")} for x in draft.get("skills") or []],"plugins":[{"id":x.get("id"),"name":x.get("name"),"installed":x.get("installed")} for x in draft.get("plugins") or []]} if draft else None,"message":"Reuse an existing agent when coverage is strong; recommend a new agent only when there is a real ownership/capability gap. Do not create it without the user's explicit action."}
+        return json.dumps(payload,ensure_ascii=False)
+    return analyze_team_capability_gap
 
 
 def tools_for_persistent_agent(agent:dict[str,Any])->list:
@@ -100,6 +104,6 @@ def tools_for_persistent_agent(agent:dict[str,Any])->list:
     if skill_allowed(agent,"planning"):_add(tools,registry.WORK_TOOLS)
     if skill_allowed(agent,"github"):_add(tools,[registry.github_repo_info,registry.github_read_file])
     if skill_allowed(agent,"browser-automation"):_add(tools,[registry.browser_read_page])
-    if bool((agent.get("permissions") or {}).get("delegate")):tools.append(_delegate_tool(agent))
+    if bool((agent.get("permissions") or {}).get("delegate")):tools.extend([_delegate_tool(agent),_gap_tool(agent)])
     if any(mcp_allowed(agent,str(server.get("name") or "")) for server in list_servers()):tools.extend([_plugin_inspect_tool(agent),_plugin_tool(agent)])
     return tools
