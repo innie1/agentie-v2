@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import PlainTextResponse
+from fastapi.responses import PlainTextResponse,Response
 
 from agentie.core.external_triggers import publish_external_event,webhook_allowed,webhook_security_state
 from agentie.core.whatsapp_cloud import connection_state,ingest_webhook,verify_webhook_challenge,verify_webhook_signature
@@ -30,6 +32,14 @@ async def _json(request:Request)->dict:
     except Exception as exc:raise HTTPException(400,"Request body must be valid JSON.") from exc
     if not isinstance(value,dict):raise HTTPException(400,"Request body must be a JSON object.")
     return value
+
+# main.py already loads /platform.js. This route is included before main's
+# compatibility route, so the same browser request now receives the stable base
+# platform UI plus the additive automation/library/chat layer. No second app shell.
+@router.get("/platform.js")
+async def enhanced_platform_js():
+    frontend=Path(__file__).resolve().parents[2]/"frontend";base=(frontend/"platform.js").read_text(encoding="utf-8");extra=(frontend/"platform_automation.js").read_text(encoding="utf-8")
+    return Response(base+"\n"+extra,media_type="application/javascript",headers={"Cache-Control":"no-store"})
 
 @router.get("/webhooks/whatsapp")
 async def whatsapp_webhook_verify(request: Request):
