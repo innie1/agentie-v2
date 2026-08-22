@@ -55,7 +55,7 @@ class AgentUIRegressionTests(unittest.TestCase):
         self.assertIn("def update_agent_profile", registry)
         self.assertIn("update_agent_profile(rename.group(1)", roles)
         self.assertIn("update_agent_profile(role_edit.group(1)", roles)
-        self.assertIn("(?:title|role)", roles)
+        self.assertIn("(?:title|role|job)", roles)
 
 
 if __name__ == "__main__":
