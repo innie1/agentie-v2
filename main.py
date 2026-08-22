@@ -159,7 +159,7 @@ async def web_snapshot(filename:str):
     if name!=filename or not name.lower().endswith(".png"):raise HTTPException(400,"Invalid snapshot filename.")
     path=SNAPSHOT_DIR/name
     if not path.exists() or not path.is_file():raise HTTPException(404,"Website snapshot not found.")
-    return FileResponse(path=str(path),media_type="image/png",headers={"Cache-Control":"no-store"})
+    return FileResponse(path=str(path),media_type="image/png",headers={"Cache-Control":"no-store, max-age=0"})
 @app.get("/browser/live/state")
 async def browser_live_state():return get_live_state()
 @app.get("/browser/live/frame")
@@ -249,7 +249,7 @@ async def agent_run(request:AgentRequest,http_request:Request):
             if follow.get("cancelled") or not follow.get("command"):
                 message=str(follow.get("message",""));_record_local(session_key,request.message,message,None,request.agent_type,"clarification");return AgentResponse(message=message,result=message,card=None,agent_type=request.agent_type,routed_by="clarification")
             effective=str(follow["command"])
-        preflight=await route_capability_preflight(effective)
+        preflight=await route_capability_preflight(effective,session_key)
         if preflight is not None:
             message=str(preflight.get("message",""));card=preflight.get("card");_record_local(session_key,request.message,message,card,request.agent_type,"capability");return AgentResponse(message=message,result=message,card=card,agent_type=request.agent_type,routed_by="capability")
         routed=_route_request_actions(effective);local_results=routed.get("results",[]);unresolved=routed.get("unresolved",[])
