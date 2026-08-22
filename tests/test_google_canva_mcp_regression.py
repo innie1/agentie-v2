@@ -96,6 +96,10 @@ class GoogleCanvaMCPRegressionTests(unittest.TestCase):
         self.assertEqual(setup.get("fields") or [], [])
         self.assertIn("mcp-remote-client", setup.get("oauth_command", ""))
         self.assertIn("canva.dev", setup.get("docs_url", ""))
+        state = plugin_credentials.public_setup_state("canva")
+        self.assertTrue(state["oauth_supported"])
+        self.assertFalse(state["requires_credentials"])
+        self.assertFalse(state["custom_env_supported"])
 
     def test_canva_oauth_can_start_without_pasted_secret(self):
         fake = Mock(pid=2468)
