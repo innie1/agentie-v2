@@ -17,11 +17,12 @@ from agentie.core.conversation_loop import consume_followup,detect_incomplete_in
 from agentie.core.file_service import MAX_FILE_BYTES,resolve_upload,run_action,save_upload
 from agentie.core.local_router import route_local_actions
 from agentie.core.mcp_catalog import presets as mcp_presets
-from agentie.core.mcp_client import plugin_state,route_mcp_command
+from agentie.core.mcp_client import get_server,inspect_server,plugin_state,route_mcp_command
 from agentie.core.memory_store import add_message,recent_messages
 from agentie.core.observability import finish_trace,get_trace,record_event,record_route,recent_traces,start_trace,summary_card,trace_card
 from agentie.core.office_artifacts import try_office_request
 from agentie.core.pdf_service import try_pdf_request
+from agentie.core.plugin_credentials import apply_all_credentials,clear_credentials,enrich_setup_failure,public_setup_state,save_credentials
 from agentie.core.provider_gate import local_fallback_message,provider_allowed
 from agentie.core.reference_router import remember_active_from_card,try_active_reference
 from agentie.core.routine_worker import poll_routine_events,start_routine_worker
@@ -34,7 +35,7 @@ from agentie.tools.advanced_utility_tools import SCHEDULES
 from agentie.tools.productivity_tools import REMINDERS
 
 app=FastAPI(title="Agentie API",version="1.10.1",description="Local-first Agentie runtime with observability, cost tracking, memory, routines, jobs, RAG, browser monitoring, MCP, plugins, skills and local artifact generation")
-FRONTEND_DIR=Path(__file__).parent/"frontend";FRONTEND_FILE=FRONTEND_DIR/"index.html";CARDS_JS=FRONTEND_DIR/"cards.js";EVENTS_JS=FRONTEND_DIR/"events.js";UPLOAD_JS=FRONTEND_DIR/"upload.js";PLUGINS_JS=FRONTEND_DIR/"plugins.js";PLUGIN_ACCESS_JS=FRONTEND_DIR/"plugin_access.js";BROWSER_SCREEN_JS=FRONTEND_DIR/"browser_screen.js";UI_UPGRADE_JS=FRONTEND_DIR/"ui_upgrade.js"
+FRONTEND_DIR=Path(__file__).parent/"frontend";FRONTEND_FILE=FRONTEND_DIR/"index.html";CARDS_JS=FRONTEND_DIR/"cards.js";EVENTS_JS=FRONTEND_DIR/"events.js";UPLOAD_JS=FRONTEND_DIR/"upload.js";PLUGINS_JS=FRONTEND_DIR/"plugins.js";PLUGIN_SETUP_JS=FRONTEND_DIR/"plugin_setup.js";PLUGIN_ACCESS_JS=FRONTEND_DIR/"plugin_access.js";BROWSER_SCREEN_JS=FRONTEND_DIR/"browser_screen.js";UI_UPGRADE_JS=FRONTEND_DIR/"ui_upgrade.js"
 class AgentRequest(BaseModel):
     message:str=Field(min_length=1,max_length=20_000);agent_type:str=Field(default="general",pattern="^(general|research|coding|manager|github)$");session_id:str|None=Field(default=None,max_length=200)
 class AgentResponse(BaseModel):
@@ -45,6 +46,8 @@ class ApprovalDecision(BaseModel):approved:bool
 class FileAction(BaseModel):action:str=Field(pattern="^(inspect|checksum|extract|text|preview)$")
 class AgentAccessUpdate(BaseModel):
     kind:str=Field(pattern="^(skill|mcp)$");capability_id:str=Field(min_length=1,max_length=120);mode:str|None=Field(default=None,pattern="^(inherit|allow|block)$");allowed:bool|None=None
+class PluginSetupUpdate(BaseModel):
+    values:dict[str,str]=Field(default_factory=dict)
 
 def _load(path,default):
     if not path.exists():return default
@@ -108,11 +111,11 @@ def _observability_command(session_id,message):
     return None
 
 @app.on_event("startup")
-async def startup_event():start_routine_worker()
+async def startup_event():apply_all_credentials();start_routine_worker()
 @app.get("/")
 async def chat_ui():
     if not FRONTEND_FILE.exists():raise HTTPException(404,"Frontend not found.")
-    html=FRONTEND_FILE.read_text(encoding="utf-8")+'\n<script src="/cards.js?v=201"></script>\n<script src="/events.js?v=201"></script>\n<script src="/upload.js?v=201"></script>\n<script src="/plugins.js?v=201"></script>\n<script src="/plugin-access.js?v=203"></script>\n<script src="/browser-screen.js?v=201"></script>\n<script src="/ui-upgrade.js?v=203"></script>\n';return HTMLResponse(html,headers={"Cache-Control":"no-store, no-cache, must-revalidate, max-age=0"})
+    html=FRONTEND_FILE.read_text(encoding="utf-8")+'\n<script src="/cards.js?v=201"></script>\n<script src="/events.js?v=201"></script>\n<script src="/upload.js?v=201"></script>\n<script src="/plugins.js?v=205"></script>\n<script src="/plugin-setup.js?v=205"></script>\n<script src="/plugin-access.js?v=203"></script>\n<script src="/browser-screen.js?v=201"></script>\n<script src="/ui-upgrade.js?v=203"></script>\n';return HTMLResponse(html,headers={"Cache-Control":"no-store, no-cache, must-revalidate, max-age=0"})
 @app.get("/cards.js")
 async def cards_js():return Response(CARDS_JS.read_text(encoding="utf-8"),media_type="application/javascript",headers={"Cache-Control":"no-store"})
 @app.get("/events.js")
@@ -121,6 +124,8 @@ async def events_js():return Response(EVENTS_JS.read_text(encoding="utf-8"),medi
 async def upload_js():return Response(UPLOAD_JS.read_text(encoding="utf-8"),media_type="application/javascript",headers={"Cache-Control":"no-store"})
 @app.get("/plugins.js")
 async def plugins_js():return Response(PLUGINS_JS.read_text(encoding="utf-8"),media_type="application/javascript",headers={"Cache-Control":"no-store"})
+@app.get("/plugin-setup.js")
+async def plugin_setup_js():return Response(PLUGIN_SETUP_JS.read_text(encoding="utf-8"),media_type="application/javascript",headers={"Cache-Control":"no-store"})
 @app.get("/plugin-access.js")
 async def plugin_access_js():return Response(PLUGIN_ACCESS_JS.read_text(encoding="utf-8"),media_type="application/javascript",headers={"Cache-Control":"no-store"})
 @app.get("/browser-screen.js")
@@ -129,7 +134,28 @@ async def browser_screen_js():return Response(BROWSER_SCREEN_JS.read_text(encodi
 async def ui_upgrade_js():return Response(UI_UPGRADE_JS.read_text(encoding="utf-8")+"\n"+(FRONTEND_DIR/"project_workspace.js").read_text(encoding="utf-8"),media_type="application/javascript",headers={"Cache-Control":"no-store"})
 @app.get("/plugins/state")
 async def plugins_state():
-    state=plugin_state();state["plugins"]=list_skills();state["agents"]=list_agents();registered={str(x.get("name") or "").lower() for x in state.get("mcp_servers",[])};state["mcp_presets"]=[{**item,"installed":item["id"].lower() in registered} for item in mcp_presets()];return state
+    state=plugin_state();state["plugins"]=list_skills();state["agents"]=list_agents();registered={str(x.get("name") or "").lower() for x in state.get("mcp_servers",[])}
+    state["mcp_servers"]=[{**item,"setup":public_setup_state(str(item.get("name") or ""))} for item in state.get("mcp_servers",[])]
+    state["mcp_presets"]=[{**item,"installed":item["id"].lower() in registered,"setup_state":public_setup_state(item["id"])} for item in mcp_presets()];return state
+@app.get("/plugins/setup/{server_name}")
+async def plugin_setup_state(server_name:str):
+    if not get_server(server_name):raise HTTPException(404,"MCP server is not registered.")
+    return public_setup_state(server_name)
+@app.post("/plugins/setup/{server_name}")
+async def plugin_setup_save(server_name:str,request:PluginSetupUpdate):
+    if not get_server(server_name):raise HTTPException(404,"MCP server is not registered.")
+    try:save_credentials(server_name,request.values)
+    except ValueError as exc:raise HTTPException(400,str(exc)) from exc
+    try:
+        await inspect_server(server_name)
+        return {"connected":True,"message":f"Connected to {server_name}.","setup":public_setup_state(server_name)}
+    except Exception as exc:
+        error=str(exc)[:700]
+        return {"connected":False,"message":f"Saved the credential, but {server_name} still could not connect.","error":error,"setup":public_setup_state(server_name,error)}
+@app.delete("/plugins/setup/{server_name}")
+async def plugin_setup_clear(server_name:str):
+    if not get_server(server_name):raise HTTPException(404,"MCP server is not registered.")
+    return {"cleared":True,"setup":clear_credentials(server_name)}
 @app.get("/plugins/agent-access/{agent_id}")
 async def plugin_agent_access(agent_id:str):
     try:return access_snapshot(agent_id)
@@ -225,7 +251,7 @@ async def agent_run(request:AgentRequest,http_request:Request):
             message=str(access.get("message",""));card=access.get("card");_record_local(session_key,request.message,message,card,request.agent_type,"capability_permission");return AgentResponse(message=message,result=message,card=card,agent_type=request.agent_type,routed_by="capability_permission")
         mcp=await route_mcp_command(request.message)
         if mcp is not None:
-            message=str(mcp.get("message",""));card=mcp.get("card");_record_local(session_key,request.message,message,card,request.agent_type,"mcp");return AgentResponse(message=message,result=message,card=card,agent_type=request.agent_type,routed_by="mcp")
+            mcp=enrich_setup_failure(request.message,mcp) or mcp;message=str(mcp.get("message",""));card=mcp.get("card");_record_local(session_key,request.message,message,card,request.agent_type,"mcp");return AgentResponse(message=message,result=message,card=card,agent_type=request.agent_type,routed_by="mcp")
         code=route_code_command(request.message)
         if code is not None:
             message=str(code.get("message",""));card=code.get("card");_record_local(session_key,request.message,message,card,request.agent_type,"local_code");return AgentResponse(message=message,result=message,card=card,agent_type=request.agent_type,routed_by="local_code")
@@ -251,7 +277,7 @@ async def agent_run(request:AgentRequest,http_request:Request):
             effective=str(follow["command"])
         preflight=await route_capability_preflight(effective,session_key)
         if preflight is not None:
-            message=str(preflight.get("message",""));card=preflight.get("card");_record_local(session_key,request.message,message,card,request.agent_type,"capability");return AgentResponse(message=message,result=message,card=card,agent_type=request.agent_type,routed_by="capability")
+            preflight=enrich_setup_failure(effective,preflight) or preflight;message=str(preflight.get("message",""));card=preflight.get("card");_record_local(session_key,request.message,message,card,request.agent_type,"capability");return AgentResponse(message=message,result=message,card=card,agent_type=request.agent_type,routed_by="capability")
         routed=_route_request_actions(effective);local_results=routed.get("results",[]);unresolved=routed.get("unresolved",[])
         if not local_results and unresolved:
             handoff=maybe_auto_delegate(effective,session_key)
