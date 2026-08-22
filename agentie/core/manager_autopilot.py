@@ -38,16 +38,16 @@ def build_autopilot_plan(goal:str,manager:dict[str,Any])->dict[str,Any]|None:
     if not bool((manager.get("permissions") or {}).get("delegate")) or _advice_only(goal):return None
     clauses=_split_goal(goal)
     if len(clauses)<2:return None
-    steps=[];used=set()
+    steps=[]
     for index,clause in enumerate(clauses,1):
         agent=best_agent(clause,exclude_id=str(manager.get("id")),min_score=.16)
         if not agent:continue
-        # Prefer distinct owners where capabilities are genuinely different, but
-        # reuse one configured owner when that is the best match for multiple steps.
+        # A plan is built from actual configured agents. No hidden research /
+        # coding / verification employee classes are created or assumed.
         score=match_score(clause,agent)
-        steps.append({"phase":f"step_{index}","label":clause[:80],"agent":agent,"task":clause,"score":score});used.add(str(agent.get("id")))
+        steps.append({"phase":f"step_{index}","label":clause[:80],"agent":agent,"task":clause,"score":score})
     if len(steps)<2:return None
-    return {"goal":goal.strip(),"manager":manager,"steps":steps,"missing":[],"sequential":bool(re.search(r"\b(?:then|after that|and then)\b",goal,re.I))}
+    return {"goal":goal.strip(),"manager":manager,"steps":steps,"missing":[],"sequential":bool(re.search(r"\b(?:then|after that|and then)\b",goal,re.I) or ";" in goal)}
 
 def _configure(job_id:str,plan:dict[str,Any])->dict[str,Any]:
     from agentie.core import team_orchestrator as team
@@ -61,8 +61,37 @@ def _configure(job_id:str,plan:dict[str,Any])->dict[str,Any]:
             owned=by_agent.get(str(handoff.get("to_agent_id")),[])
             if not owned:continue
             task="\n".join(f"{i+1}. {x['task']}" for i,x in enumerate(owned));handoff["task"]=task;handoff.setdefault("context",{})["task"]=task;handoff["context"]["autopilot_goal"]=plan["goal"];handoff["match_scores"]=[x["score"] for x in owned];ordered.append(handoff["id"])
+        if job["autopilot_sequential"]:
+            for index,hid in enumerate(ordered):
+                handoff=next((x for x in job.get("handoffs",[]) if x.get("id")==hid),None)
+                if handoff is not None:handoff["depends_on"]=[] if index==0 else [ordered[index-1]]
         job["autopilot_order"]=ordered
     return team._mutate(job_id,apply) or get_team_job(job_id) or {}
+
+# Backward-compatible helper name for older internal callers. Semantics are now
+# generic configured-agent planning rather than fixed specialist phases.
+_configure_team_job=_configure
+
+def _inject_dependency(job_id:str,next_hid:str,previous:dict[str,Any],goal:str)->dict[str,Any]|None:
+    """Share only the completed predecessor result with the next agent.
+
+    Sequential collaboration needs the previous work product, but this must not
+    turn into unrestricted cross-agent memory sharing. The next handoff receives
+    only the predecessor's explicit result plus the shared goal.
+    """
+    from agentie.core import team_orchestrator as team
+    result=str(previous.get("result") or "").strip()
+    if not result:return get_team_job(job_id)
+    previous_name=str(previous.get("to_agent_name") or "Previous agent")
+    previous_id=str(previous.get("id") or "")
+    brief=(f"Dependency from {previous_name}. Use only this dependency result for the next assigned step; "
+           f"only this dependency is shared, not the previous agent's private memory or conversation.\n\n"
+           f"Shared goal: {goal}\n\nDependency result:\n{result[:12000]}")
+    def apply(job):
+        target=next((x for x in job.get("handoffs",[]) if str(x.get("id"))==str(next_hid)),None)
+        if not target:return
+        context=target.setdefault("context",{});context["scoped_brief"]=brief;context["dependency_handoff_id"]=previous_id;context["dependency_agent_name"]=previous_name
+    return team._mutate(job_id,apply) or get_team_job(job_id)
 
 def _wait_terminal(job_id,hid):
     while True:
@@ -79,13 +108,15 @@ def _controller(job_id:str)->None:
         order=list(job.get("autopilot_order") or [])
         if not job.get("autopilot_sequential"):
             start_team_job(job_id);return
-        for hid in order:
+        goal=str(job.get("autopilot_goal") or job.get("task") or "")
+        for index,hid in enumerate(order):
             while True:
                 start_team_job(job_id,{hid});time.sleep(.06);current=get_team_job(job_id)
                 h=next((x for x in (current or {}).get("handoffs",[]) if x.get("id")==hid),None)
                 if not h or h.get("status")!="queued":break
             done=_wait_terminal(job_id,hid)
             if not done or done.get("status")!="completed":break
+            if index+1<len(order):_inject_dependency(job_id,order[index+1],done,goal)
     finally:
         with _LOCK:_CONTROLLERS.pop(job_id,None)
 
