@@ -10,7 +10,6 @@ from agentie.core.whatsapp_cloud import connection_state,ingest_webhook,verify_w
 
 router = APIRouter()
 
-
 def _whatsapp_body(message:dict)->str:
     kind=str(message.get("type") or "unknown")
     if kind=="text":return str((message.get("text") or {}).get("body") or "")
@@ -33,13 +32,10 @@ async def _json(request:Request)->dict:
     if not isinstance(value,dict):raise HTTPException(400,"Request body must be a JSON object.")
     return value
 
-# main.py already loads /platform.js. This route is included before main's
-# compatibility route, so the same browser request now receives the stable base
-# platform UI plus the additive automation/library/chat layer. No second app shell.
 @router.get("/platform.js")
 async def enhanced_platform_js():
-    frontend=Path(__file__).resolve().parents[2]/"frontend";base=(frontend/"platform.js").read_text(encoding="utf-8");extra=(frontend/"platform_automation.js").read_text(encoding="utf-8")
-    return Response(base+"\n"+extra,media_type="application/javascript",headers={"Cache-Control":"no-store"})
+    frontend=Path(__file__).resolve().parents[2]/"frontend";names=("platform.js","platform_automation.js","platform_permission_guard.js");content="\n".join((frontend/name).read_text(encoding="utf-8") for name in names)
+    return Response(content,media_type="application/javascript",headers={"Cache-Control":"no-store"})
 
 @router.get("/webhooks/whatsapp")
 async def whatsapp_webhook_verify(request: Request):
