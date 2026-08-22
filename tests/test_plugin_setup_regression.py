@@ -73,14 +73,15 @@ class PluginSetupRegressionTests(unittest.TestCase):
 
     def test_custom_mcp_credentials_are_supported_without_fake_metadata(self):
         mcp_client.add_local_server("custom-service", "npx -y some-mcp-package")
-        plugin_credentials.save_credentials("custom-service", {"CUSTOM_SERVICE_TOKEN": "secret"})
+        secret_value = "custom-service-super-private-value"
+        plugin_credentials.save_credentials("custom-service", {"CUSTOM_SERVICE_TOKEN": secret_value})
         state = plugin_credentials.public_setup_state("custom-service")
         self.assertTrue(state["custom_env_supported"])
         self.assertTrue(state["configured"])
         self.assertTrue(state["has_saved_credentials"])
         self.assertEqual(state["fields"], [])
-        self.assertEqual(plugin_credentials.server_environment("custom-service")["CUSTOM_SERVICE_TOKEN"], "secret")
-        self.assertNotIn("secret", json.dumps(state))
+        self.assertEqual(plugin_credentials.server_environment("custom-service")["CUSTOM_SERVICE_TOKEN"], secret_value)
+        self.assertNotIn(secret_value, json.dumps(state))
 
     def test_invalid_environment_variable_is_rejected(self):
         with self.assertRaises(ValueError):
