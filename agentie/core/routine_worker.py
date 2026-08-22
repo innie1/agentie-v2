@@ -56,6 +56,12 @@ def _event_instruction(action:str,event:dict[str,Any]|None)->str:
     context=_safe_event_context(event)
     if not context:return action
     return action+"\n\nAUTOMATION EVENT CONTEXT (use this event as the input to the routine; do not invent missing fields):\n"+json.dumps(context,ensure_ascii=False,default=str)[:12000]
+def _skill_event_inputs(event:dict[str,Any]|None)->dict[str,Any]:
+    payload=dict((_safe_event_context(event).get("payload") or {}));out={}
+    for key,value in payload.items():
+        if isinstance(value,(str,int,float,bool)):out[str(key)]=value
+        elif value is not None:out[str(key)]=json.dumps(value,ensure_ascii=False,default=str)[:3000]
+    return out
 
 async def _run_website_routine(routine:dict[str,Any],url:str,event:dict[str,Any]|None=None)->None:
     try:
@@ -93,7 +99,7 @@ async def _run_linked_skill(routine:dict[str,Any],event:dict[str,Any]|None=None)
         from agentie.core.workflow_skills import get_workflow_skill
         skill=get_workflow_skill(skill_id)
         if not skill:raise ValueError(f"Skill {skill_id} was not found.")
-        payload=dict((_safe_event_context(event).get("payload") or {}));inputs={str(k):v for k,v in payload.items() if isinstance(v,(str,int,float,bool))};session=_routine_session(routine);result,status=await _execute_linked_skill_once(routine,skill,inputs,session);retried=False
+        inputs=_skill_event_inputs(event);session=_routine_session(routine);result,status=await _execute_linked_skill_once(routine,skill,inputs,session);retried=False
         if status=="failed" and _retry_enabled(routine) and _retry_safe(result):
             retried=True;record_run(routine["id"],None,"retrying",{"skill_id":skill_id,"event_id":(event or {}).get("id"),"trigger_type":routine.get("trigger_type","schedule")});result,status=await _execute_linked_skill_once(routine,skill,inputs,session)
         if status not in {"completed","failed","awaiting_approval","needs_input","needs_access","inactive","needs_agent"}:status="completed"
