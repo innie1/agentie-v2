@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import asyncio,json
+import asyncio,json,re
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -14,6 +14,7 @@ from agentie.core.team_orchestrator import poll_team_completion_events
 from agentie.tools.approval_tools import poll_background_approval_events
 
 WORKSPACE=Path.cwd()/"workspace";EVENTS=WORKSPACE/"routine_events.json";_TASK:asyncio.Task|None=None
+_SECRET_KEY=re.compile(r"(?:password|passwd|secret|token|authorization|cookie|credential|oauth|bearer|api[_-]?key|access[_-]?key|private[_-]?key)",re.I)
 def _load_events()->list[dict[str,Any]]:
     try:return json.loads(EVENTS.read_text(encoding="utf-8")) if EVENTS.exists() else []
     except Exception:return []
@@ -37,6 +38,25 @@ def poll_routine_events()->list[dict[str,Any]]:
 async def _runner(instruction:str,specialist:str,session_id:str)->str:return await run_agent(instruction,specialist,session_id)
 def _routine_session(routine:dict[str,Any])->str:
     owner=str(routine.get("owner_agent_id") or "").strip();return f"agent:{owner}:routine:{routine['id']}" if owner else f"routine:{routine['id']}"
+
+def _safe_event_value(key:str,value:Any,depth:int=0)->Any:
+    if _SECRET_KEY.search(str(key or "")):return "<redacted>"
+    if isinstance(value,(str,int,float,bool)) or value is None:
+        text=value if not isinstance(value,str) else value[:1200]
+        return text
+    if depth>=2:return f"<{type(value).__name__}>"
+    if isinstance(value,dict):return {str(k)[:100]:_safe_event_value(str(k),v,depth+1) for k,v in list(value.items())[:40]}
+    if isinstance(value,list):return [_safe_event_value(key,v,depth+1) for v in value[:20]]
+    return f"<{type(value).__name__}>"
+def _safe_event_context(event:dict[str,Any]|None)->dict[str,Any]:
+    if not event:return {}
+    payload=dict(event.get("payload") or {});safe={str(k)[:100]:_safe_event_value(str(k),v) for k,v in list(payload.items())[:60]}
+    return {"event_id":event.get("id"),"event_type":event.get("type"),"source":event.get("source"),"payload":safe}
+def _event_instruction(action:str,event:dict[str,Any]|None)->str:
+    context=_safe_event_context(event)
+    if not context:return action
+    return action+"\n\nAUTOMATION EVENT CONTEXT (use this event as the input to the routine; do not invent missing fields):\n"+json.dumps(context,ensure_ascii=False,default=str)[:12000]
+
 async def _run_website_routine(routine:dict[str,Any],url:str,event:dict[str,Any]|None=None)->None:
     try:
         result=await capture_website(url,track_change=True);changed=bool(result.get("changed"));first=bool(result.get("first_check"));always=routine_always_show(str(routine.get("action") or ""));status="changed" if changed else "unchanged";record_run(routine["id"],None,status,{"event_id":(event or {}).get("id"),"trigger_type":routine.get("trigger_type","schedule")})
@@ -73,7 +93,7 @@ async def _run_linked_skill(routine:dict[str,Any],event:dict[str,Any]|None=None)
         from agentie.core.workflow_skills import get_workflow_skill
         skill=get_workflow_skill(skill_id)
         if not skill:raise ValueError(f"Skill {skill_id} was not found.")
-        payload=dict((event or {}).get("payload") or {});inputs={str(k):v for k,v in payload.items() if isinstance(v,(str,int,float,bool))};session=_routine_session(routine);result,status=await _execute_linked_skill_once(routine,skill,inputs,session);retried=False
+        payload=dict((_safe_event_context(event).get("payload") or {}));inputs={str(k):v for k,v in payload.items() if isinstance(v,(str,int,float,bool))};session=_routine_session(routine);result,status=await _execute_linked_skill_once(routine,skill,inputs,session);retried=False
         if status=="failed" and _retry_enabled(routine) and _retry_safe(result):
             retried=True;record_run(routine["id"],None,"retrying",{"skill_id":skill_id,"event_id":(event or {}).get("id"),"trigger_type":routine.get("trigger_type","schedule")});result,status=await _execute_linked_skill_once(routine,skill,inputs,session)
         if status not in {"completed","failed","awaiting_approval","needs_input","needs_access","inactive","needs_agent"}:status="completed"
@@ -83,7 +103,7 @@ async def _execute_routine(routine:dict[str,Any],event:dict[str,Any]|None=None)-
     if routine.get("skill_id"):await _run_linked_skill(routine,event);return
     action=str(routine.get("instructions") or routine.get("action") or "");website=website_routine_target(action)
     if website:await _run_website_routine(routine,website,event);return
-    role=str(routine.get("agent_role") or "auto").strip().lower();owner=bool(routine.get("owner_agent_id"));job=create_job(_routine_session(routine),action,preferred_role=None if owner or role=="auto" else role);start_job(job["id"],_runner);record_run(routine["id"],job["id"],"started",{"event_id":(event or {}).get("id"),"trigger_type":routine.get("trigger_type","schedule")});owner_text=f" · {routine.get('owner_agent_name')}" if routine.get("owner_agent_name") else "";_push({"message":f"Routine started: {routine['name']}{owner_text}","card":{"type":"routine_run","routine_id":routine["id"],"routine_name":routine["name"],"owner_agent_id":routine.get("owner_agent_id"),"owner_agent_name":routine.get("owner_agent_name"),"event_id":(event or {}).get("id"),"job":job_card(job)}})
+    instruction=_event_instruction(action,event);role=str(routine.get("agent_role") or "auto").strip().lower();owner=bool(routine.get("owner_agent_id"));job=create_job(_routine_session(routine),instruction,preferred_role=None if owner or role=="auto" else role);start_job(job["id"],_runner);record_run(routine["id"],job["id"],"started",{"event_id":(event or {}).get("id"),"trigger_type":routine.get("trigger_type","schedule")});owner_text=f" · {routine.get('owner_agent_name')}" if routine.get("owner_agent_name") else "";_push({"message":f"Routine started: {routine['name']}{owner_text}","card":{"type":"routine_run","routine_id":routine["id"],"routine_name":routine["name"],"owner_agent_id":routine.get("owner_agent_id"),"owner_agent_name":routine.get("owner_agent_name"),"event_id":(event or {}).get("id"),"job":job_card(job)}})
 async def _dispatch_internal_events()->None:
     for event in pending_events(100):
         delivered={str(x) for x in event.get("delivered_routine_ids") or []};event_source=str((event.get("payload") or {}).get("source") or "")
