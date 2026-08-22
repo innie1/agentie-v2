@@ -84,6 +84,10 @@ def _materialize_job_results(thread_id:str)->dict[str,Any]|None:
     if not thread:return None
     changed=False
     for origin in list(thread.get("messages") or []):
+        # Only the original user assignment can materialize replies. Agent replies
+        # also reference the team job for auditability, but must never recursively
+        # create another copy of the same results on refresh.
+        if str(origin.get("sender_type") or "")!="user":continue
         meta=origin.setdefault("metadata",{});job_id=meta.get("team_job_id")
         if not job_id:continue
         job=get_team_job(str(job_id))
