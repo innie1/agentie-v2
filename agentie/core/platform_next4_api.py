@@ -14,6 +14,11 @@ from agentie.core.skill_marketplace import assign_marketplace_item, install_mark
 router = APIRouter()
 
 
+def _frontend_script(name: str) -> Response:
+    path = Path(__file__).resolve().parents[2] / "frontend" / name
+    return Response(path.read_text(encoding="utf-8"), media_type="application/javascript", headers={"Cache-Control": "no-store"})
+
+
 async def _json(request: Request) -> dict[str, Any]:
     try:
         value = await request.json()
@@ -29,10 +34,19 @@ async def _start_google_event_bridge() -> None:
     start_google_workspace_event_bridge()
 
 
+@router.get("/platform-automation.js")
+async def platform_automation_js():
+    return _frontend_script("platform_automation.js")
+
+
+@router.get("/platform-permission-guard.js")
+async def platform_permission_guard_js():
+    return _frontend_script("platform_permission_guard.js")
+
+
 @router.get("/platform-next4.js")
 async def platform_next4_js():
-    path = Path(__file__).resolve().parents[2] / "frontend" / "platform_next4.js"
-    return Response(path.read_text(encoding="utf-8"), media_type="application/javascript", headers={"Cache-Control": "no-store"})
+    return _frontend_script("platform_next4.js")
 
 
 @router.get("/platform/agents")
