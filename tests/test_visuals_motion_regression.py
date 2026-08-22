@@ -4,6 +4,7 @@ from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
 from agentie.core import file_service, skill_registry, visual_artifacts
+from agentie.core.local_router import route_local_actions
 
 
 class VisualsMotionRegressionTests(unittest.TestCase):
@@ -79,6 +80,13 @@ class VisualsMotionRegressionTests(unittest.TestCase):
             self.assertEqual(result["card"]["visual_kind"], "diagram")
             self.assertEqual(result["card"]["nodes"], 4)
             self.assertTrue(Path(tmp, result["card"]["name"]).exists())
+
+    def test_main_local_router_reaches_visual_skill_without_provider(self):
+        with TemporaryDirectory() as tmp, patch.object(file_service, "UPLOADS", Path(tmp)), patch.object(visual_artifacts, "UPLOADS", Path(tmp)):
+            routed = route_local_actions("Create a flowchart: Idea -> Validate -> Build -> Launch")
+            self.assertEqual(routed["unresolved"], [])
+            self.assertEqual(len(routed["results"]), 1)
+            self.assertEqual(routed["results"][0]["card"]["visual_kind"], "diagram")
 
     def test_natural_motion_request_honors_requested_seconds(self):
         with TemporaryDirectory() as tmp, patch.object(file_service, "UPLOADS", Path(tmp)), patch.object(visual_artifacts, "UPLOADS", Path(tmp)):
