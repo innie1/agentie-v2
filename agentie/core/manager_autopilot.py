@@ -18,29 +18,21 @@ _ARTIFACT_CREATE_RE=re.compile(r"\b(?:create|make|generate|write|prepare|build|e
 def _active_manager(session_id:str|None)->dict[str,Any]|None:
     m=re.match(r"^agent:(agt_[a-z0-9]+):",str(session_id or ""),re.I)
     if not m:return None
-    agent=get_agent(m.group(1))
-    return agent if agent and bool((agent.get("permissions") or {}).get("delegate")) else None
+    agent=get_agent(m.group(1));return agent if agent and bool((agent.get("permissions") or {}).get("delegate")) else None
 
 def _advice_only(goal:str)->bool:
-    low=" ".join(str(goal or "").casefold().split())
-    advice=bool(re.search(r"\b(?:what do you think|your opinion|should we|should i|would you recommend|do you recommend|which .* better|best option|good idea|bad idea|worth it|what should .* prioritize)\b",low))
-    proceed=bool(re.search(r"\b(?:go ahead|do it|proceed|start now|execute|make it happen|carry it out)\b",low))
-    return advice and not proceed
+    low=" ".join(str(goal or "").casefold().split());advice=bool(re.search(r"\b(?:what do you think|your opinion|should we|should i|would you recommend|do you recommend|which .* better|best option|good idea|bad idea|worth it|what should .* prioritize)\b",low));proceed=bool(re.search(r"\b(?:go ahead|do it|proceed|start now|execute|make it happen|carry it out)\b",low));return advice and not proceed
 
 def _artifact_compound_request(goal:str)->bool:
     text=" ".join(str(goal or "").strip().split())
     if not (_ARTIFACT_RE.search(text) and _ARTIFACT_CREATE_RE.search(text)):return False
     return bool(re.search(r"\b(?:then|after|and then|after that)\b|;",text,re.I))
-
 def _split_goal(goal:str)->list[str]:
     clean=" ".join(str(goal or "").strip().split())
     if not clean:return []
     clauses=[x.strip(" .") for x in re.split(r"\s*(?:;|\bthen\b|\band then\b|\bafter that\b)\s*",clean,flags=re.I) if x.strip(" .")]
     if len(clauses)>1:return clauses[:8]
-    comma=[x.strip(" .") for x in re.split(r"\s*,\s*(?:and\s+)?|\s+and\s+",clean,flags=re.I) if x.strip(" .")]
-    actionable=[x for x in comma if _ACTION.search(x)]
-    return actionable[:8] if len(actionable)>=2 else []
-
+    comma=[x.strip(" .") for x in re.split(r"\s*,\s*(?:and\s+)?|\s+and\s+",clean,flags=re.I) if x.strip(" .")];actionable=[x for x in comma if _ACTION.search(x)];return actionable[:8] if len(actionable)>=2 else []
 def build_autopilot_plan(goal:str,manager:dict[str,Any])->dict[str,Any]|None:
     if not bool((manager.get("permissions") or {}).get("delegate")) or _advice_only(goal):return None
     if _artifact_compound_request(goal):return None
@@ -53,13 +45,12 @@ def build_autopilot_plan(goal:str,manager:dict[str,Any])->dict[str,Any]|None:
         score=match_score(clause,agent);steps.append({"phase":f"step_{index}","label":clause[:80],"agent":agent,"task":clause,"score":score})
     if len(steps)<2:return None
     return {"goal":goal.strip(),"manager":manager,"steps":steps,"missing":[],"sequential":bool(re.search(r"\b(?:then|after that|and then)\b",goal,re.I) or ";" in goal)}
-
 def _configure(job_id:str,plan:dict[str,Any])->dict[str,Any]:
     from agentie.core import team_orchestrator as team
     steps=list(plan["steps"]);by_agent={}
     for step in steps:by_agent.setdefault(str(step["agent"]["id"]),[]).append(step)
     def apply(job):
-        job["autopilot"]=True;job["autopilot_manager_id"]=plan["manager"]["id"];job["autopilot_manager_name"]=plan["manager"]["name"];job["autopilot_goal"]=plan["goal"];job["autopilot_kind"]="configured_agent_plan";job["autopilot_sequential"]=bool(plan.get("sequential"));job.setdefault("replan_count",0);job.setdefault("recovery_history",[]);ordered=[]
+        job["autopilot"]=True;job["autopilot_manager_id"]=plan["manager"]["id"];job["autopilot_manager_name"]=plan["manager"]["name"];job["autopilot_goal"]=plan["goal"];job["autopilot_kind"]="configured_agent_plan";job["autopilot_sequential"]=bool(plan.get("sequential"));job["autopilot_recovery_enabled"]=True;job["autopilot_recovery_finalized"]=False;job.setdefault("replan_count",0);job.setdefault("recovery_history",[]);ordered=[]
         for handoff in job.get("handoffs",[]):
             owned=by_agent.get(str(handoff.get("to_agent_id")),[])
             if not owned:continue
@@ -70,21 +61,18 @@ def _configure(job_id:str,plan:dict[str,Any])->dict[str,Any]:
                 if handoff is not None:handoff["depends_on"]=[] if index==0 else [ordered[index-1]]
         job["autopilot_order"]=ordered
     return team._mutate(job_id,apply) or get_team_job(job_id) or {}
-
 _configure_team_job=_configure
 
 def _inject_dependency(job_id:str,next_hid:str,previous:dict[str,Any],goal:str)->dict[str,Any]|None:
     from agentie.core import team_orchestrator as team
     result=str(previous.get("result") or "").strip()
     if not result:return get_team_job(job_id)
-    previous_name=str(previous.get("to_agent_name") or "Previous agent");previous_id=str(previous.get("id") or "")
-    brief=(f"Dependency from {previous_name}. Use only this dependency result for the next assigned step; only this dependency is shared, not the previous agent's private memory or conversation.\n\nShared goal: {goal}\n\nDependency result:\n{result[:12000]}")
+    previous_name=str(previous.get("to_agent_name") or "Previous agent");previous_id=str(previous.get("id") or "");brief=(f"Dependency from {previous_name}. Use only this dependency result for the next assigned step; only this dependency is shared, not the previous agent's private memory or conversation.\n\nShared goal: {goal}\n\nDependency result:\n{result[:12000]}")
     def apply(job):
         target=next((x for x in job.get("handoffs",[]) if str(x.get("id"))==str(next_hid)),None)
         if not target:return
         context=target.setdefault("context",{});context["scoped_brief"]=brief;context["dependency_handoff_id"]=previous_id;context["dependency_agent_name"]=previous_name
     return team._mutate(job_id,apply) or get_team_job(job_id)
-
 def _wait_terminal(job_id,hid):
     while True:
         time.sleep(.1);job=get_team_job(job_id)
@@ -92,17 +80,16 @@ def _wait_terminal(job_id,hid):
         h=next((x for x in job.get("handoffs",[]) if x.get("id")==hid),None)
         if not h:return None
         if h.get("status") in {"completed","failed","cancelled","recovered"}:return h
-
 def _recover(job_id:str,failed:dict[str,Any])->dict[str,Any]|None:
+    from agentie.core import team_orchestrator as team
     from agentie.core.failure_recovery import finalize_recovery,replan_failed_handoff
     decision=replan_failed_handoff(job_id,str(failed.get("id") or ""))
-    if decision.get("action")!="reassigned":return None
+    if decision.get("action")!="reassigned":team.publish_team_terminal(job_id);return None
     replacement=decision.get("handoff") or {};hid=str(replacement.get("id") or "")
-    if not hid:return None
+    if not hid:team.publish_team_terminal(job_id);return None
     start_team_job(job_id,{hid});done=_wait_terminal(job_id,hid)
-    if done and done.get("status")=="completed":finalize_recovery(job_id,str(failed.get("id") or ""),hid);return done
-    return None
-
+    if done and done.get("status")=="completed":finalize_recovery(job_id,str(failed.get("id") or ""),hid);team.publish_team_terminal(job_id);return done
+    team.publish_team_terminal(job_id);return None
 def _controller(job_id:str)->None:
     try:
         job=get_team_job(job_id)
@@ -124,7 +111,6 @@ def _controller(job_id:str)->None:
             if index+1<len(order):_inject_dependency(job_id,order[index+1],done,goal)
     finally:
         with _LOCK:_CONTROLLERS.pop(job_id,None)
-
 def start_autopilot_job(plan:dict[str,Any],session_id:str|None=None)->dict[str,Any]:
     unique=[];seen=set()
     for step in plan["steps"]:
@@ -135,7 +121,6 @@ def start_autopilot_job(plan:dict[str,Any],session_id:str|None=None)->dict[str,A
     thread=threading.Thread(target=_controller,args=(job["id"],),daemon=True,name=f"agentie-configured-plan-{job['id']}")
     with _LOCK:_CONTROLLERS[job["id"]]=thread
     thread.start();return get_team_job(job["id"]) or job
-
 def maybe_manager_autopilot(message:str,session_id:str|None)->dict[str,Any]|None:
     manager=_active_manager(session_id)
     if not manager:return None
