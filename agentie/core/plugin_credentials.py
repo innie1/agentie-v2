@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import subprocess
 from pathlib import Path
 from typing import Any
 
@@ -12,7 +13,7 @@ WORKSPACE = Path.cwd() / "workspace"
 CREDENTIALS_FILE = WORKSPACE / "plugin_credentials.json"
 _ENV_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,127}$")
 _SETUP_ERROR = re.compile(
-    r"(?:connection closed|not connected|could not connect|api[_ -]?key|authentication|authorization|unauthori[sz]ed|forbidden|credential|access token|missing.*(?:key|token)|\b401\b|\b403\b)",
+    r"(?:connection closed|not connected|could not connect|api[_ -]?key|authentication|authorization|unauthori[sz]ed|forbidden|credential|access token|oauth|login required|sign.?in|required.*(?:key|token|login)|missing.*(?:key|token)|\b401\b|\b403\b)",
     re.I,
 )
 
@@ -40,19 +41,29 @@ def _save(data: dict[str, dict[str, str]]) -> None:
         pass
 
 
+def _preset(server_name: str) -> dict[str, Any]:
+    return dict(preset_by_id(server_name) or {})
+
+
 def _preset_setup(server_name: str) -> dict[str, Any]:
-    preset = preset_by_id(server_name)
-    return dict((preset or {}).get("setup") or {})
+    return dict(_preset(server_name).get("setup") or {})
 
 
 def server_environment(server_name: str) -> dict[str, str]:
-    """Return only credentials assigned to this MCP server.
+    """Return only environment values assigned to this MCP server.
 
-    Curated fields also honor a credential already present in Agentie's launch
-    environment so existing shell/.env setups continue to work unchanged.
+    Curated non-secret defaults are merged first, then locally saved credentials,
+    then existing launch-environment values for declared fields. Nothing is copied
+    into Agentie's global process environment.
     """
     server = str(server_name or "").strip().lower()
-    values = dict(_load().get(server, {}))
+    preset = _preset(server)
+    values = {
+        str(k): str(v)
+        for k, v in dict(preset.get("environment") or {}).items()
+        if _ENV_NAME.fullmatch(str(k)) and str(v)
+    }
+    values.update(_load().get(server, {}))
     for field in _preset_setup(server).get("fields") or []:
         env_name = str(field.get("env") or field.get("id") or "").strip()
         if env_name and env_name not in values and os.environ.get(env_name):
@@ -104,12 +115,60 @@ def public_setup_state(server_name: str, error: str | None = None) -> dict[str, 
         env_name = str(field.get("env") or field.get("id") or "").strip()
         if not env_name:continue
         fields.append({"id":env_name,"env":env_name,"label":str(field.get("label") or env_name),"placeholder":str(field.get("placeholder") or ""),"secret":bool(field.get("secret",True)),"configured":bool(stored.get(env_name) or os.environ.get(env_name))})
-    required=[x for x in fields if x.get("id")];configured=bool(required) and all(bool(x.get("configured")) for x in required)
-    return {"type":"mcp_setup","server":server,"title":str(setup.get("title") or f"{server or 'MCP'} setup"),"description":str(setup.get("description") or "Configure the credentials this MCP server needs, then test the connection."),"fields":fields,"configured":configured,"custom_env_supported":True,"get_key_url":setup.get("get_key_url"),"connect_url":setup.get("connect_url"),"docs_url":setup.get("docs_url"),"error":str(error or "")[:700] or None,"secret_storage":"local"}
+    required=[x for x in fields if x.get("id")]
+    configured=(all(bool(x.get("configured")) for x in required) if required else bool(stored))
+    auth_mode=str(setup.get("auth_mode") or "").strip().lower() or None
+    return {
+        "type":"mcp_setup",
+        "server":server,
+        "title":str(setup.get("title") or f"{server or 'MCP'} setup"),
+        "description":str(setup.get("description") or "Configure the credentials this MCP server needs, then test the connection."),
+        "fields":fields,
+        "configured":configured,
+        "requires_credentials":bool(required),
+        "has_saved_credentials":bool(stored),
+        "custom_env_supported":True,
+        "auth_mode":auth_mode,
+        "oauth_supported":bool(setup.get("oauth_command")),
+        "connect_label":str(setup.get("connect_label") or "Connect account"),
+        "get_key_url":setup.get("get_key_url"),
+        "connect_url":setup.get("connect_url"),
+        "docs_url":setup.get("docs_url"),
+        "error":str(error or "")[:700] or None,
+        "secret_storage":"local",
+    }
 
 
 def setup_response(server_name: str, error: str | None = None) -> dict[str, Any]:
     state=public_setup_state(server_name,error);label=state.get("title") or f"{server_name} setup";return {"message":f"{label} needs configuration before Agentie can connect.","card":state}
+
+
+def start_oauth_connection(server_name: str) -> dict[str, Any]:
+    """Launch a curated provider OAuth helper without exposing credentials.
+
+    The command must live in Agentie's curated MCP catalog; user-supplied MCP
+    commands can never opt themselves into this execution path.
+    """
+    server=str(server_name or "").strip().lower();setup=_preset_setup(server);command=str(setup.get("oauth_command") or "").strip()
+    if not command:
+        raise ValueError("This MCP does not provide an Agentie-managed OAuth connection flow.")
+    state=public_setup_state(server)
+    if state.get("requires_credentials") and not state.get("configured"):
+        raise ValueError("Save the required OAuth client credentials before connecting the account.")
+    env=os.environ.copy();env.update(server_environment(server))
+    try:
+        process=subprocess.Popen(
+            command,
+            shell=True,
+            cwd=str(Path.cwd()),
+            env=env,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+    except OSError as exc:
+        raise ValueError(f"Could not start the OAuth connection helper: {exc}") from exc
+    return {"started":True,"server":server,"pid":process.pid,"auth_mode":state.get("auth_mode"),"message":f"Opened the {state.get('title') or server} account connection flow. Finish approval in your browser, then test the connection."}
 
 
 def _registered_server_names() -> list[str]:
