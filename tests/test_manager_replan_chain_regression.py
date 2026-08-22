@@ -3,13 +3,13 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from agentie.core import agent_registry,failure_recovery,manager_autopilot,team_orchestrator
+from agentie.core import agent_registry,automation_events,failure_recovery,manager_autopilot,team_orchestrator
 
 
 class ManagerReplanChainRegressionTests(unittest.TestCase):
     def setUp(self):
         self.temp=tempfile.TemporaryDirectory(ignore_cleanup_errors=True);root=Path(self.temp.name)
-        self.patches=[patch.object(agent_registry,'WORKSPACE',root),patch.object(agent_registry,'AGENTS_FILE',root/'agents.json'),patch.object(team_orchestrator,'WORKSPACE',root),patch.object(team_orchestrator,'TEAM_FILE',root/'team_jobs.json')]
+        self.patches=[patch.object(agent_registry,'WORKSPACE',root),patch.object(agent_registry,'AGENTS_FILE',root/'agents.json'),patch.object(team_orchestrator,'WORKSPACE',root),patch.object(team_orchestrator,'TEAM_FILE',root/'team_jobs.json'),patch.object(automation_events,'WORKSPACE',root),patch.object(automation_events,'EVENTS',root/'automation_events.json')]
         for p in self.patches:p.start()
         self.manager=agent_registry.create_agent('Cora','Operations coordinator',permissions={'delegate':True})['agent']
         self.a=agent_registry.create_agent('Ada','Customer issue investigator')['agent'];self.b=agent_registry.create_agent('Ben','Customer issue investigator')['agent'];self.c=agent_registry.create_agent('Cleo','Customer issue investigator')['agent'];self.d=agent_registry.create_agent('Dayo','Customer issue investigator')['agent']
@@ -46,6 +46,16 @@ class ManagerReplanChainRegressionTests(unittest.TestCase):
         team_orchestrator._mutate(job['id'],lambda j:next(x for x in j['handoffs'] if x['id']==d).update(status='completed',result='verified recovery result',error=None))
         final=failure_recovery.finalize_recovery_chain(job['id'],d);by={x['id']:x for x in final['handoffs']}
         self.assertEqual(by[first]['status'],'recovered');self.assertEqual(by[b]['status'],'recovered');self.assertEqual(by[c]['status'],'recovered');self.assertEqual(by[d]['status'],'completed');self.assertEqual(final['status'],'completed');self.assertIn('verified recovery result',final['final_output'])
+
+    def test_recovered_completion_emits_final_team_event_once(self):
+        job=team_orchestrator.create_team_job('recovered task',[self.a],requested_by=self.manager['id'])
+        def completed(j):
+            j.update(status='completed',autopilot=True,autopilot_manager_id=self.manager['id'],autopilot_recovery_enabled=True,autopilot_recovery_finalized=False,replan_count=2,final_output='real recovered result')
+            j['handoffs'][0].update(status='completed',result='real recovered result',error=None)
+        team_orchestrator._mutate(job['id'],completed)
+        manager_autopilot._finish_controller(job['id']);manager_autopilot._finish_controller(job['id'])
+        events=[x for x in automation_events.recent_events() if x['type']=='team_job.completed']
+        self.assertEqual(len(events),1);self.assertEqual(events[0]['payload']['team_job_id'],job['id']);self.assertEqual(events[0]['payload']['replan_count'],2)
 
     def test_fourth_replacement_is_blocked_by_safety_limit(self):
         job,first=self._failed_job()
