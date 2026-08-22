@@ -13,65 +13,65 @@ class ManagerAutopilotRegressionTests(unittest.TestCase):
         self.agent_patch=patch.object(agent_registry,'AGENTS_FILE',root/'agents.json')
         self.team_patch=patch.object(team_orchestrator,'TEAM_FILE',root/'team_jobs.json')
         self.agent_patch.start();self.team_patch.start()
-        self.ceo=agent_registry.create_agent('CEO','CEO','manager')['agent']
-        self.mira=agent_registry.create_agent('Mira','critic','research')['agent']
-        self.alex=agent_registry.create_agent('Alex','CTO','coding')['agent']
-        self.vera=agent_registry.create_agent('Vera','verifier','research')['agent']
-        self.writer=agent_registry.create_agent('Content Writer','content writer','general')['agent']
+        self.ceo=agent_registry.create_agent('CEO','Company coordinator',purpose='Coordinate multi-agent company work',permissions={'delegate':True})['agent']
+        self.mira=agent_registry.create_agent('Mira','Market and competitor research owner',purpose='Research competitors, requirements, market evidence and customer needs',responsibilities=['Research competitors and requirements','Collect market evidence'])['agent']
+        self.alex=agent_registry.create_agent('Alex','Technical implementation owner',purpose='Implement apps, build software and create technical architecture',responsibilities=['Implement the application','Create technical implementation architecture'])['agent']
+        self.vera=agent_registry.create_agent('Vera','Launch verification and QA owner',purpose='Verify launch readiness, test deliverables and find quality risks',responsibilities=['Verify launch readiness','Review completed implementation for risks'])['agent']
+        self.writer=agent_registry.create_agent('Content Writer','Content owner',purpose='Write campaign and launch content')['agent']
 
     def tearDown(self):
         self.team_patch.stop();self.agent_patch.stop();self.tmp.cleanup()
 
-    def test_complex_manager_goal_builds_specialist_chain(self):
+    def _plan(self):
+        return manager_autopilot.build_autopilot_plan(
+            'Research competitors and requirements; implement the app technical architecture; then verify launch readiness.',self.ceo)
+
+    def test_complex_manager_goal_builds_configured_agent_chain(self):
+        plan=self._plan()
+        self.assertIsNotNone(plan)
+        self.assertEqual([x['phase'] for x in plan['steps']],['step_1','step_2','step_3'])
+        self.assertEqual([x['agent']['name'] for x in plan['steps']],['Mira','Alex','Vera'])
+        self.assertTrue(plan['sequential'])
+
+    def test_job_titles_do_not_create_autopilot_authority(self):
+        fake_manager=agent_registry.create_agent('Boss','Chief of Staff',purpose='Coordinate everything')['agent']
         plan=manager_autopilot.build_autopilot_plan(
-            'Build a church management app, research the market, implement it and verify launch readiness.',self.ceo)
-        self.assertIsNotNone(plan)
-        phases=[x['phase'] for x in plan['steps']]
-        self.assertEqual(phases,['research','coding','verification'])
-        self.assertEqual(plan['steps'][0]['agent']['name'],'Mira')
-        self.assertEqual(plan['steps'][1]['agent']['name'],'Alex')
-        self.assertEqual(plan['steps'][2]['agent']['name'],'Vera')
+            'Research competitors; implement the app; then verify launch readiness.',fake_manager)
+        self.assertIsNone(plan)
+        self.assertFalse(fake_manager['permissions']['delegate'])
 
-    def test_exact_ceo_prompt_builds_mira_alex_vera_chain(self):
-        prompt='Build a simple church management app for small Nigerian churches. Research competitors and requirements, create the technical implementation plan, then verify whether the plan is ready to build.'
-        plan=manager_autopilot.build_autopilot_plan(prompt,self.ceo)
-        self.assertIsNotNone(plan)
-        self.assertEqual([step['phase'] for step in plan['steps']],['research','coding','verification'])
-        self.assertEqual([step['agent']['name'] for step in plan['steps']],['Mira','Alex','Vera'])
-
-    def test_non_manager_does_not_trigger_autopilot(self):
+    def test_non_delegating_agent_does_not_trigger_autopilot(self):
         session=f"{self.mira['session_prefix']}main"
         self.assertIsNone(manager_autopilot.maybe_manager_autopilot(
-            'Build a church management app, research it, implement it and verify it.',session))
+            'Research competitors; implement the app; then verify launch readiness.',session))
 
-    def test_configured_team_job_is_sequential_and_phase_specific(self):
-        plan=manager_autopilot.build_autopilot_plan(
-            'Build a church management app, research competitors, implement it and verify readiness.',self.ceo)
+    def test_configured_team_job_is_sequential_and_uses_actual_agent_assignments(self):
+        plan=self._plan()
         job=team_orchestrator.create_team_job(plan['goal'],[x['agent'] for x in plan['steps']],requested_by=self.ceo['id'])
         configured=manager_autopilot._configure_team_job(job['id'],plan)
         hs=configured['handoffs']
         self.assertTrue(configured['autopilot'])
-        self.assertEqual([h['autopilot_phase'] for h in hs],['research','coding','verification'])
+        self.assertEqual(configured['autopilot_kind'],'configured_agent_plan')
+        self.assertEqual([h['to_agent_name'] for h in hs],['Mira','Alex','Vera'])
         self.assertEqual(hs[0]['depends_on'],[])
         self.assertEqual(hs[1]['depends_on'],[hs[0]['id']])
         self.assertEqual(hs[2]['depends_on'],[hs[1]['id']])
-        self.assertIn('Research the evidence',hs[0]['task'])
-        self.assertIn('technical architecture',hs[1]['task'])
-        self.assertIn('Verify the previous specialist',hs[2]['task'])
+        self.assertIn('Research competitors',hs[0]['task'])
+        self.assertIn('implement the app',hs[1]['task'].lower())
+        self.assertIn('verify launch readiness',hs[2]['task'].lower())
 
     def test_dependency_context_contains_only_predecessor_result(self):
-        plan=manager_autopilot.build_autopilot_plan(
-            'Build a church management app, research competitors, implement it and verify readiness.',self.ceo)
+        plan=self._plan()
         job=team_orchestrator.create_team_job(plan['goal'],[x['agent'] for x in plan['steps']],requested_by=self.ceo['id'])
         configured=manager_autopilot._configure_team_job(job['id'],plan)
         first,second,third=configured['handoffs']
-        previous={**first,'status':'completed','result':'MIRA PRIVATE RESEARCH RESULT'}
+        previous={**first,'status':'completed','result':'MIRA SCOPED RESEARCH RESULT'}
         manager_autopilot._inject_dependency(job['id'],second['id'],previous,plan['goal'])
         latest=team_orchestrator.get_team_job(job['id'])
-        coding=next(h for h in latest['handoffs'] if h['id']==second['id'])
+        implementation=next(h for h in latest['handoffs'] if h['id']==second['id'])
         verifier=next(h for h in latest['handoffs'] if h['id']==third['id'])
-        brief=coding['context']['scoped_brief']
-        self.assertIn('MIRA PRIVATE RESEARCH RESULT',brief)
+        brief=implementation['context']['scoped_brief']
+        self.assertIn('MIRA SCOPED RESEARCH RESULT',brief)
         self.assertIn('only this dependency is shared',brief)
         self.assertNotIn('scoped_brief',verifier['context'])
 
@@ -92,7 +92,7 @@ class ManagerAutopilotRegressionTests(unittest.TestCase):
 
     def test_reference_router_prioritizes_autopilot_over_implicit_deep_research_job(self):
         session=f"{self.ceo['session_prefix']}main"
-        prompt='Build a simple church management app for small Nigerian churches. Research competitors and requirements, create the technical implementation plan, then verify whether the plan is ready to build.'
+        prompt='Research competitors and requirements; implement the app technical architecture; then verify launch readiness.'
         sentinel={'message':'Manager Autopilot started','card':{'type':'team_job','autopilot':True}}
         with patch('agentie.core.reference_router.get_context',return_value=None),patch('agentie.core.manager_autopilot.maybe_manager_autopilot',return_value=sentinel) as routed,patch('agentie.core.job_engine.create_job') as create:
             result=reference_router._job_command(session,prompt)
