@@ -61,7 +61,6 @@ def create_team_job(task,agents,requested_by="user",project_id=None):
     return job
 
 def _mirror(agent,role,content,metadata):
-    """Put handoff activity in the specialist's normal chat timeline, not the manager chat."""
     try:add_message(f"{agent['session_prefix']}main",role,content,metadata)
     except Exception:pass
 async def _worker(jid,h):
@@ -90,12 +89,11 @@ def _compact(v,n=260):
 def _fallback_status(j,h):
     s=str(h.get("status") or "queued")
     if s=="completed":return _compact(h.get("result") or "Completed the assigned part.")
+    if s=="recovered":return str(h.get("progress_summary") or "Recovered by another configured agent.")
     if s=="failed":return _compact(f"Failed: {h.get('error') or 'the assigned work could not be completed.'}")
     if s=="working":return f"Still working on {h.get('task') or j.get('task')}; no completed result has been returned yet."
     return f"Queued for {h.get('task') or j.get('task')} and waiting for its dependency/worker slot."
-async def _ask_worker_status(j,h):
-    """Compatibility helper: status reporting is deliberately provider-free."""
-    return h["id"],_fallback_status(j,h)
+async def _ask_worker_status(j,h):return h["id"],_fallback_status(j,h)
 async def _collect_worker_status(j):return {h["id"]:_fallback_status(j,h) for h in j.get("handoffs",[])}
 def request_team_status(jid):
     j=get_team_job(jid)
@@ -108,26 +106,35 @@ def request_team_status(jid):
 def _latest_job_for_status():
     jobs=list_team_jobs(30);return next((j for j in jobs if j.get("status") in {"queued","working"}),jobs[0] if jobs else None)
 def _looks_like_status_request(l):return bool((re.search(r"\bteam_[a-z0-9]+\b",l) and re.search(r"\b(status|state|progress|update|doing|going)\b",l)) or re.search(r"\b(state|status|progress)\s+(of|on)\s+(that|this|the)\s+(task|job|team job)\b|\bhow are they doing\b|\bwhat are (the )?agents? doing\b|\b(give|show|tell) me (a )?(quick |small |brief )?update (on|about) (that|this|the) (task|job|team job)\b",l))
-def team_job_card(j):return {"type":"team_job","id":j["id"],"task":j["task"],"status":j["status"],"project_id":j.get("project_id"),"agents":j.get("agent_names",[]),"handoffs":[{"id":h["id"],"agent":h["to_agent_name"],"status":h["status"],"error":h.get("error"),"attempts":h.get("attempts",0),"summary":h.get("progress_summary"),"status_checked_at":h.get("status_checked_at")} for h in j.get("handoffs",[])],"final_output":j.get("final_output"),"created_at":j.get("created_at"),"started_at":j.get("started_at"),"finished_at":j.get("finished_at"),"updated_at":j.get("updated_at"),"status_checked_at":j.get("status_checked_at"),"status_source":j.get("status_source")}
+def team_job_card(j):return {"type":"team_job","id":j["id"],"task":j["task"],"status":j["status"],"project_id":j.get("project_id"),"agents":j.get("agent_names",[]),"handoffs":[{"id":h["id"],"agent":h["to_agent_name"],"status":h["status"],"error":h.get("error"),"attempts":h.get("attempts",0),"summary":h.get("progress_summary"),"status_checked_at":h.get("status_checked_at"),"recovery_of":h.get("recovery_of")} for h in j.get("handoffs",[])],"final_output":j.get("final_output"),"replan_count":j.get("replan_count",0),"recovery_history":j.get("recovery_history") or [],"created_at":j.get("created_at"),"started_at":j.get("started_at"),"finished_at":j.get("finished_at"),"updated_at":j.get("updated_at"),"status_checked_at":j.get("status_checked_at"),"status_source":j.get("status_source")}
+def _autopilot_failure_pending(j):return bool(j.get("autopilot_recovery_enabled")) and str(j.get("status") or "") in {"failed","partial","cancelled"} and not bool(j.get("autopilot_recovery_finalized"))
 def poll_team_completion_events(limit=20):
-    """Return each terminal team/delegation completion once for the existing local-event UI."""
     terminal={"completed","failed","partial","cancelled"};events=[];changed=False;now=_now()
     with _LOCK:
         items=_load()
         for j in reversed(items):
-            if j.get("status") not in terminal or j.get("completion_notified_at"):continue
-            status=str(j.get("status") or "completed");ok=status=="completed";title="Agent collaboration completed" if ok else "Agent collaboration needs attention"
-            events.append({"message":f"{title}: {j.get('task') or 'team task'}.","card":{**team_job_card(j),"completion_event":True}});j["completion_notified_at"]=now;changed=True
+            if j.get("status") not in terminal or j.get("completion_notified_at") or _autopilot_failure_pending(j):continue
+            status=str(j.get("status") or "completed");ok=status=="completed";title="Agent collaboration completed" if ok else "Agent collaboration needs attention";events.append({"message":f"{title}: {j.get('task') or 'team task'}.","card":{**team_job_card(j),"completion_event":True}});j["completion_notified_at"]=now;changed=True
             if len(events)>=max(1,limit):break
         if changed:_save(items)
     return list(reversed(events))
 def _status_message(j):return "\n".join([f"Team task is {j.get('status','unknown')}."]+[f"{h.get('to_agent_name') or 'Agent'}: {h.get('progress_summary') or _fallback_status(j,h)}" for h in j.get("handoffs",[])])
-def _publish_terminal_event(job):
+def _publish_terminal_event(job,force=False):
     try:
         from agentie.core.automation_events import publish_event
-        status=str(job.get("status") or "");etype="team_job.completed" if status=="completed" else "team_job.failed" if status in {"failed","partial","cancelled"} else None
-        if etype:publish_event(etype,{"team_job_id":job.get("id"),"status":status,"task":job.get("task"),"agent_ids":job.get("agent_ids") or [],"agent_names":job.get("agent_names") or [],"final_output":job.get("final_output")},source="team_orchestrator",dedupe_key=f"teamjob:{job.get('id')}:{status}")
+        status=str(job.get("status") or "")
+        if _autopilot_failure_pending(job) and not force:
+            for h in job.get("handoffs") or []:
+                if h.get("status")=="failed":publish_event("team_job.worker_failed",{"team_job_id":job.get("id"),"handoff_id":h.get("id"),"agent_id":h.get("to_agent_id"),"agent_name":h.get("to_agent_name"),"task":h.get("task"),"error":h.get("error")},source="team_orchestrator",dedupe_key=f"teamjob-worker:{job.get('id')}:{h.get('id')}")
+            return
+        etype="team_job.completed" if status=="completed" else "team_job.failed" if status in {"failed","partial","cancelled"} else None
+        if etype:publish_event(etype,{"team_job_id":job.get("id"),"status":status,"task":job.get("task"),"agent_ids":job.get("agent_ids") or [],"agent_names":job.get("agent_names") or [],"final_output":job.get("final_output"),"replan_count":job.get("replan_count",0)},source="team_orchestrator",dedupe_key=f"teamjob:{job.get('id')}:{status}")
     except Exception:pass
+def publish_team_terminal(jid):
+    def finalize(j):j["autopilot_recovery_finalized"]=True;j["completion_notified_at"]=None
+    u=_mutate(jid,finalize)
+    if u:_publish_terminal_event(u,True)
+    return u
 def _finish_job(jid,results,only_ids=None):
     by={hid:(out,err) for hid,out,err in results}
     def finish(j):
