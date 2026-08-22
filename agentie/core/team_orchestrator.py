@@ -47,15 +47,12 @@ def _resolve_names(raw):
 def create_team_job(task,agents,requested_by="user",project_id=None):
     if not str(task).strip():raise ValueError("A team task is required.")
     if not agents:raise ValueError("At least one agent is required.")
-    project=get_project(project_id) if project_id else None;jid="team_"+uuid.uuid4().hex[:10];now=_now()
-    hs=[]
+    project=get_project(project_id) if project_id else None;jid="team_"+uuid.uuid4().hex[:10];now=_now();hs=[]
     for a in agents:
         task_text=str(task).strip()
         if project:
-            scoped=project_context(project,a.get("role") or a.get("base"),task_text,agent_name=a.get("name"))
-            context={"task":task_text,"project_id":project.get("id"),"scoped_brief":scoped}
-        else:
-            context={"task":task_text}
+            scoped=project_context(project,a.get("role") or a.get("base"),task_text,agent_name=a.get("name"));context={"task":task_text,"project_id":project.get("id"),"scoped_brief":scoped}
+        else:context={"task":task_text}
         h={"id":"ho_"+uuid.uuid4().hex[:8],"from":requested_by,"to_agent_id":a["id"],"to_agent_name":a["name"],"task":task_text,"context":context,"status":"queued","result":None,"error":None,"attempts":0,"progress_summary":None,"status_checked_at":None};hs.append(h)
     job={"id":jid,"task":str(task).strip(),"status":"queued","requested_by":requested_by,"project_id":project.get("id") if project else None,"agent_ids":[a["id"] for a in agents],"agent_names":[a["name"] for a in agents],"handoffs":hs,"created_at":now,"updated_at":now,"final_output":None,"completion_notified_at":None}
     with _LOCK:items=_load();items.append(job);_save(items)
@@ -78,8 +75,7 @@ async def _worker(jid,h):
             if x["id"]==h["id"]:x.update(status="working",started_at=_now(),attempts=int(x.get("attempts",0))+1,error=None,progress_summary=f"Working on {x.get('task') or j.get('task')}.",status_checked_at=_now())
     _mutate(jid,start)
     if pid:update_agent_work_status(pid,a["id"],"working")
-    brief=str(h.get("context",{}).get("scoped_brief") or h["task"])
-    visible=f"Project handoff: {h['task']}";_mirror(a,"user",visible,{"routed_by":"project_handoff","team_job_id":jid,"project_id":pid})
+    brief=str(h.get("context",{}).get("scoped_brief") or h["task"]);visible=f"Project handoff: {h['task']}";_mirror(a,"user",visible,{"routed_by":"project_handoff","team_job_id":jid,"project_id":pid})
     prompt=f"You are {a['name']}, the {a['role']} agent. Work only within your specialty. This is a bounded handoff. Never absorb another worker's private chat. Return a useful deliverable and a concise handoff summary.\n\n{brief}"
     try:
         out=await run_agent(prompt,str(a.get("base") or "general"),f"{a['session_prefix']}handoff:{jid}");_mirror(a,"assistant",out,{"routed_by":"project_handoff_result","team_job_id":jid,"project_id":pid})
@@ -104,8 +100,6 @@ async def _collect_worker_status(j):return {h["id"]:_fallback_status(j,h) for h 
 def request_team_status(jid):
     j=get_team_job(jid)
     if not j:raise ValueError("Team job was not found.")
-    # Backend state is already authoritative. Asking every specialist's model to
-    # paraphrase queued/working state wasted provider quota without adding truth.
     summaries={h["id"]:_fallback_status(j,h) for h in j.get("handoffs",[])};checked=_now()
     def apply(x):
         for h in x.get("handoffs",[]):h["progress_summary"]=summaries.get(h["id"]) or _fallback_status(x,h);h["status_checked_at"]=checked
@@ -128,6 +122,12 @@ def poll_team_completion_events(limit=20):
         if changed:_save(items)
     return list(reversed(events))
 def _status_message(j):return "\n".join([f"Team task is {j.get('status','unknown')}."]+[f"{h.get('to_agent_name') or 'Agent'}: {h.get('progress_summary') or _fallback_status(j,h)}" for h in j.get("handoffs",[])])
+def _publish_terminal_event(job):
+    try:
+        from agentie.core.automation_events import publish_event
+        status=str(job.get("status") or "");etype="team_job.completed" if status=="completed" else "team_job.failed" if status in {"failed","partial","cancelled"} else None
+        if etype:publish_event(etype,{"team_job_id":job.get("id"),"status":status,"task":job.get("task"),"agent_ids":job.get("agent_ids") or [],"agent_names":job.get("agent_names") or [],"final_output":job.get("final_output")},source="team_orchestrator",dedupe_key=f"teamjob:{job.get('id')}:{status}")
+    except Exception:pass
 def _finish_job(jid,results,only_ids=None):
     by={hid:(out,err) for hid,out,err in results}
     def finish(j):
@@ -139,7 +139,7 @@ def _finish_job(jid,results,only_ids=None):
         if not active:j["finished_at"]=_now()
         outputs=[f"{h['to_agent_name']}:\n{h['result']}" for h in j["handoffs"] if h.get("status")=="completed" and h.get("result")];j["final_output"]="\n\n---\n\n".join(outputs) if outputs else None
     u=_mutate(jid,finish)
-    if u:remember_global_result("",team_job_card(u))
+    if u:remember_global_result("",team_job_card(u));_publish_terminal_event(u)
 async def _execute(jid,only_ids=None):
     j=get_team_job(jid)
     if not j:return
@@ -166,8 +166,7 @@ def retry_team_worker(jid,agent_name):
     _mutate(jid,reset);start_team_job(jid,{hid});return get_team_job(jid) or j
 
 def route_team_command(message):
-    text=" ".join(message.strip().split());lower=text.lower().strip(" .?!")
-    project=route_project_command(text)
+    text=" ".join(message.strip().split());lower=text.lower().strip(" .?!");project=route_project_command(text)
     if project is not None:return project
     if _looks_like_status_request(lower):
         m=re.search(r"\b(team_[a-z0-9]+)\b",lower);j=get_team_job(m.group(1)) if m else _latest_job_for_status()
