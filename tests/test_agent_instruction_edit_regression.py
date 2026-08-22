@@ -23,9 +23,15 @@ class AgentInstructionEditRegressionTests(unittest.TestCase):
         # The configured CTO title remains identity, while explicit delegation
         # permission—not the title or legacy base field—selects planning behavior.
         self.assertEqual(r['npc_role'],'planning');self.assertEqual(r['routed_by'],'npc_brain');self.assertIn('CTO',r['message'])
-        no_delegate={**self.agent,'id':'agt_test_2','permissions':{'delegate':False},'skills':[]}
+        # A new platform agent is explicitly permission-driven. The legacy base
+        # value cannot silently grant coding behavior when capability_mode is explicit.
+        no_delegate={**self.agent,'id':'agt_test_2','permissions':{'delegate':False,'capability_mode':'explicit'},'skills':[]}
         with patch('agentie.core.npc_brain.learn_from_user_message',return_value=[]):plain=try_npc_response(no_delegate,'Give me a debug checklist')
         self.assertIsNone(plain)
+        # Coding behavior appears only after the coding capability is explicitly granted.
+        coder={**no_delegate,'id':'agt_test_3','skills':['code-execution']}
+        with patch('agentie.core.npc_brain.learn_from_user_message',return_value=[]):coding=try_npc_response(coder,'Give me a debug checklist')
+        self.assertEqual(coding['npc_role'],'coding');self.assertEqual(coding['routed_by'],'npc_brain')
     def test_role_router_has_view_and_edit_instruction_commands(self):
         text=Path('agentie/core/role_store.py').read_text(encoding='utf-8');self.assertIn('instruction_card',text);self.assertIn('set_manual_instructions',text);self.assertIn('system\\s+prompt|instructions|prompt',text)
 
