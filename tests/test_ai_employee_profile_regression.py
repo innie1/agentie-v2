@@ -50,16 +50,32 @@ class AIEmployeeProfileRegressionTests(unittest.TestCase):
         self.assertEqual(updated["company_identity"], "COAN Industries")
         self.assertEqual(result["card"]["type"], "agent_profile")
 
-    def test_creation_uses_local_role_specific_profile_and_does_not_invent_company(self):
-        manager = agent_registry.create_agent("Gemma", "Chief of Staff", "manager")["agent"]
-        self.assertIn("coordinate", manager["goal"].lower())
-        self.assertTrue(any("delegate" in item.lower() for item in manager["responsibilities"]))
-        self.assertEqual(manager["company_identity"], "")
+    def test_creation_does_not_turn_job_titles_or_legacy_base_into_hidden_agent_types(self):
+        coordinator_title = agent_registry.create_agent("Gemma", "Chief of Staff", "manager")["agent"]
+        self.assertEqual(coordinator_title["base"], "general")
+        self.assertEqual(coordinator_title["runtime_profile"], "general")
+        self.assertFalse(bool(coordinator_title["permissions"].get("delegate")))
+        self.assertIn("chief of staff", coordinator_title["goal"].lower())
+        self.assertEqual(coordinator_title["company_identity"], "")
 
-        researcher = agent_registry.create_agent("Mira", "Market Research Analyst", "research", purpose="Study laundry demand in Warri")["agent"]
-        self.assertIn("research", researcher["goal"].lower())
-        self.assertIn("laundry demand in Warri", researcher["goal"])
-        self.assertEqual(researcher["company_identity"], "")
+        researcher_title = agent_registry.create_agent(
+            "Mira",
+            "Market Research Analyst",
+            "research",
+            purpose="Study laundry demand in Warri",
+        )["agent"]
+        self.assertEqual(researcher_title["base"], "general")
+        self.assertEqual(researcher_title["runtime_profile"], "general")
+        self.assertIn("research", researcher_title["goal"].lower())
+        self.assertIn("laundry demand in Warri", researcher_title["goal"])
+        self.assertEqual(researcher_title["company_identity"], "")
+
+        explicit = agent_registry.create_agent(
+            "Nora",
+            "Operations Coordinator",
+            permissions={"delegate": True, "shared_company_memory": "read"},
+        )["agent"]
+        self.assertTrue(explicit["permissions"]["delegate"])
 
     def test_npc_explicit_statements_update_the_same_persistent_profile(self):
         agent = agent_registry.create_agent("Ben", "Sales & Outreach", "general")["agent"]
