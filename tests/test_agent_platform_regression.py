@@ -3,7 +3,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from agentie.core import agent_builder, agent_matching, agent_registry, agent_threads, routine_engine, workflow_skills
+from agentie.core import agent_builder, agent_matching, agent_registry, agent_threads, routine_engine, routine_worker, workflow_skills
+from agentie.tools import approval_tools
 
 
 class AgentPlatformRegressionTests(unittest.TestCase):
@@ -18,8 +19,11 @@ class AgentPlatformRegressionTests(unittest.TestCase):
             patch.object(routine_engine, "WORKSPACE", self.root),
             patch.object(routine_engine, "ROUTINES", self.root / "routines.json"),
             patch.object(routine_engine, "RUNS", self.root / "routine_runs.json"),
+            patch.object(routine_worker, "WORKSPACE", self.root),
+            patch.object(routine_worker, "EVENTS", self.root / "routine_events.json"),
             patch.object(agent_threads, "WORKSPACE", self.root),
             patch.object(agent_threads, "THREADS", self.root / "agent_threads.json"),
+            patch.object(approval_tools, "STORE", self.root / "approvals.json"),
         ]
         for item in self.patches:
             item.start()
@@ -33,6 +37,7 @@ class AgentPlatformRegressionTests(unittest.TestCase):
         agent = agent_registry.create_agent("Gemma", "Chief of Staff", "manager")["agent"]
         self.assertEqual(agent["base"], "general")
         self.assertEqual(agent["runtime_profile"], "general")
+        self.assertEqual(agent["permissions"]["capability_mode"], "explicit")
         self.assertFalse(agent["permissions"]["delegate"])
 
     def test_builder_keeps_job_ownership_separate_from_runtime_and_permissions(self):
@@ -113,6 +118,24 @@ class AgentPlatformRegressionTests(unittest.TestCase):
         saved = agent_threads.get_thread(thread["id"])
         self.assertEqual(saved["messages"][-1]["message"], "Review today's support issues")
 
+    def test_background_plugin_approval_surfaces_once_through_existing_approval_card(self):
+        approval = approval_tools.create_background_mcp_approval(
+            "mcp:gmail:send_email:{}",
+            "Allow Ada to send an email.",
+            agent_id="agt_ada",
+            agent_name="Ada",
+            server="gmail",
+            tool="send_email",
+            command="gmail/send_email",
+        )
+        with patch.object(routine_worker, "poll_job_completion_events", return_value=[]), patch.object(routine_worker, "poll_team_completion_events", return_value=[]):
+            first = routine_worker.poll_routine_events()
+            second = routine_worker.poll_routine_events()
+        self.assertEqual(len(first), 1)
+        self.assertEqual(first[0]["card"]["type"], "approvals")
+        self.assertEqual(first[0]["card"]["items"][0]["id"], approval["id"])
+        self.assertEqual(second, [])
+
     def test_platform_ui_and_api_expose_primitives_not_base_agent_choices(self):
         main = Path("main.py").read_text(encoding="utf-8")
         ui = Path("frontend/platform.js").read_text(encoding="utf-8")
@@ -125,6 +148,14 @@ class AgentPlatformRegressionTests(unittest.TestCase):
         self.assertIn('Create reusable Skill', ui)
         self.assertIn('Agent chats', ui)
         self.assertIn('.base-agent-label,#agentType{display:none!important}', ui)
+
+    def test_new_platform_cards_render_without_raw_json_fallback(self):
+        cards = Path("frontend/cards.js").read_text(encoding="utf-8")
+        self.assertIn("workflow_skill:renderWorkflowSkill", cards)
+        self.assertIn("agent_thread:renderAgentThread", cards)
+        self.assertIn("agent_threads:renderAgentThreads", cards)
+        self.assertIn("owner_agent_name", cards)
+        self.assertIn("Approval boundaries", cards)
 
     def test_persistent_runtime_tools_are_permission_driven_not_job_title_driven(self):
         source = Path("agentie/tools/persistent_tools.py").read_text(encoding="utf-8")
