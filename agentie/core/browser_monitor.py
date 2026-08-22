@@ -21,7 +21,7 @@ LIVE_FRAME_FILE = LIVE_DIR / "frame.png"
 
 _SERVICE_TARGETS = {
     "x": {"aliases": ("x", "twitter"), "url": "https://x.com", "plugins": ("x", "twitter")},
-    "gmail": {"aliases": ("gmail", "google mail", "email"), "url": "https://mail.google.com", "plugins": ("gmail", "google mail")},
+    "gmail": {"aliases": ("gmail", "google mail", "email"), "url": "https://mail.google.com", "plugins": ("gmail", "google mail", "agentmail")},
     "calendar": {"aliases": ("google calendar", "calendar"), "url": "https://calendar.google.com", "plugins": ("google calendar", "calendar")},
     "slack": {"aliases": ("slack",), "url": "https://app.slack.com", "plugins": ("slack",)},
     "notion": {"aliases": ("notion",), "url": "https://www.notion.so", "plugins": ("notion",)},
