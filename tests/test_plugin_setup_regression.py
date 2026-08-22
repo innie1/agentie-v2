@@ -3,7 +3,6 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
 
 from agentie.core import mcp_client, plugin_credentials
 from agentie.core.mcp_catalog import preset_by_id
@@ -98,7 +97,7 @@ class PluginSetupRegressionTests(unittest.TestCase):
         self.assertIn("Save & test", source)
         self.assertIn("Get API key", source)
         self.assertIn("Configure", source)
-        self.assertIn("type=\"password\"", source)
+        self.assertIn("'password'", source)
 
 
 if __name__ == "__main__":
