@@ -5,7 +5,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-from agentie.core import browser_monitor, capability_preflight, capability_router, mcp_client, plugin_credentials
+from agentie.core import agent_access, browser_monitor, capability_preflight, capability_router, mcp_client, plugin_credentials
 from agentie.core.mcp_catalog import preset_by_id
 
 
@@ -108,6 +108,14 @@ class GoogleCanvaMCPRegressionTests(unittest.TestCase):
     def test_explicit_gmail_is_not_claimed_by_agentmail_preflight(self):
         self.assertFalse(capability_preflight._agentmail_intent("Check my Gmail"))
         self.assertTrue(capability_preflight._agentmail_intent("Check my email"))
+
+    def test_natural_permission_routing_separates_google_canva_and_agentmail(self):
+        servers = [{"name": "agentmail"}, {"name": "google-workspace"}, {"name": "canva"}]
+        with patch.object(agent_access, "list_servers", return_value=servers):
+            self.assertEqual(agent_access._mentioned_mcp("Check my Gmail"), "google-workspace")
+            self.assertEqual(agent_access._mentioned_mcp("Search Google Drive for budget"), "google-workspace")
+            self.assertEqual(agent_access._mentioned_mcp("Search Canva designs for laundry"), "canva")
+            self.assertEqual(agent_access._mentioned_mcp("Check my email"), "agentmail")
 
     def test_check_gmail_maps_to_google_search_emails(self):
         info = {"tools": [{"name": "searchEmails", "input_schema": {"type": "object", "properties": {"query": {"type": "string"}, "maxResults": {"type": "number"}}}}]}
