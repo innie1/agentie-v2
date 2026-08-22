@@ -5,13 +5,12 @@ from typing import Any
 
 from agentie.core.agent_builder import draft_agent_spec
 from agentie.core.agent_matching import rank_agents
-from agentie.core.agent_registry import list_agents
 
 
 def analyze_capability_gap(goal:str,limit:int=4)->dict[str,Any]:
     goal=" ".join(str(goal or "").strip().split())[:5000]
     if not goal:raise ValueError("Describe the work or goal to analyze.")
-    ranked=rank_agents(goal,list_agents(),limit=max(1,limit));matches=[]
+    ranked=rank_agents(goal,limit=max(1,limit));matches=[]
     for row in ranked:
         agent=row.get("agent") if isinstance(row,dict) else None
         score=float(row.get("score") or 0) if isinstance(row,dict) else 0
