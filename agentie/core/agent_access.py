@@ -82,6 +82,10 @@ def _mentioned_mcp(message):
     if re.match(r"^\s*(?:add|remove|inspect|list|show)\s+(?:an?\s+)?mcp\b",low):return None
     servers=list_servers()
     by_name={str(i.get("name") or "").strip().lower():str(i.get("name") or "").strip() for i in servers if i.get("name")}
+    whatsapp=by_name.get("whatsapp")
+    local_whatsapp_setting=bool(re.match(r"^\s*(?:set|assign|enable|disable|show)\b.*\bwhatsapp\b.*\b(?:support agent|support mode|settings|contact routing)\b",low))
+    natural_whatsapp=bool("whatsapp" in low and re.search(r"\b(?:check|list|read|open|search|find|send|reply|message|messages|template|mark|history)\b",low))
+    if whatsapp and natural_whatsapp and not local_whatsapp_setting:return whatsapp
     google=by_name.get("google-workspace")
     natural_google=bool(re.search(r"\b(?:gmail|google\s+(?:mail|drive|docs?|sheets?|slides?|calendar|contacts?|workspace))\b",low) and re.search(r"\b(?:check|list|show|read|open|search|find|send|reply|draft|create|make|update|edit|delete|remove|share|upload|download|schedule|email)\b",low))
     if google and natural_google:return google
