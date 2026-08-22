@@ -2,6 +2,7 @@ import asyncio
 import json
 import tempfile
 import unittest
+from datetime import datetime,timezone
 from pathlib import Path
 from unittest.mock import AsyncMock,patch
 
@@ -35,13 +36,20 @@ class GoogleWorkspaceEventBridgeRegressionTests(unittest.TestCase):
         events=automation_events.recent_events();self.assertEqual(len(events),1);self.assertEqual(events[0]['type'],'email.received');self.assertEqual(events[0]['payload']['id'],'m2')
         args=execute.await_args_list[0].args;self.assertEqual(args[0],'google-workspace');self.assertEqual(args[1],'searchEmails');self.assertIn('newer_than',args[2]['query'])
 
+    def test_empty_gmail_baseline_still_allows_first_later_message_to_fire(self):
+        google_workspace_events.update_settings(gmail_enabled=True);empty=self._result({'messages':[]});new=self._result({'messages':[{'id':'m1','subject':'First later message'}]})
+        with patch.object(google_workspace_events,'get_server',return_value={'name':'google-workspace'}),patch.object(google_workspace_events,'inspect_server',new=AsyncMock(return_value=self._info('searchEmails'))),patch.object(google_workspace_events,'execute_tool',new=AsyncMock(side_effect=[empty,new])):
+            first=asyncio.run(google_workspace_events.poll_enabled_sources());second=asyncio.run(google_workspace_events.poll_enabled_sources())
+        self.assertEqual(first['events'],0);self.assertEqual(second['events'],1);self.assertEqual(automation_events.recent_events()[0]['payload']['id'],'m1')
+
     def test_calendar_uses_read_only_discovered_tool_and_emits_only_new_event(self):
         google_workspace_events.update_settings(calendar_enabled=True)
         old=self._result({'events':[{'id':'e1','summary':'Existing'}]});new=self._result({'events':[{'id':'e2','summary':'Starting now'},{'id':'e1'}]})
         with patch.object(google_workspace_events,'get_server',return_value={'name':'google-workspace'}),patch.object(google_workspace_events,'inspect_server',new=AsyncMock(return_value=self._info('listEvents'))),patch.object(google_workspace_events,'execute_tool',new=AsyncMock(side_effect=[old,new])) as execute:
             asyncio.run(google_workspace_events.poll_enabled_sources());out=asyncio.run(google_workspace_events.poll_enabled_sources())
         self.assertEqual(out['events'],1);event=automation_events.recent_events()[0];self.assertEqual(event['type'],'calendar.event.started');self.assertEqual(event['payload']['id'],'e2')
-        self.assertEqual(execute.await_args_list[0].args[1],'listEvents');self.assertEqual(execute.await_args_list[0].args[2]['calendarId'],'primary')
+        args=execute.await_args_list[0].args[2];self.assertEqual(execute.await_args_list[0].args[1],'listEvents');self.assertEqual(args['calendarId'],'primary')
+        time_max=datetime.fromisoformat(args['timeMax'].replace('Z','+00:00'));self.assertLessEqual(time_max,datetime.now(timezone.utc))
 
     def test_drive_requires_explicit_watch_baselines_then_emits_change(self):
         watch=google_workspace_events.add_drive_watch('file123',kind='file',label='Budget');before=self._result({'id':'file123','modifiedTime':'1'});after=self._result({'id':'file123','modifiedTime':'2'})
