@@ -6,9 +6,11 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import PlainTextResponse,Response
 
 from agentie.core.external_triggers import publish_external_event,webhook_allowed,webhook_security_state
+from agentie.core.platform_next4_api import router as platform_next4_router
 from agentie.core.whatsapp_cloud import connection_state,ingest_webhook,verify_webhook_challenge,verify_webhook_signature
 
 router = APIRouter()
+router.include_router(platform_next4_router)
 
 def _whatsapp_body(message:dict)->str:
     kind=str(message.get("type") or "unknown")
@@ -34,7 +36,7 @@ async def _json(request:Request)->dict:
 
 @router.get("/platform.js")
 async def enhanced_platform_js():
-    frontend=Path(__file__).resolve().parents[2]/"frontend";names=("platform.js","platform_automation.js","platform_permission_guard.js");content="\n".join((frontend/name).read_text(encoding="utf-8") for name in names)
+    frontend=Path(__file__).resolve().parents[2]/"frontend";names=("platform.js","platform_automation.js","platform_permission_guard.js","platform_next4.js");content="\n".join((frontend/name).read_text(encoding="utf-8") for name in names)
     return Response(content,media_type="application/javascript",headers={"Cache-Control":"no-store"})
 
 @router.get("/webhooks/whatsapp")
