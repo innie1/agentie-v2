@@ -81,7 +81,14 @@ def _mentioned_mcp(message):
     low=str(message or "").lower()
     if re.match(r"^\s*(?:add|remove|inspect|list|show)\s+(?:an?\s+)?mcp\b",low):return None
     servers=list_servers()
-    agentmail=next((str(i.get("name") or "").strip() for i in servers if str(i.get("name") or "").lower()=="agentmail"),None)
+    by_name={str(i.get("name") or "").strip().lower():str(i.get("name") or "").strip() for i in servers if i.get("name")}
+    google=by_name.get("google-workspace")
+    natural_google=bool(re.search(r"\b(?:gmail|google\s+(?:mail|drive|docs?|sheets?|slides?|calendar|contacts?|workspace))\b",low) and re.search(r"\b(?:check|list|show|read|open|search|find|send|reply|draft|create|make|update|edit|delete|remove|share|upload|download|schedule|email)\b",low))
+    if google and natural_google:return google
+    canva=by_name.get("canva")
+    natural_canva=bool("canva" in low and re.search(r"\b(?:show|list|search|find|create|make|generate|edit|update|export|download|comment|design)\b",low))
+    if canva and natural_canva:return canva
+    agentmail=by_name.get("agentmail")
     local_agentmail_setting=bool(re.match(r"^\s*(?:set|save|remember)\b",low) or re.search(r"\b(?:agentmail settings|email history|agentmail history)\b",low))
     natural_email=bool(re.search(r"\b(?:check|list|read|open|search|send|email|mail|reply)\b",low) and re.search(r"\b(?:email|emails|e-mail|mail|inbox|inboxes|message|messages|thread|threads)\b",low))
     if agentmail and natural_email and not local_agentmail_setting:return agentmail
