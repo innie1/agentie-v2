@@ -28,7 +28,12 @@ class CompanyBrainDumpRegressionTests(unittest.TestCase):
         ]
         for item in self.patches:
             item.start()
-        self.chief = agent_registry.create_agent("Gemma", "Chief of Staff", "manager")["agent"]
+        self.chief = agent_registry.create_agent(
+            "Gemma",
+            "Chief of Staff",
+            "manager",
+            permissions={"delegate": True, "shared_company_memory": "read"},
+        )["agent"]
         self.finance = agent_registry.create_agent("Fina", "Finance Agent", "general")["agent"]
         self.marketing = agent_registry.create_agent("Maya", "Marketing Agent", "general")["agent"]
         self.ops = agent_registry.create_agent("Owen", "Operations Agent", "general")["agent"]
@@ -50,7 +55,7 @@ class CompanyBrainDumpRegressionTests(unittest.TestCase):
         self.assertIsNone(result)
         self.assertEqual(memory_store.list_memories("company", 50), [])
 
-    def test_explicit_brain_dump_extracts_and_routes_by_role(self):
+    def test_explicit_brain_dump_extracts_and_routes_by_configured_relevance(self):
         result = company_knowledge.route_company_knowledge_command(
             "Brain dump: We started a laundry business. Rent is ₦300000 yearly. "
             "We want to target students and offices. We have one washing machine."
@@ -66,24 +71,35 @@ class CompanyBrainDumpRegressionTests(unittest.TestCase):
         self.assertIn("Gemma", rent["shared_with"])
         self.assertIn("marketing", target["categories"])
         self.assertIn("Maya", target["shared_with"])
+        self.assertNotIn("Fina", target["shared_with"])
         self.assertIn("operations", machine["categories"])
         self.assertIn("Owen", machine["shared_with"])
+        self.assertNotIn("Maya", machine["shared_with"])
         self.assertEqual(result["card"]["routed_by"], "Gemma")
 
-    def test_company_context_is_role_scoped_and_manager_can_see_all(self):
+    def test_company_context_is_relevance_scoped_and_delegate_coordinator_can_see_all(self):
         company_knowledge.ingest_company_brain_dump(
             "Rent is ₦300000 yearly. We want to target students and offices. We have one washing machine."
         )
         finance = company_knowledge.company_context_for_agent(self.finance, "What are our rent and costs?", 8)
         marketing = company_knowledge.company_context_for_agent(self.marketing, "Who are we targeting?", 8)
-        manager = company_knowledge.company_context_for_agent(self.chief, "Tell me about the laundry business", 8)
+        coordinator = company_knowledge.company_context_for_agent(self.chief, "Tell me about the laundry business", 8)
         self.assertIn("₦300000", finance)
         self.assertNotIn("target students", finance)
+        self.assertNotIn("washing machine", finance)
         self.assertIn("target students", marketing)
         self.assertNotIn("washing machine", marketing)
-        self.assertIn("₦300000", manager)
-        self.assertIn("target students", manager)
-        self.assertIn("washing machine", manager)
+        self.assertNotIn("₦300000", marketing)
+        self.assertIn("₦300000", coordinator)
+        self.assertIn("target students", coordinator)
+        self.assertIn("washing machine", coordinator)
+
+    def test_title_alone_does_not_grant_company_wide_routing_authority(self):
+        title_only = agent_registry.create_agent("TitleOnly", "Chief of Staff", "manager")["agent"]
+        self.assertFalse(title_only["permissions"].get("delegate"))
+        company_knowledge.add_company_knowledge("Rent is ₦300000 yearly")
+        context = company_knowledge.company_context_for_agent(title_only, "Tell me about marketing targets", 8)
+        self.assertNotIn("₦300000", context)
 
     def test_user_can_update_company_knowledge_without_creating_duplicate_store(self):
         item = company_knowledge.add_company_knowledge("Rent is ₦300000 yearly")
@@ -200,6 +216,8 @@ class CompanyBrainDumpRegressionTests(unittest.TestCase):
         self.assertIn("force_add_duplicate_company_knowledge", approvals)
         self.assertIn("_group_duplicate_matches", company)
         self.assertIn('"variants":variants', company)
+        self.assertIn("agent_identity_text", company)
+        self.assertNotIn("agent_capability_text", company)
 
 
 if __name__ == "__main__":
