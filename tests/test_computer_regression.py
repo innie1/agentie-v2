@@ -10,20 +10,26 @@ from agentie.core.mcp_client import _split_local_command
 
 
 READY = {
+    "computer_id": "company-default",
+    "state": "USER_CONTROL",
     "running": True,
-    "novnc_ready": True,
-    "chrome_ready": True,
-    "novnc_url": "http://127.0.0.1:6080/vnc_lite.html?autoconnect=1",
-    "distro": "Ubuntu",
-    "message": "Agentie Computer started.",
+    "display_ready": True,
+    "browser_ready": True,
+    "display_url": "http://127.0.0.1:6088/vnc.html?autoconnect=1",
+    "controller_type": "user",
+    "controller_agent_id": None,
+    "disk_exists": True,
+    "acceleration": {"available": True, "accelerator": "whpx"},
+    "profile": {"vm_ram_mb": 1024, "vm_vcpus": 1},
 }
 STOPPED = {
+    **READY,
+    "state": "STOPPED",
     "running": False,
-    "novnc_ready": False,
-    "chrome_ready": False,
-    "novnc_url": None,
-    "distro": "Ubuntu",
-    "message": "Agentie Computer stopped.",
+    "display_ready": False,
+    "browser_ready": False,
+    "display_url": None,
+    "controller_type": None,
 }
 
 
@@ -50,23 +56,38 @@ class ComputerRoutingRegressionTests(unittest.IsolatedAsyncioTestCase):
         result = await route_browser_request("Show my tasks")
         self.assertIsNone(result)
 
-    async def test_show_desktop_routes_to_wsl_computer(self):
-        with patch.object(desktop_runtime, "ensure_wsl_desktop", return_value=READY):
+    async def test_show_desktop_routes_to_qemu_company_computer(self):
+        with patch.object(desktop_runtime, "start_computer", return_value=READY) as start, patch.object(desktop_runtime, "ensure_guest_runtime", return_value=READY) as prepare, patch.object(desktop_runtime, "acquire_user", return_value=READY) as acquire:
             result = await route_browser_request("Show desktop")
-        self.assertEqual(result["card"]["mode"], "wsl")
+        start.assert_called_once()
+        prepare.assert_called_once()
+        acquire.assert_called_once()
+        self.assertEqual(result["card"]["mode"], "qemu")
+        self.assertEqual(result["card"]["computer_id"], "company-default")
         self.assertTrue(result["card"]["running"])
 
-    async def test_terminal_routes_through_same_real_computer(self):
-        with patch.object(desktop_runtime, "ensure_wsl_desktop", return_value=READY):
+    async def test_terminal_routes_through_same_qemu_company_computer(self):
+        with patch.object(desktop_runtime, "start_computer", return_value=READY) as start, patch.object(desktop_runtime, "ensure_guest_runtime", return_value=READY) as prepare, patch.object(desktop_runtime, "acquire_user", return_value=READY) as acquire:
             result = await route_browser_request("Open the terminal")
-        self.assertEqual(result["card"]["mode"], "wsl")
+        start.assert_called_once()
+        prepare.assert_called_once()
+        acquire.assert_called_once()
+        self.assertEqual(result["card"]["mode"], "qemu")
+        self.assertEqual(result["card"]["computer_id"], "company-default")
 
-    async def test_stop_routes_to_wsl_shutdown(self):
-        with patch.object(desktop_runtime, "stop_wsl_desktop", return_value=STOPPED) as shutdown:
+    async def test_stop_routes_to_qemu_shutdown(self):
+        with patch.object(desktop_runtime, "stop_computer", return_value=STOPPED) as shutdown:
             result = await route_browser_request("Desktop control: stop")
         shutdown.assert_called_once()
+        self.assertEqual(result["card"]["mode"], "qemu")
         self.assertEqual(result["card"]["app"], "stopped")
         self.assertFalse(result["card"]["running"])
+
+    async def test_no_wsl_compatibility_hooks_remain_in_desktop_runtime(self):
+        source = Path("agentie/core/desktop_runtime.py").read_text(encoding="utf-8").lower()
+        self.assertNotIn("ensure_wsl_desktop", source)
+        self.assertNotIn("stop_wsl_desktop", source)
+        self.assertNotIn('mode="wsl"', source)
 
 
 class ComputerMCPPresetRegressionTests(unittest.TestCase):
