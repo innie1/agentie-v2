@@ -1,3 +1,4 @@
+import base64
 import unittest
 from unittest.mock import patch
 
@@ -17,14 +18,17 @@ class CompanyComputerGuestSetupRegressionTests(unittest.TestCase):
         self.assertIn("systemctl restart agentie-desktop.service", script)
         self.assertNotIn("systemctl restart qemu-guest-agent", script)
         self.assertIn("touch /var/lib/agentie/runtime-v3", script)
+        self.assertIn("pgrep -x apt-get", script)
+        self.assertIn("dpkg --configure -a", script)
 
-    def test_first_use_repairs_guest_in_place_without_recreating_disk(self):
+    def test_first_use_waits_for_cloud_init_then_repairs_in_place_without_recreating_disk(self):
         status = {"computer_id": "company-default", "state": "READY", "disk_exists": True}
         completed = {"exited": True, "exitcode": 0}
-        with patch.object(setup.computer, "start", return_value=status) as start, patch.object(setup, "_wait_for_qga") as wait, patch.object(setup, "_marker_exists", return_value=False), patch.object(setup.computer, "guest_exec", return_value=completed) as guest, patch.object(setup.computer, "touch_activity") as touch, patch.object(setup.computer, "status", return_value=status):
+        with patch.object(setup.computer, "start", return_value=status) as start, patch.object(setup, "_wait_for_qga") as wait_qga, patch.object(setup, "_wait_for_cloud_init") as wait_cloud, patch.object(setup, "_marker_exists", return_value=False), patch.object(setup.computer, "guest_exec", return_value=completed) as guest, patch.object(setup.computer, "touch_activity") as touch, patch.object(setup.computer, "status", return_value=status):
             result = setup.ensure_guest_runtime()
         start.assert_called_once()
-        wait.assert_called_once()
+        wait_qga.assert_called_once()
+        wait_cloud.assert_called_once()
         self.assertEqual(guest.call_count, 1)
         argv = guest.call_args.args[0]
         self.assertEqual(argv[:2], ["/bin/bash", "-lc"])
@@ -33,10 +37,18 @@ class CompanyComputerGuestSetupRegressionTests(unittest.TestCase):
         touch.assert_called_once()
         self.assertEqual(result["computer_id"], "company-default")
 
-    def test_prepared_guest_only_checks_desktop_health(self):
+    def test_cloud_init_wait_uses_guest_channel(self):
+        completed = {"exited": True, "exitcode": 0}
+        with patch.object(setup.computer, "guest_exec", return_value=completed) as guest:
+            setup._wait_for_cloud_init(timeout=90)
+        argv = guest.call_args.args[0]
+        self.assertEqual(argv[:2], ["/bin/bash", "-lc"])
+        self.assertIn("cloud-init status --wait", argv[-1])
+
+    def test_prepared_guest_only_checks_desktop_health_after_waits(self):
         active = {"exited": True, "exitcode": 0}
         status = {"computer_id": "company-default", "state": "READY"}
-        with patch.object(setup.computer, "start", return_value=status), patch.object(setup, "_wait_for_qga"), patch.object(setup, "_marker_exists", return_value=True), patch.object(setup.computer, "guest_exec", return_value=active) as guest, patch.object(setup.computer, "touch_activity"), patch.object(setup.computer, "status", return_value=status):
+        with patch.object(setup.computer, "start", return_value=status), patch.object(setup, "_wait_for_qga"), patch.object(setup, "_wait_for_cloud_init"), patch.object(setup, "_marker_exists", return_value=True), patch.object(setup.computer, "guest_exec", return_value=active) as guest, patch.object(setup.computer, "touch_activity"), patch.object(setup.computer, "status", return_value=status):
             setup.ensure_guest_runtime()
         self.assertEqual(guest.call_count, 1)
         self.assertEqual(guest.call_args.args[0], ["/bin/systemctl", "is-active", "--quiet", "agentie-desktop.service"])
@@ -45,9 +57,21 @@ class CompanyComputerGuestSetupRegressionTests(unittest.TestCase):
         inactive = {"exited": True, "exitcode": 3}
         restarted = {"exited": True, "exitcode": 0}
         status = {"computer_id": "company-default", "state": "READY"}
-        with patch.object(setup.computer, "start", return_value=status), patch.object(setup, "_wait_for_qga"), patch.object(setup, "_marker_exists", return_value=True), patch.object(setup.computer, "guest_exec", side_effect=[inactive, restarted]) as guest, patch.object(setup.computer, "touch_activity"), patch.object(setup.computer, "status", return_value=status):
+        with patch.object(setup.computer, "start", return_value=status), patch.object(setup, "_wait_for_qga"), patch.object(setup, "_wait_for_cloud_init"), patch.object(setup, "_marker_exists", return_value=True), patch.object(setup.computer, "guest_exec", side_effect=[inactive, restarted]) as guest, patch.object(setup.computer, "touch_activity"), patch.object(setup.computer, "status", return_value=status):
             setup.ensure_guest_runtime()
         self.assertEqual(guest.call_args_list[1].args[0], ["/bin/systemctl", "restart", "agentie-desktop.service"])
+
+    def test_failed_repair_surfaces_decoded_guest_error(self):
+        failed = {
+            "exited": True,
+            "exitcode": 100,
+            "err-data": base64.b64encode(b"Could not get lock /var/lib/dpkg/lock-frontend").decode(),
+        }
+        with patch.object(setup.computer, "start", return_value={}), patch.object(setup, "_wait_for_qga"), patch.object(setup, "_wait_for_cloud_init"), patch.object(setup, "_marker_exists", return_value=False), patch.object(setup.computer, "guest_exec", return_value=failed):
+            with self.assertRaises(setup.computer.ComputerError) as ctx:
+                setup.ensure_guest_runtime()
+        self.assertIn("Could not get lock", str(ctx.exception))
+        self.assertIn("exit", str(failed).lower())
 
     def test_qga_timeout_is_actionable(self):
         with patch.object(setup.time, "time", side_effect=[0, 31]):
