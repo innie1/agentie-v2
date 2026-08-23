@@ -12,7 +12,7 @@
     {label:'Organize, manage or monitor work',detail:'Keep track of work, follow up and coordinate'},
     {label:'Use tools and automate tasks',detail:'Work with connected apps, the browser and routines'},
   ];
-  const DEFAULT_NAME='New Agentie';
+  const DEFAULT_NAME='New Agentie',IDENTITY_MARKER='[agentie:use-main-identity-model]';
   let menu=null,flow=null,previousBaseHtml='',previousPlaceholder='';
 
   const esc=value=>{const d=document.createElement('div');d.textContent=String(value??'');return d.innerHTML};
@@ -78,16 +78,13 @@
     if(!flow)return;flow.messages.appendChild(assistant("What's my name?"));const inline=document.createElement('div');inline.className='agentie-create-inline';const fallback=document.createElement('button');fallback.type='button';fallback.textContent='Use New Agentie';fallback.onclick=()=>createFromName(DEFAULT_NAME,inline);inline.appendChild(fallback);flow.messages.appendChild(inline);setComposerPlaceholder('Type my name…');composerInput()?.focus();scrollBottom()
   }
 
-  function autoCapabilityIds(draft,kind){
-    const items=kind==='skill'?(draft.skills||[]):(draft.plugins||[]);
-    return items.filter(item=>Number(item.score||0)>0&&(kind==='skill'||!!item.installed)).map(item=>String(item.id||'').trim()).filter(Boolean)
-  }
-
   async function createFromName(rawName,statusHost=null){
     if(!flow||flow.step!=='name')return;const name=String(rawName||'').trim()||DEFAULT_NAME;flow.step='creating';flow.messages.appendChild(user(name));const status=document.createElement('div');status.className='agentie-create-status';status.textContent='Joining the team…';(statusHost||flow.messages).appendChild(status);setComposerPlaceholder('Setting up…');
     try{
-      const draft=await api('/agent-builder/draft',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({description:flow.description,name,job:''})});
-      const payload={...draft,name:name,job:draft.job||flow.description,skills:autoCapabilityIds(draft,'skill'),plugins:autoCapabilityIds(draft,'plugin'),can_delegate:!!draft.can_delegate_recommended,manager_id:draft.recommended_manager?.id||null};
+      const draft=await api('/agent-builder/draft',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({description:`${flow.description}\n\n${IDENTITY_MARKER}`,name,job:''})});
+      // Skills and connected tools are workspace capabilities, not per-agent grants.
+      // Generated builder guidance stays internal; the user Instructions field is reserved for user-authored durable instructions.
+      const payload={...draft,name,job:draft.job||flow.description,skills:[],plugins:[],instructions:'',can_delegate:!!draft.can_delegate_recommended,manager_id:draft.recommended_manager?.id||null};
       const created=await api('/agent-builder/create',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
       finishOnboardingVisuals();flow=null;
       if(typeof window.loadPersistentAgents==='function')await window.loadPersistentAgents();const agent=(window.__agentieAgents||[]).find(item=>String(item.id)===String(created.agent?.id))||created.agent;
