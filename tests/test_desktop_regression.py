@@ -34,10 +34,11 @@ class AgentieDesktopRegressionTests(unittest.TestCase):
         self.patch.stop()
         self.temp.cleanup()
 
-    def test_show_desktop_starts_shared_qemu_computer_and_gives_user_control(self):
-        with patch.object(desktop_runtime, "start_computer", return_value=READY) as start, patch.object(desktop_runtime, "acquire_user", return_value=READY) as acquire:
+    def test_show_desktop_starts_prepares_shared_qemu_computer_and_gives_user_control(self):
+        with patch.object(desktop_runtime, "start_computer", return_value=READY) as start, patch.object(desktop_runtime, "ensure_guest_runtime", return_value=READY) as prepare, patch.object(desktop_runtime, "acquire_user", return_value=READY) as acquire:
             result = desktop_runtime.route_desktop_request("Show desktop")
         start.assert_called_once()
+        prepare.assert_called_once()
         acquire.assert_called_once()
         self.assertEqual(result["card"]["mode"], "qemu")
         self.assertEqual(result["card"]["computer_id"], "company-default")
@@ -47,7 +48,7 @@ class AgentieDesktopRegressionTests(unittest.TestCase):
     def test_takeover_and_continue_agent_use_same_computer(self):
         user = {**READY, "state": "USER_CONTROL", "controller_type": "user"}
         agent = {**READY, "state": "AGENT_CONTROL", "controller_type": "agent", "controller_agent_id": "agt_sales"}
-        with patch.object(desktop_runtime, "acquire_user", return_value=user):
+        with patch.object(desktop_runtime, "ensure_guest_runtime", return_value=READY), patch.object(desktop_runtime, "acquire_user", return_value=user):
             takeover = desktop_runtime.route_desktop_request("Desktop control: take user control")
         with patch.object(desktop_runtime, "continue_agent", return_value=agent):
             continued = desktop_runtime.route_desktop_request("Desktop control: continue agent")
@@ -56,8 +57,9 @@ class AgentieDesktopRegressionTests(unittest.TestCase):
         self.assertEqual(takeover["card"]["computer_id"], continued["card"]["computer_id"])
 
     def test_open_terminal_opens_real_company_computer(self):
-        with patch.object(desktop_runtime, "start_computer", return_value=READY), patch.object(desktop_runtime, "acquire_user", return_value=READY):
+        with patch.object(desktop_runtime, "start_computer", return_value=READY), patch.object(desktop_runtime, "ensure_guest_runtime", return_value=READY) as prepare, patch.object(desktop_runtime, "acquire_user", return_value=READY):
             result = desktop_runtime.route_desktop_request("Open the terminal")
+        prepare.assert_called_once()
         self.assertEqual(result["card"]["mode"], "qemu")
         self.assertTrue(result["card"]["persistent"])
 
