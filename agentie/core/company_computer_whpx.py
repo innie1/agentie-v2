@@ -20,6 +20,7 @@ KVM/HVF behavior is left unchanged.
 from typing import Any
 
 from agentie.core import company_computer as computer
+from agentie.core import company_computer_debian_image as _debian_image  # registers generic image choice
 
 _ORIGINAL_QEMU_ARGS = computer._qemu_args
 
