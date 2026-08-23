@@ -18,6 +18,8 @@ from agentie.core.company_computer import (
     stop as stop_computer,
     suspend as suspend_computer,
 )
+from agentie.core.company_computer_commands import route_company_computer_command
+from agentie.core.company_computer_desktop import route_desktop_control
 from agentie.core.company_computer_idle import start_idle_coordinator
 
 WORKSPACE = Path.cwd() / "workspace"
@@ -39,7 +41,15 @@ def _file_items() -> list[dict[str, Any]]:
     for path in sorted(WORKSPACE.iterdir(), key=lambda p: (not p.is_dir(), p.name.lower())):
         try:
             stat = path.stat()
-            items.append({"name": path.name, "kind": "folder" if path.is_dir() else "file", "size_bytes": 0 if path.is_dir() else stat.st_size, "modified": stat.st_mtime, "suffix": path.suffix.lower()})
+            items.append(
+                {
+                    "name": path.name,
+                    "kind": "folder" if path.is_dir() else "file",
+                    "size_bytes": 0 if path.is_dir() else stat.st_size,
+                    "modified": stat.st_mtime,
+                    "suffix": path.suffix.lower(),
+                }
+            )
         except OSError:
             continue
     return items
@@ -70,11 +80,12 @@ def _read_text(name: str) -> dict[str, Any]:
     return {"name": path.name, "binary": False, "size_bytes": path.stat().st_size, "content": text[:200000]}
 
 
-def _terminal(command: str) -> dict[str, Any]:
-    """Keep the existing safe host-workspace mini terminal.
+def _host_terminal(command: str) -> dict[str, Any]:
+    """Compatibility-only safe host workspace terminal.
 
-    Full Linux work happens inside the Company Computer. This helper remains for
-    existing local workspace commands and never becomes an arbitrary host shell.
+    Real agent shell work belongs in the QEMU guest. This helper remains only
+    for explicit legacy `Desktop control: terminal ...` workspace inspection.
+    It never exposes arbitrary host shell access.
     """
     raw = str(command or "").strip()
     if not raw:
@@ -117,6 +128,10 @@ def _terminal(command: str) -> dict[str, Any]:
     return {"command": raw, "output": output[:50000], "exit_code": proc.returncode}
 
 
+# Backward-compatible name used by a few older tests/callers.
+_terminal = _host_terminal
+
+
 def desktop_card(app: str = "home", **data: Any) -> dict[str, Any]:
     return {"type": "desktop_view", "app": app, **data}
 
@@ -149,9 +164,6 @@ def _natural_command(text: str) -> str | None:
         return "plugins"
     if low in {"open terminal", "show terminal", "terminal", "open the terminal", "open computer terminal"}:
         return "terminal"
-    m = re.match(r"^(?:run|execute)\s+(.+?)\s+(?:in|using)\s+(?:the\s+)?terminal$", text, re.I)
-    if m:
-        return "terminal " + m.group(1).strip()
     return None
 
 
@@ -182,8 +194,22 @@ def _real_desktop_card(info: dict[str, Any], app: str = "desktop") -> dict[str, 
     )
 
 
-def route_desktop_request(message: str) -> dict[str, Any] | None:
+def route_desktop_request(message: str, session_id: str | None = None) -> dict[str, Any] | None:
     text = " ".join(str(message or "").strip().split())
+    if not text:
+        return None
+
+    try:
+        guest = route_company_computer_command(text, session_id)
+        if guest is not None:
+            return guest
+        desktop_action = route_desktop_control(text, session_id)
+        if desktop_action is not None:
+            return desktop_action
+    except (ValueError, RuntimeError, ComputerError) as exc:
+        info = computer_status()
+        return {"message": str(exc), "card": desktop_card("error", mode="qemu", state=info.get("state"), error=str(exc), action=(info.get("acceleration") or {}).get("action"))}
+
     lower = text.lower()
     prefix = "desktop control:"
     if lower.startswith(prefix):
@@ -193,6 +219,7 @@ def route_desktop_request(message: str) -> dict[str, Any] | None:
         if command is None:
             return None
     low = command.lower().strip()
+
     try:
         if low in {"start", "start real desktop", "home", "desktop", "show home"}:
             start_computer()
@@ -235,8 +262,8 @@ def route_desktop_request(message: str) -> dict[str, Any] | None:
             info = acquire_user()
             return {"message": "The real Linux Terminal is available inside Agentie Computer.", "card": _real_desktop_card(info)}
         if low.startswith("terminal "):
-            result = _terminal(command[9:])
-            return {"message": "Terminal command completed.", "card": desktop_card("terminal", terminal=result)}
+            result = _host_terminal(command[9:])
+            return {"message": "Host workspace command completed.", "card": desktop_card("terminal", terminal=result)}
     except (ValueError, RuntimeError, ComputerError) as exc:
         info = computer_status()
         return {"message": str(exc), "card": desktop_card("error", mode="qemu", state=info.get("state"), error=str(exc), action=(info.get("acceleration") or {}).get("action"))}
