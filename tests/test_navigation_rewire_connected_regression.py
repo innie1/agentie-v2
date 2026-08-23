@@ -6,6 +6,7 @@ class NavigationRewireConnectedRegressionTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.source = Path("frontend/navigation_connect.js").read_text(encoding="utf-8")
+        cls.model = Path("frontend/model_router.js").read_text(encoding="utf-8")
 
     def test_profile_menu_is_real_and_connected(self):
         src = self.source
@@ -41,10 +42,10 @@ class NavigationRewireConnectedRegressionTests(unittest.TestCase):
         self.assertIn("document.addEventListener('pointerdown'", src)
         self.assertIn("state.lastPointerGroup=id", src)
         self.assertIn("openGroup(id)", src)
-        self.assertIn("showOpeningGroup(id)", src)
+        self.assertIn("showOpeningGroup(nextId)", src)
         self.assertIn("Opening group chat…", src)
         self.assertIn("Could not open group chat:", src)
-        self.assertIn("/platform/agent-chats/${encodeURIComponent(id)}", src)
+        self.assertIn("/platform/agent-chats/${encodeURIComponent(nextId)}", src)
         self.assertIn("document.getElementById('messages')", src)
         self.assertIn("row.className=isUser?'user-row':'assistant-row'", src)
         self.assertIn("bubble.className='bubble '+(isUser?'user':'assistant')", src)
@@ -54,9 +55,9 @@ class NavigationRewireConnectedRegressionTests(unittest.TestCase):
         src = self.source
         self.assertIn("function wireComposer()", src)
         self.assertIn("send.addEventListener('click'", src)
-        self.assertIn("input.addEventListener('keydown'", src)
+        self.assertIn("document.addEventListener('keydown'", src)
         self.assertIn("window.__agentieSendActiveGroupMessage=sendGroup", src)
-        self.assertIn("/platform/agent-chats/${encodeURIComponent(state.group.id)}/messages", src)
+        self.assertIn("/platform/agent-chats/${encodeURIComponent(id)}/messages", src)
         self.assertIn("JSON.stringify({message:value})", src)
 
     def test_group_polling_respects_manual_scroll_up(self):
@@ -80,6 +81,23 @@ class NavigationRewireConnectedRegressionTests(unittest.TestCase):
         self.assertIn("for(const name of d.participants||[])", src)
         self.assertIn("orb.style.setProperty('display','none','important')", src)
         self.assertIn("syncTopbar(null)", src)
+
+    def test_only_navigation_connect_owns_group_chat_runtime(self):
+        self.assertIn("/platform/agent-chats", self.source)
+        self.assertIn("setInterval(refreshGroup,2200)", self.source)
+        self.assertNotIn("/platform/agent-chats", self.model)
+        self.assertNotIn("activeGroup", self.model)
+        self.assertNotIn("sidebar-group-row", self.model)
+
+    def test_switching_groups_invalidates_old_poll_and_restores_normal_surface(self):
+        src = self.source
+        self.assertIn("if(state.poll){clearInterval(state.poll);state.poll=null}", src)
+        self.assertIn("const nextId=String(id),token=++state.openToken", src)
+        self.assertIn("state.group=known", src)
+        self.assertIn("if(token!==state.openToken||!state.group||String(state.group.id)!==nextId)return", src)
+        self.assertIn("function restoreNormalSurface", src)
+        self.assertIn("window.restoreChatView", src)
+        self.assertIn("restoreNormalSurface();markActiveRows()", src)
 
 
 if __name__ == "__main__":
