@@ -73,3 +73,11 @@ def qmp_input(events: list[dict[str, Any]]) -> None:
     if result.get("error"):
         raise computer.ComputerError(str(result["error"]))
     computer.touch_activity()
+
+
+# Keep the Company Computer module's public runtime API stable while the
+# transport implementation lives in this focused module. Existing callers and
+# tests can continue using company_computer.guest_exec/_qga_request/qmp_input.
+computer._qga_request = _qga_request
+computer.guest_exec = guest_exec
+computer.qmp_input = qmp_input
