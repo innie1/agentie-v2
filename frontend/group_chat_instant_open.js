@@ -5,7 +5,7 @@
   let generation=0;
   let observer=null;
 
-  const scrollRoot=()=>document.scrollingElement||document.documentElement;
+  const scrollRoot=()=>document.querySelector('.chat-shell')||document.scrollingElement||document.documentElement;
 
   function finishOpen(messages,token){
     if(!pending||token!==generation||!messages)return;
@@ -37,12 +37,13 @@
     pending=true;
     observer?.disconnect();
 
-    // The navigation controller has already swapped in its tiny loading view
-    // during this same pointer event. Keep enough invisible height to prevent
-    // the document from collapsing to the top before the real thread arrives.
+    // navigation_connect has already swapped in its tiny loading surface during
+    // this pointer event. Preserve the real chat container height invisibly so
+    // the viewport never collapses upward before the retained thread appears.
     const root=scrollRoot();
-    const currentTop=Number(root?.scrollTop||window.scrollY||0);
-    messages.style.minHeight=`${Math.max(window.innerHeight,currentTop+window.innerHeight)}px`;
+    const currentTop=Number(root?.scrollTop||0);
+    const viewport=Number(root?.clientHeight||window.innerHeight||0);
+    messages.style.minHeight=`${Math.max(viewport,currentTop+viewport)}px`;
     messages.style.visibility='hidden';
 
     observer=new MutationObserver(()=>{
