@@ -111,12 +111,12 @@ def _input_prompt(skill:dict[str,Any],missing:list[str])->dict[str,Any]:
 
 
 async def execute_workflow_skill(skill_name_or_id:str,session_id:str|None,*,inputs:dict[str,Any]|None=None,requested_by:str="user",source:str="chat")->dict[str,Any]:
-    """Execute an active workflow Skill through a real persistent agent.
+    """Execute an active reusable workflow Skill through a persistent agent.
 
-    Active Skills live in the shared workspace catalog. Agent association is only
-    an organizational preference, not a permission gate. Required capabilities
-    must still be enabled/connected globally, and consequential actions still use
-    Agentie's normal approval system.
+    Workflow Skill association says which repeatable HOW belongs to the agent.
+    It is not a tool permission grant. Underlying enabled capabilities/plugins are
+    shared workspace resources, while consequential actions still use Agentie's
+    normal approval system.
     """
     skill=get_workflow_skill(skill_name_or_id)
     if not skill:return {"message":"Reusable Skill was not found.","card":None,"status":"not_found"}
@@ -124,6 +124,8 @@ async def execute_workflow_skill(skill_name_or_id:str,session_id:str|None,*,inpu
     if skill.get("source_workflow_id"):return {"message":"This Skill has a deterministic taught workflow and must run through the taught-workflow replay path.","card":skill_card(skill),"status":"deterministic_replay"}
     m=re.match(r"^agent:(agt_[a-z0-9]+):",str(session_id or ""),re.I);agent=get_agent(m.group(1)) if m else None
     if not agent:return {"message":f"Select an agent that should run “{skill['name']}”. Skills execute through a real agent so its identity, memory and approvals remain scoped correctly.","card":skill_card(skill),"status":"needs_agent"}
+    assigned={str(x) for x in agent.get("skills") or []}
+    if str(skill["id"]) not in assigned:return {"message":f"{agent['name']} does not have workflow Skill “{skill['name']}” associated with it yet. Associate the Skill with this agent first; this does not change shared tool access.","card":skill_card(skill),"status":"needs_access"}
     missing=missing_inputs(skill,inputs)
     if missing:return _input_prompt(skill,missing)
     access=missing_access(skill,agent)
