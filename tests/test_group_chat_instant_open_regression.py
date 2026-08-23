@@ -28,11 +28,19 @@ class GroupChatInstantOpenRegressionTests(unittest.TestCase):
         src = self.guard
         self.assertIn("window.addEventListener('pointerdown'", src)
         self.assertNotIn("document.addEventListener('pointerdown',event", src)
+        self.assertIn("document.querySelector('.chat-shell')", src)
         self.assertIn("document.scrollingElement||document.documentElement||document.body", src)
         self.assertIn("getComputedStyle(shell)", src)
         self.assertIn("shell.scrollHeight>shell.clientHeight+1", src)
-        self.assertIn("window.scrollTo({top:bottom,left:0,behavior:'auto'})", src)
+        self.assertIn("root.scrollTop=root.scrollHeight", src)
         self.assertNotIn("behavior:'smooth'", src)
+
+    def test_reveal_waits_until_navigation_bottom_positioning_frame(self):
+        src = self.guard
+        self.assertIn("let revealFrame=0", src)
+        self.assertIn("revealFrame=requestAnimationFrame(()=>finishOpen(messages,token))", src)
+        self.assertIn("navigation_connect schedules its own bottom positioning", src)
+        self.assertIn("cancelAnimationFrame(revealFrame)", src)
 
     def test_guard_does_not_own_or_duplicate_group_backend_runtime(self):
         src = self.guard
