@@ -30,10 +30,10 @@ def _safe_event_arguments(arguments:dict[str,Any])->dict[str,Any]:
 def _plugin_inspect_tool(agent:dict[str,Any]):
     @function_tool
     async def inspect_plugin(server: str) -> str:
-        """Inspect one real MCP/plugin granted to this agent before using it."""
+        """Inspect one connected workspace MCP/plugin before using it."""
         server=str(server or "").strip()
         if not server:return "Plugin server is required."
-        if not mcp_allowed(agent,server):return f"{agent.get('name') or 'This agent'} is not allowed to use MCP/plugin '{server}'."
+        if not mcp_allowed(agent,server):return f"MCP/plugin '{server}' is not connected or is disabled in this Agentie workspace."
         try:info=await inspect_server(server)
         except Exception as exc:return f"Could not inspect plugin '{server}': {str(exc)[:500]}"
         tools=[{"name":item.get("name"),"description":item.get("description"),"input_schema":item.get("input_schema") or {}} for item in info.get("tools") or []]
@@ -43,10 +43,10 @@ def _plugin_inspect_tool(agent:dict[str,Any]):
 def _plugin_tool(agent:dict[str,Any]):
     @function_tool
     async def use_plugin(server: str, tool: str, arguments_json: str = "{}") -> str:
-        """Use one real MCP/plugin granted to this agent."""
+        """Use one connected workspace MCP/plugin for the current task."""
         server=str(server or "").strip();tool=str(tool or "").strip()
         if not server or not tool:return "Plugin server and tool are required."
-        if not mcp_allowed(agent,server):return f"{agent.get('name') or 'This agent'} is not allowed to use MCP/plugin '{server}'."
+        if not mcp_allowed(agent,server):return f"MCP/plugin '{server}' is not connected or is disabled in this Agentie workspace."
         try:arguments=json.loads(arguments_json or "{}")
         except Exception:return "Plugin arguments_json must be a valid JSON object."
         if not isinstance(arguments,dict):return "Plugin arguments_json must decode to a JSON object."
@@ -57,7 +57,7 @@ def _plugin_tool(agent:dict[str,Any]):
         action=_approval_action(server,tool,arguments)
         if not approval_is_granted(action):
             approval=create_background_mcp_approval(action,f"Allow {agent.get('name') or 'this agent'} to run MCP {server}/{tool} with these arguments: {json.dumps(_safe_event_arguments(arguments),ensure_ascii=False)[:500]}",agent_id=str(agent.get('id') or ''),agent_name=str(agent.get('name') or 'Agent'),server=server,tool=tool,command=f"{server}/{tool}")
-            return json.dumps({"status":"approval_required","approval_id":approval.get("id"),"server":server,"tool":tool,"message":"A real Agentie approval was created. Stop this action and tell the user approval is required before retrying."},ensure_ascii=False)
+            return json.dumps({"status":"approval_required","approval_id":approval.get("id"),"server":server,"tool":tool,"message":"A real Agentie action approval was created. Stop this action and tell the user approval is required before retrying."},ensure_ascii=False)
         try:result=await execute_tool(server,tool,arguments)
         except Exception as exc:return f"Plugin '{server}' tool '{tool}' failed: {str(exc)[:700]}"
         try:
@@ -91,7 +91,12 @@ def _gap_tool(agent:dict[str,Any]):
     return analyze_team_capability_gap
 
 def tools_for_persistent_agent(agent:dict[str,Any])->list:
-    """Build model tools from effective grants, never from a job-title class."""
+    """Build the shared workspace capability catalog for a persistent agent.
+
+    The agent's configured job decides *when* a capability is appropriate. The
+    workspace decides whether the capability is connected/enabled. Consequential
+    operations still create their normal action approval.
+    """
     tools=[get_current_utc_time,request_approval,list_approvals]
     if skill_allowed(agent,"local-utils"):_add(tools,[*registry.LOCAL_UTILITY_TOOLS,*registry.PRODUCTIVITY_TOOLS,*registry.ADVANCED_LOCAL_TOOLS])
     if skill_allowed(agent,"research"):_add(tools,registry.RESEARCH_TOOLS)
