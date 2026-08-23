@@ -39,7 +39,7 @@
     document.body.appendChild(menu);return menu;
   }
   function closeMenu(){menu?.classList.remove('open')}
-  function toggleMenu(button){const el=ensureMenu();if(el.classList.contains('open')){closeMenu();return}const rect=button.getBoundingClientRect();el.classList.add('open');const width=el.getBoundingClientRect().width||190;el.style.left=`${Math.max(8,Math.min(rect.right-width,window.innerWidth-width-8))}px`;el.style.top=`${Math.min(window.innerHeight-el.offsetHeight-8,rect.bottom+7)}px`}
+  function toggleMenu(button){if(!button)return;const el=ensureMenu();if(el.classList.contains('open')){closeMenu();return}const rect=button.getBoundingClientRect();el.classList.add('open');const width=el.getBoundingClientRect().width||190;el.style.left=`${Math.max(8,Math.min(rect.right-width,window.innerWidth-width-8))}px`;el.style.top=`${Math.max(8,Math.min(window.innerHeight-el.offsetHeight-8,rect.bottom+7))}px`}
 
   function leaveAnyGroup(){
     if(!window.__agentieActiveGroupChat)return;
@@ -47,17 +47,17 @@
     if(normal)normal.click();
   }
   function enterFreshChat(){
-    leaveAnyGroup();
-    try{window.selectPersistentAgent?.(null)}catch(_){ }
+    const already=!!shell()?.classList.contains('agentie-create-onboarding');
+    if(!already){leaveAnyGroup();try{window.selectPersistentAgent?.(null)}catch(_){ }}
     const box=messages();if(!box)return null;
-    previousBaseHtml=box.innerHTML;
+    if(!already)previousBaseHtml=box.innerHTML;
     box.replaceChildren();box.classList.add('agentie-create-chat');shell()?.classList.add('agentie-create-onboarding');
     return box;
   }
   function restoreNormalChat(){
     shell()?.classList.remove('agentie-create-onboarding');
     const box=messages();box?.classList.remove('agentie-create-chat');
-    try{window.restoreChatView?.(null)}catch(_){if(box&&previousBaseHtml)box.innerHTML=previousBaseHtml}
+    try{if(typeof window.restoreChatView==='function')window.restoreChatView(null);else if(box)box.innerHTML=previousBaseHtml}catch(_){if(box)box.innerHTML=previousBaseHtml}
   }
   function cancelOnboarding(){restoreNormalChat();document.getElementById('messageInput')?.focus()}
 
@@ -78,7 +78,7 @@
     STARTERS.forEach((label,index)=>{const row=document.createElement('label');row.className='agentie-create-option';row.innerHTML=`<input type="checkbox" data-create-starter="${index}"><span>${esc(label)}</span>`;opts.appendChild(row)});choose.appendChild(opts);
     const custom=document.createElement('textarea');custom.className='agentie-create-field';custom.dataset.createCustom='1';custom.placeholder='Or describe any Bot you need...';choose.appendChild(custom);
     const help=document.createElement('div');help.className='agentie-create-help';help.textContent='These are only starting points. They do not lock the Bot into a profession or agent type.';choose.appendChild(help);
-    const stat=statusNode();choose.appendChild(actions({label:'Continue',primary:true,onClick:()=>{const selected=[...choose.querySelectorAll('[data-create-starter]:checked')].map(x=>STARTERS[Number(x.dataset.createStarter)]),description=composeDescription(custom.value,selected);if(!custom.value.trim()&&!selected.length){setStatus(stat,'Choose an option or describe the Bot you need.',true);return}choose.querySelectorAll('input,textarea,button').forEach(x=>x.disabled=true);box.appendChild(user(custom.value.trim()||selected.join(' · ')));askName(box,description)}} ,{label:'Cancel',onClick:cancelOnboarding}),stat);box.appendChild(choose);custom.focus();scrollBottom()
+    const stat=statusNode();choose.appendChild(actions({label:'Continue',primary:true,onClick:()=>{const selected=[...choose.querySelectorAll('[data-create-starter]:checked')].map(x=>STARTERS[Number(x.dataset.createStarter)]),description=composeDescription(custom.value,selected);if(!custom.value.trim()&&!selected.length){setStatus(stat,'Choose an option or describe the Bot you need.',true);return}choose.querySelectorAll('input,textarea,button').forEach(x=>x.disabled=true);box.appendChild(user(custom.value.trim()||selected.join(' · ')));askName(box,description)}},{label:'Cancel',onClick:cancelOnboarding}));choose.appendChild(stat);box.appendChild(choose);custom.focus();scrollBottom()
   }
 
   function askName(box,description){
@@ -108,14 +108,14 @@
     if((draft.routine_suggestions||[]).length)content.appendChild(reviewRow('Routine suggestions',(draft.routine_suggestions||[]).map(x=>`${x.trigger} — ${x.action}`).join('\n')));
     content.appendChild(reviewRow('Approval boundaries','Sending, publishing, deleting/overwriting, purchases/payments, transfers, permission changes, production changes and accepting legal terms require approval by default.'));
     const details=document.createElement('details');const summary=document.createElement('summary');summary.textContent='View generated instructions';const pre=document.createElement('pre');pre.textContent=draft.instructions||'';details.append(summary,pre);content.appendChild(details);review.appendChild(content);
-    const stat=statusNode();const createButton={label:'Create agent',primary:true,onClick:async()=>{const name=nameField.value.trim()||DEFAULT_NAME,job=jobField.value.trim();if(!job){setStatus(stat,'The generated job is required.',true);return}const selected=[...review.querySelectorAll('[data-create-capability]:checked')],payload={...draft,name,job,skills:selected.filter(x=>x.dataset.createCapabilityKind==='skill').map(x=>x.dataset.createCapability),plugins:selected.filter(x=>x.dataset.createCapabilityKind==='plugin').map(x=>x.dataset.createCapability)};review.querySelectorAll('button,input').forEach(x=>x.disabled=true);setStatus(stat,'Creating…');try{const d=await api('/agent-builder/create',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});shell()?.classList.remove('agentie-create-onboarding');messages()?.classList.remove('agentie-create-chat');try{window.restoreChatView?.(null)}catch(_){ }if(typeof window.loadPersistentAgents==='function')await window.loadPersistentAgents();const created=(window.__agentieAgents||[]).find(a=>String(a.id)===String(d.agent?.id))||d.agent;try{window.selectPersistentAgent?.(created)}catch(_){ }if(typeof window.addAssistant==='function'){const connection=(d.connection_needed||[]).length?` Connect ${d.connection_needed.join(', ')} from Plugins when you want me to use them.`:'';window.addAssistant(`I'm ${created?.name||name}. I'm ready to join the team.${connection}`,null)}document.getElementById('messageInput')?.focus()}catch(e){review.querySelectorAll('button,input').forEach(x=>x.disabled=false);setStatus(stat,e.message,true)}}};review.appendChild(actions(createButton,{label:'Start over',onClick:startAgentOnboarding},{label:'Cancel',onClick:cancelOnboarding}));review.appendChild(stat);box.appendChild(review);scrollBottom()
+    const stat=statusNode();const createButton={label:'Create agent',primary:true,onClick:async()=>{const name=nameField.value.trim()||DEFAULT_NAME,job=jobField.value.trim();if(!job){setStatus(stat,'The generated job is required.',true);return}const selected=[...review.querySelectorAll('[data-create-capability]:checked')],payload={...draft,name,job,skills:selected.filter(x=>x.dataset.createCapabilityKind==='skill').map(x=>x.dataset.createCapability),plugins:selected.filter(x=>x.dataset.createCapabilityKind==='plugin').map(x=>x.dataset.createCapability)};review.querySelectorAll('button,input').forEach(x=>x.disabled=true);setStatus(stat,'Creating…');try{const d=await api('/agent-builder/create',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});restoreNormalChat();if(typeof window.loadPersistentAgents==='function')await window.loadPersistentAgents();const created=(window.__agentieAgents||[]).find(a=>String(a.id)===String(d.agent?.id))||d.agent;try{window.selectPersistentAgent?.(created)}catch(_){ }if(typeof window.addAssistant==='function'){const connection=(d.connection_needed||[]).length?` Connect ${d.connection_needed.join(', ')} from Plugins when you want me to use them.`:'';window.addAssistant(`I'm ${created?.name||name}. I'm ready to join the team.${connection}`,null)}document.getElementById('messageInput')?.focus()}catch(e){review.querySelectorAll('button,input').forEach(x=>x.disabled=false);setStatus(stat,e.message,true)}}};review.appendChild(actions(createButton,{label:'Start over',onClick:startAgentOnboarding},{label:'Cancel',onClick:cancelOnboarding}));review.appendChild(stat);box.appendChild(review);scrollBottom()
   }
 
   function openExistingGroupCreator(){
-    const launcher=document.querySelector('.n4-chats');if(!launcher){window.agentieNotice?.('⚠️','Group Chat','Group Chat creator is unavailable right now.',null,'create-group-unavailable');return}launcher.click();requestAnimationFrame(()=>setTimeout(()=>{const modals=[...document.querySelectorAll('.n4-modal')],active=modals[modals.length-1],button=[...(active?.querySelectorAll('button')||[])].find(x=>x.textContent.trim()==='New group chat');if(button)button.click()},0))
+    if(shell()?.classList.contains('agentie-create-onboarding'))restoreNormalChat();const launcher=document.querySelector('.n4-chats');if(!launcher){window.agentieNotice?.('⚠️','Group Chat','Group Chat creator is unavailable right now.',null,'create-group-unavailable');return}launcher.click();requestAnimationFrame(()=>setTimeout(()=>{const modals=[...document.querySelectorAll('.n4-modal')],active=modals[modals.length-1],button=[...(active?.querySelectorAll('button')||[])].find(x=>x.textContent.trim()==='New group chat');if(button)button.click()},0))
   }
   function openExistingSkillCreator(){
-    const open=()=>{const b=document.querySelector('.platform-skill-new');if(b){b.click();return true}return false};if(open())return;document.getElementById('agentiePluginsButton')?.click();setTimeout(()=>{if(!open())window.agentieNotice?.('⚠️','Create Skill','Skill creator is unavailable right now.',null,'create-skill-unavailable')},100)
+    if(shell()?.classList.contains('agentie-create-onboarding'))restoreNormalChat();const open=()=>{const b=document.querySelector('.platform-skill-new');if(b){b.click();return true}return false};if(open())return;document.getElementById('agentiePluginsButton')?.click();setTimeout(()=>{if(!open())window.agentieNotice?.('⚠️','Create Skill','Skill creator is unavailable right now.',null,'create-skill-unavailable')},100)
   }
 
   window.__agentieStartAgentOnboarding=startAgentOnboarding;
