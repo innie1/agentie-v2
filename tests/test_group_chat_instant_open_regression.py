@@ -13,6 +13,7 @@ class GroupChatInstantOpenRegressionTests(unittest.TestCase):
         for marker in (
             "__agentieGroupInstantOpenGuard",
             "#persistentAgentList .sidebar-group-row",
+            "document.querySelector('.chat-shell')",
             "messages.style.visibility='hidden'",
             "messages.style.minHeight=",
             "MutationObserver",
