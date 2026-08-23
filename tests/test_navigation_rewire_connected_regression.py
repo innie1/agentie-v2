@@ -47,7 +47,8 @@ class NavigationRewireConnectedRegressionTests(unittest.TestCase):
         self.assertIn("Could not open group chat:", src)
         self.assertIn("/platform/agent-chats/${encodeURIComponent(nextId)}", src)
         self.assertIn("document.getElementById('messages')", src)
-        self.assertIn("row.className=isUser?'user-row':'assistant-row'", src)
+        self.assertIn("row.className=isUser?'user-row':'assistant-row agentie-connected-group-agent-row'", src)
+        self.assertIn("row.appendChild(messageOrb(m))", src)
         self.assertIn("bubble.className='bubble '+(isUser?'user':'assistant')", src)
         self.assertIn("window.__agentieOpenGroupChat=openGroup", src)
 
@@ -62,7 +63,11 @@ class NavigationRewireConnectedRegressionTests(unittest.TestCase):
 
     def test_group_polling_respects_manual_scroll_up(self):
         src = self.source
-        self.assertIn("function scrollHost(){return document.querySelector('.chat-shell')}", src)
+        self.assertIn("function scrollHost(){const shell=document.querySelector('.chat-shell')", src)
+        self.assertIn("getComputedStyle(shell)", src)
+        self.assertIn("if(/auto|scroll|overlay/.test(overflow))return shell", src)
+        self.assertIn("document.scrollingElement||document.documentElement||document.body", src)
+        self.assertIn("window.__agentieGroupScrollRoot=scrollHost", src)
         self.assertIn("function isNearBottom", src)
         self.assertIn("followBottom:true", src)
         self.assertIn("if(!state.group||state.restoringScroll)return", src)
