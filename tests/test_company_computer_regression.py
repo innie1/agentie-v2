@@ -30,6 +30,14 @@ class CompanyComputerRegressionTests(unittest.TestCase):
     def profile(self, system="windows", machine="x86_64"):
         return {"system":system,"machine":machine,"logical_cpus":4,"memory_mb":8192,"vm_ram_mb":2048,"vm_vcpus":2,"low_end":False}
 
+    def test_state_database_connections_are_closed_after_each_operation(self):
+        cc._update(state="IDLE")
+        self.assertTrue(cc.STATE_DB.exists())
+        cc.STATE_DB.unlink()
+        self.assertFalse(cc.STATE_DB.exists())
+        cc._ensure_db()
+        self.assertTrue(cc.STATE_DB.exists())
+
     def test_windows_selects_whpx(self):
         with patch.object(cc,"_accel_help",return_value={"whpx","tcg"}), patch.object(cc,"_whpx_feature_enabled",return_value=True):
             result=cc.acceleration("qemu",self.profile("windows"))
