@@ -12,7 +12,8 @@ from agentie.tools.approval_tools import approval_is_granted, consume_approval, 
 _MAX_COMMAND = 4000
 _SAFE_PACKAGE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9+_.:-]{0,79}$")
 _SYSTEM_CHANGE = re.compile(
-    r"(?:^|[;&|]\s*)(?:sudo\s+)?(?:apt|apt-get|aptitude|dpkg|snap|flatpak|systemctl|service|useradd|userdel|usermod|groupadd|groupdel|mount|umount|mkfs(?:\.[a-z0-9]+)?|fdisk|parted)\b"
+    r"(?:^|[;&|]\s*)(?:sudo|su|pkexec|doas)\b"
+    r"|(?:^|[;&|]\s*)(?:sudo\s+)?(?:apt|apt-get|aptitude|dpkg|snap|flatpak|systemctl|service|useradd|userdel|usermod|groupadd|groupdel|mount|umount|mkfs(?:\.[a-z0-9]+)?|fdisk|parted)\b"
     r"|\b(?:pip|pip3|python\s+-m\s+pip|npm|pnpm|yarn|cargo|gem|go)\s+(?:install|uninstall|remove|add)\b"
     r"|\b(?:chmod|chown|chgrp|setfacl)\b"
     r"|(?:^|\s)/(?:etc|usr|opt|boot|var/lib|var/spool)(?:/|\s|$)",
