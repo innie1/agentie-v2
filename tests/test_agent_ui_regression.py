@@ -47,7 +47,9 @@ class AgentUIRegressionTests(unittest.TestCase):
         browser = Path("frontend/browser_screen.js").read_text(encoding="utf-8")
         self.assertIn("desktop_view", browser)
         self.assertIn("browser_approval", browser)
-        self.assertIn("KasmVNC", browser)
+        self.assertIn("mode==='qemu'", browser)
+        self.assertIn("Continue Agent", browser)
+        self.assertNotIn("KasmVNC", browser)
 
     def test_backend_agent_profile_editing_remains_available(self):
         registry = Path("agentie/core/agent_registry.py").read_text(encoding="utf-8")
