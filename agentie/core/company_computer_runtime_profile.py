@@ -2,11 +2,10 @@ from __future__ import annotations
 
 """Apply Company Computer VM hardware-profile migrations safely.
 
-QEMU device choices are fixed when a VM process launches.  Reusing a live QEMU
-process after Agentie updates its hardware arguments (for example virtio-vga to
-standard VGA on WHPX) leaves the guest on the old hardware even though the new
-code is present.  This wrapper performs a one-time process relaunch while
-preserving the persistent QCOW2 disk and guest data.
+QEMU device choices are fixed when a VM process launches. Reusing a live QEMU
+process after Agentie updates its hardware arguments leaves the guest on the old
+hardware even though new code is present. This wrapper performs a one-time
+process relaunch while preserving the persistent QCOW2 disk and guest data.
 """
 
 from pathlib import Path
@@ -14,7 +13,7 @@ from typing import Any
 
 from agentie.core import company_computer as computer
 
-_PROFILE_VERSION = "2026-08-whpx-standard-vga-v1"
+_PROFILE_VERSION = "2026-08-whpx-pc-standard-vga-v2"
 _PROFILE_FILE = computer.ROOT / "runtime-profile.version"
 _ORIGINAL_START = computer.start
 
@@ -33,11 +32,10 @@ def _mark_profile_current() -> None:
 
 def _live_runtime_needs_relaunch() -> bool:
     row = computer._row()
-    return (
-        computer._is_pid_alive(row.get("vm_pid"))
-        and computer._port_open(computer.VNC_PORT)
-        and not _profile_is_current()
-    )
+    # A stale live QEMU process must be relaunched even if VNC never opened.
+    # Hardware initialization failures can leave QMP/QGA ports alive while the
+    # display port is absent, which previously prevented the migration.
+    return computer._is_pid_alive(row.get("vm_pid")) and not _profile_is_current()
 
 
 def start() -> dict[str, Any]:
