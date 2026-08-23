@@ -7,6 +7,7 @@ from typing import Any
 
 from agentie.core import company_computer as computer
 from agentie.core.company_computer_files import download_guest_file, upload_workspace_file
+from agentie.core.company_computer_guest_setup import ensure_guest_runtime
 from agentie.tools.approval_tools import approval_is_granted, consume_approval, create_approval
 
 _MAX_COMMAND = 4000
@@ -91,6 +92,7 @@ def _run_as_root(command: str, timeout: int) -> dict[str, Any]:
 
 
 def _execute_command(raw: str, agent_id: str, reason: str | None, timeout: int) -> dict[str, Any]:
+    ensure_guest_runtime()
     computer.acquire_agent(agent_id)
     try:
         root_required = bool(reason and _SYSTEM_CHANGE.search(raw))
@@ -194,6 +196,7 @@ def launch_guest_app(app: str, session_id: str | None = None) -> dict[str, Any]:
     argv = _APP_ALIASES.get(key)
     if not argv:
         raise ValueError("Supported Company Computer apps are Chromium, Terminal, and File Manager.")
+    ensure_guest_runtime()
     agent_id = _agent_id(session_id)
     computer.acquire_agent(agent_id)
     try:
@@ -248,6 +251,7 @@ def route_company_computer_command(message: str, session_id: str | None = None) 
 
     match = re.match(r"^(?:copy|upload|send)\s+(.+?)\s+to\s+(?:the\s+)?(?:company\s+)?computer$", text, re.I)
     if match:
+        ensure_guest_runtime()
         item = upload_workspace_file(match.group(1).strip())
         return {
             "message": f"Copied {item['name']} into Agentie Computer.",
@@ -256,6 +260,7 @@ def route_company_computer_command(message: str, session_id: str | None = None) 
 
     match = re.match(r"^(?:copy|download|export)\s+(.+?)\s+from\s+(?:the\s+)?(?:company\s+)?computer(?:\s+as\s+([^\\/]+))?$", text, re.I)
     if match:
+        ensure_guest_runtime()
         item = download_guest_file(match.group(1).strip(), (match.group(2) or "").strip() or None)
         return {
             "message": f"Copied {item['name']} from Agentie Computer into the Agentie workspace.",
