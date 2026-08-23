@@ -1,44 +1,31 @@
 # Agentie v2
 
-Agentie is a local-first multi-agent workspace for creating persistent AI agents that can remember, delegate, collaborate, use tools, run scheduled work, browse the web, and operate a real Linux desktop.
+Agentie is a local-first multi-agent workspace for creating persistent AI employees that can remember, delegate, collaborate, use tools, run scheduled work, browse the web, and operate a persistent Linux Company Computer.
 
-The project is Python-first with a FastAPI backend and a lightweight web UI. Agentie prefers deterministic/local execution for work that does not require a large model and falls back to configured AI providers for reasoning-heavy tasks.
+The backend is Python/FastAPI with a lightweight web UI. Agentie prefers deterministic and local execution when possible and can automatically route reasoning-heavy work to a configured powerful model.
 
-## Current capabilities
+## Core product model
 
-### Persistent agents
-- Create multiple named agents with roles and purposes.
-- Persistent per-agent identity, sessions, instructions and memory scope.
-- Rename agents and change roles dynamically.
-- Pin/unpin agents from the sidebar or by command; pinned agents persist at the top and new agents remain below the pinned group.
-- Manager/worker hierarchy and delegation permissions.
-- Permanent agent deletion with private memory/chat/semantic-data purge.
-- Agent-to-agent handoffs and simultaneous team jobs.
-- Missing-agent suggestions that can create the requested specialist or route work to a similar existing agent.
+Agentie is designed as an AI company rather than a collection of isolated chats. Persistent agents can have a name, avatar, role, personality, goal, responsibilities, instructions, memory, tools, skills, permissions, project context, and relationships with other agents.
 
-### Projects / Project Brain
-- Persistent long-running projects for apps, novels, screenplays, businesses, life goals and general work.
-- Project Brain stores goals, decisions, distilled shared context, milestones, artifacts, handoffs and compact specialist summaries.
-- Worker agents receive role-scoped project briefs instead of another agent's full private chat.
-- Completed specialist output remains attached to that worker by default and is not automatically promoted into shared Project Brain knowledge; downstream sharing must be explicit.
-- Legacy worker-result knowledge is filtered from other specialists' new handoff prompts unless it was explicitly marked shared.
-- A project delegated to several agents remains one shared Project Brain and appears in every assigned agent's chat workspace.
-- Each assigned-agent project view includes that agent's delegated task, role-scoped context, work status and latest result without exposing another worker's private context.
-- Assigned-project list rows stay compact: they show task/status plus a short, Markdown-clean result title/summary instead of squeezing a whole report or raw formatting tokens into the list.
-- **Open** in a worker workspace expands a full specialist workspace with that agent's task, status, scoped project context, full persisted handoff result rendered as readable Markdown, and project artifacts when present.
-- Specialist workspaces render project context from the original scoped handoff brief that worker received, so later work by another specialist is not retroactively injected into that worker's visible context.
-- Specialist workspace selection resolves the actual selected agent name independently of sidebar role badges, so role labels cannot break the Open action.
-- The full specialist workspace reads only `Show projects for <agent>` plus that agent's own handoff history; it never fetches the global project to render recipient work.
-- The final project-manager renderer preserves `viewer_assignment`; a worker-scoped project cannot be replaced by the global project view when the user presses **Open**.
-- Project handoff tasks and results are mirrored into the receiving specialist's normal `main` chat timeline, and the selected-agent UI reads that persisted timeline back as a live `Delegated work` feed.
-- Creating an active project with an existing name reuses the existing Project Brain instead of creating another duplicate record.
-- Assigned-agent project views collapse legacy same-name duplicate entries and prefer the record containing that agent's real delegated work.
-- Projects can be viewed as native project cards rather than raw JSON.
-- Users can rename a project, change its primary goal, and manually add project context, decisions, goals and milestones.
-- `Show projects` opens a selectable project list with checkboxes and per-project Open controls.
-- `Delete project` without a project name opens a selectable deletion list.
-- Project deletion is approval-gated; selecting one or several projects creates one explicit deletion approval before Project Brain data is removed.
-- Deleting a Project Brain does not silently erase historical agent chat messages.
+Current systems include:
+
+- persistent named agents and per-agent chat/memory isolation
+- generated and user-editable agent instructions
+- learned communication preferences
+- manager / Chief-of-Staff delegation
+- agent-to-agent handoffs and group work
+- Project Brain shared project context with bounded specialist handoffs
+- background jobs, retries, approvals, routines and activity traces
+- local utilities, files, documents, research, code execution and artifacts
+- skills, MCP integrations and capability permissions
+- automatic Local / Auto / Powerful model routing
+- browser automation and Teach by Demonstration
+- a persistent shared Company Computer
+
+## Projects / Project Brain
+
+Project Brain stores durable goals, decisions, milestones, artifacts, handoffs and distilled shared context for long-running work. Specialists receive role-scoped project briefs instead of another agent's private conversation history.
 
 Useful commands include:
 
@@ -50,60 +37,34 @@ Set project Shepherd goal to Launch to ten churches
 Add to project Shepherd context: Churches need WhatsApp onboarding
 Add to project Shepherd decision: Use Supabase
 Add to project Shepherd milestone: Finish onboarding
-Delete project
 Delete project Shepherd
 ```
 
-### Agent instructions and local NPC brains
-- Generated system instructions from agent identity, role, purpose and permissions.
-- User-editable instructions with higher priority than learned defaults.
-- Conversation-based preference learning without copying full chats into prompts.
-- Learning audit with compact structured changes.
-- Role-aware local NPC responses for common conversation and role-specific workflows.
-- Local NPC job-title generation creates concise human-readable job titles without spending a provider call.
-- Local-first routing avoids provider calls for supported deterministic tasks.
+Project deletion and other irreversible operations use Agentie's approval flow.
 
-### Jobs, approvals and orchestration
-- Multi-step background jobs with progress and provider-call budgets.
-- Jobs keep their internal IDs for routing but show users human-readable NPC-generated titles in cards and job controls.
-- **Manager Autopilot** lets a manager/CEO/Chief-of-Staff-style agent turn one complex goal into a specialist chain without the user manually naming workers.
-- Manager Autopilot planning is deterministic/local: it detects the work phases and selects the best existing specialists without spending a provider call just to route the job.
-- Current Autopilot templates cover software/product work (`research → coding/CTO → verification`) and content/campaign work (`research → writing → verification`) when suitable existing specialists are available.
-- Autopilot reuses one normal persisted team job, starts one specialist stage at a time, and keeps each handoff visible in that specialist's own chat/workspace.
-- Each downstream Autopilot worker receives the original manager goal plus only the bounded result of its immediate predecessor; unrelated worker chats/results are not injected into the handoff.
-- Simple single-specialty requests continue through the existing handoff proposal/preference system rather than being unnecessarily expanded into an Autopilot chain.
-- Existing research→PDF/DOCX/XLSX/PPTX compound jobs stay on the purpose-built local job/artifact pipeline instead of being intercepted by Manager Autopilot.
-- Compound requests such as `research X, then create a PDF/DOCX` are planned as dependent steps: research completes first, then the existing local artifact generator creates the requested file without another provider call.
-- Compound-job artifacts inherit the parent job's human NPC title as the document title and requested filename, so an internal section heading such as `Executive Summary` cannot become the artifact name.
-- A research step with no usable sources is treated as failed; dependent artifact steps are blocked and no failure-message PDF/DOCX is generated.
-- Deep research retries a small set of DDGS search backends instead of depending on a single `auto` backend; if all attempts fail, the real retrieval error is preserved in the failed research step so the user can see why no sources were found.
-- Internal deep-research synthesis runs outside the owning persistent agent's normal conversation/NPC session, preventing chat preferences or local acknowledgement replies from replacing the gathered research report.
-- If web evidence was gathered successfully but the synthesis provider is quota-limited/unavailable, Deep Research keeps that work and produces a conservative local evidence summary with source IDs instead of throwing the evidence away.
-- Team-status questions such as `what's the state of that task?` are now provider-free: Agentie reports authoritative persisted queued/working/completed/failed state instead of spending one model call per worker just to paraphrase status.
-- Provider quota/rate-limit failures start a short process-local cooldown for that provider/model. Local/NPC work continues, but other agents do not immediately make repeated doomed remote calls during the cooldown window.
-- Completed/failed background jobs emit a one-time user-visible completion event through the existing local event polling system.
-- Background job ownership is preserved across agent switching: completion/file events are queued for the agent that started the job instead of being inserted into whichever agent chat happens to be open.
-- Completed/failed/partial delegated team jobs also emit a one-time completion event; retrying a failed worker resets that notification marker so the retried result can alert again.
-- Pause, resume and retry controls.
-- Team jobs and handoffs between persistent agents.
-- Persisted queued/working team handoffs are recovered after Agentie restarts; completed handoffs are not rerun.
-- Project Brain work state is synchronized with team execution (`queued` → `working` → `completed` or `failed`) so recipient project views stay truthful.
-- Collaboration avatars remain visible while a team job is active and for 60 seconds after terminal completion/failure.
-- Approval gates for consequential actions such as permanent deletion.
-- Execution traces with routing, provider/model, latency, token usage and status information.
+## Jobs, collaboration and manager autonomy
 
-### Teach by Demonstration
-- Agentie can record a browser workflow by watching actions performed once in the visible Chrome session inside Agentie Computer.
-- Teach mode is local-first: recording, storing, listing and replay planning do **not** require an AI-provider call.
-- The first version records browser navigation, button/link clicks, normal form-field changes and common keys such as Enter/Tab/Escape.
-- Recorded workflows are stored in `workspace/taught_workflows.json`; re-teaching the same named workflow replaces the old copy instead of creating duplicates.
-- Password values are never persisted. Protected fields are represented as `<secret>` and automatic replay is blocked until the workflow is redesigned so secrets are not stored.
-- Replay uses Agentie's existing Playwright/browser executor rather than a second automation engine, so existing consequential-action approvals still apply to sending, posting, paying, deleting and similar actions.
-- The browser recorder installs one page probe per Playwright page and uses idempotent DOM listeners, avoiding listener/init-script accumulation during a long teaching session.
-- Teach mode deliberately uses field labels/ARIA/placeholder/name metadata rather than the user's typed value as the field identity.
-- This first release teaches **browser workflows**. Recording arbitrary XFCE/Linux desktop gestures outside the browser is a later Computer-autonomy extension.
+Agentie supports persisted team jobs, manager-led decomposition, specialist selection, sequential or parallel delegation, bounded handoffs, failure recovery, user-visible status and completion events.
 
-Useful commands:
+The manager layer is local-first where possible: routing and task selection do not need to spend a provider call simply to decide which existing employee should handle a job.
+
+## Memory
+
+Agentie has persistent user and agent memory, semantic retrieval, explicit `Remember that...` commands, learned preferences, and per-agent isolation. Shared project/company knowledge is promoted deliberately rather than silently copying every employee's private chat into every other employee's context.
+
+## Skills, plugins and MCP
+
+Agentie includes a real skill registry and MCP client. Capabilities can be allowed globally, restricted per agent, and still require a separate action-level approval for consequential behavior.
+
+Examples include Filesystem, Playwright, GitHub, Memory, Fetch, Time, Git, Google Workspace and other MCP-compatible services when their actual runtimes and credentials are configured.
+
+## Teach by Demonstration
+
+Agentie can record browser workflows performed in the visible Chromium session inside the Company Computer, turn the recorded actions into reusable workflow skills, and replay them through the same browser executor.
+
+Passwords are not persisted in taught workflows. Sensitive steps remain user-controlled. Arbitrary non-browser desktop workflow teaching is a later extension; current non-browser desktop control is an execution layer rather than a recorder.
+
+Useful commands include:
 
 ```text
 Teach Agentie: publish weekly update
@@ -115,201 +76,223 @@ Run workflow publish weekly update
 Delete workflow publish weekly update
 ```
 
-### Memory
-- Persistent user and agent memory.
-- Explicit `Remember that...` commands.
-- Semantic memory search/shards.
-- Per-agent isolation so private agent conversations are not silently shared.
-- Learned communication/task preferences become part of an agent's evolving instruction profile.
+## Agentie Company Computer
 
-### Reminders and routines
-- Timers and one-time reminders.
-- Modify active timers using remaining time.
-- Recurring routines including weekday schedules.
-- Background routine worker for scheduled prompts/tasks.
+Agentie's Computer is one persistent user-scoped Linux computer shared by the user's AI employees. It is implemented with **QEMU**, not a host desktop wrapper.
 
-### Native/local tools
-Agentie includes local tools and routing for capabilities such as:
-- Local date/time
-- Calculator and unit conversion
-- Timers/reminders
-- Notes and scratchpad
-- Memory
-- Agent/role management
-- Routines
-- File/archive operations
-- Research and browser workflows
-- Code execution and workspace operations
-- Professional DOCX, PDF, XLSX and PPTX artifacts that expose both a human document name and the downloadable filename.
-- Word-export references such as `make docs file with this` are supported alongside `docx`, `doc file`, `word file` and `word document` wording.
-- If exactly one eligible result exists in the active agent chat, a referenced artifact request creates the file directly.
-- If several eligible research/results exist, Agentie returns a native result picker with a small single-select checkbox list so the user chooses the exact source instead of Agentie guessing.
-- Result choices are isolated to the active agent/session; selecting a result passes a stable internal fingerprint back to the normal artifact generator.
-- Error/fallback replies such as unresolved local-file messages and failed research messages are never eligible artifact sources.
-- Creating the same artifact format from the same source result again returns the already-created file card instead of generating a duplicate file.
+### Runtime
 
-### Skills, plugins and MCP
-- Real skill registry and role/skill routing infrastructure.
-- Real MCP registration, discovery and tool execution through the MCP client.
-- Global capability grants: approving a skill/MCP for all agents makes it available to existing and future agents by default.
-- Per-agent overrides: an individual agent can still be explicitly blocked from a globally allowed capability.
-- Consequential actions remain separately approval-gated even when the underlying skill/MCP is globally allowed.
-- Connected MCP examples include Filesystem, Playwright, GitHub, Memory, Fetch, Time and Git when their real runtimes/dependencies are available.
-- `Last30Days` now defaults to an Agentie-native Python 3.11+ implementation that searches separate recent-source lanes for Reddit, X, YouTube, Hacker News, GitHub and the wider web.
-- Native Last30Days uses the exact gathered evidence for synthesis and citations, and falls back to a deterministic evidence summary if the configured AI provider is unavailable.
-- The original `mvanhorn/last30days-skill` remains available as an optional upstream engine with its own Git/Python 3.12+ requirements.
+- QEMU virtual machine
+- persistent `QCOW2` disk at `workspace/company_computer/company-computer.qcow2`
+- minimal Debian cloud guest
+- Openbox lightweight window manager
+- Chromium with a persistent profile
+- PCManFM file manager
+- xterm terminal
+- QEMU Guest Agent for controlled guest operations and file transfer
+- QMP for VM lifecycle/input control
+- QEMU's native VNC WebSocket display with local noVNC assets for the existing embedded Computer card
 
-Some service integrations still require credentials, provider setup or additional reliability work before they should be considered complete product integrations.
+There is no WSL, XFCE, KasmVNC or port-8444 fallback in the Company Computer runtime.
 
-### Browser and research
-- Browser automation infrastructure.
-- Website screenshots and interaction workflows.
-- Website monitoring infrastructure.
-- Deep research and citation verification components.
-- Local Teach-by-Demonstration workflow recording/replay on the visible browser.
-- Browser/Computer fallback is an active development area.
+### Hardware acceleration
 
-### Agentie's Computer
-Agentie can expose a real Ubuntu/XFCE graphical desktop running under WSL and KasmVNC.
+Agentie selects the native accelerator for the host:
 
-Current Computer stack includes:
-- Ubuntu/WSL desktop
-- XFCE graphical environment
-- KasmVNC access
-- Embedded Computer card
-- Fullscreen Computer view
-- Mouse and keyboard interaction
-- Resize/reconnection handling
-- Window controls
-- Browser, terminal and files inside the desktop
+| Host | Accelerator |
+| --- | --- |
+| Windows | WHPX / Windows Hypervisor Platform |
+| macOS | HVF |
+| Linux | KVM |
 
-The Computer is intended to become an execution environment agents can use when normal tools/plugins are insufficient. Autonomous visual operation and automatic fallback routing are still being hardened.
+Agentie does **not** silently fall back to slow software emulation. TCG compatibility mode is available only when the user explicitly enables `AGENTIE_QEMU_ALLOW_TCG=1`.
 
-### Web UI
-The current UI includes:
-- Persistent agent sidebar and agent switching
-- Visible persistent pin/unpin controls in the agent sidebar
-- Activity status dots while preserving the pinned-agent section above unpinned agents
-- Agent chat
-- Agent replies reuse that agent's existing round sidebar orb beside the response instead of rendering anonymous assistant text.
-- Reply orbs visibly animate and show `Working` / `Queued` while a background job is active; terminal updates stop the animation for that job.
-- When the selected specialist is still working or queued on delegated/team work, the chat shows one live `<agent> is working…` / `<agent> is queued…` row with that same orb so background work is not silent.
-- If one agent finishes a background job while another agent is selected, the current chat gets only a small completion notice; the completion response and generated file remain queued for the owning agent's chat and appear when that agent is opened.
-- Selected-agent `Delegated work` feed that polls persisted handoff tasks/results from that agent's own normal chat timeline
-- Compact assigned-project previews plus an expandable full specialist project workspace
-- Safe Markdown rendering for specialist results, including headings, lists, simple tables and fenced code blocks
-- Native result-source picker cards for ambiguous DOCX/PDF/XLSX/PPTX creation requests
-- Teach-mode status and learned-workflow summaries reuse existing note/browser-action cards rather than introducing a duplicate rendering system.
-- Specialist project preview observers are idempotent and animation-frame debounced so rendering a project result cannot lock the browser in a self-triggering DOM mutation loop.
-- Native agent profile cards instead of raw internal profile JSON
-- Agent search/create controls
-- Agent information/instructions editing
-- Native cards for jobs and instructions
-- Native Project Brain management cards and selectable project lists
-- Approval UI
-- Attachments
-- Computer window/card
-- Collapsible workspace panels
-- Routines panel
-- Skills/MCP catalog with global defaults and per-agent restrictions
-- Native Last30Days result cards with source coverage and clickable evidence
+If hardware virtualization is unavailable, the Computer surfaces an actionable error instead of pretending that it started successfully.
+
+### Resource scaling
+
+The Company Computer sizes itself from host RAM/CPU. The practical low-end Chromium profile is approximately 1 GB RAM and 1 vCPU. More capable hosts receive a larger VM profile. The shared VM can suspend after inactivity so its CPU/RAM footprint is released while the persistent disk remains intact.
+
+Default idle suspension is controlled by:
+
+```text
+AGENTIE_COMPUTER_IDLE_SECONDS=600
+```
+
+### Persistence
+
+The same QCOW2 disk preserves:
+
+- Chromium profile, cookies and authenticated browser state
+- browser tabs/session restoration where Chromium supports it
+- downloaded files
+- files created by agents or the user
+- installed guest applications
+- desktop and application settings
+- working directories and other guest filesystem state
+
+Stopping Agentie, restarting the host, or suspending/resuming the Company Computer does not intentionally replace that disk.
+
+### Shared control and human takeover
+
+The Company Computer has one authoritative controller at a time. Its persisted state machine includes:
+
+```text
+STOPPED
+STARTING
+READY
+AGENT_CONTROL
+USER_REQUIRED
+USER_CONTROL
+IDLE
+SUSPENDED
+ERROR
+```
+
+An agent can hold control, explicitly hand the computer to another agent, or pause for the user. Login credentials, password fields, CAPTCHA, passkeys, security keys, 2FA and identity-verification pages trigger user takeover.
+
+Human takeover keeps the **same VM, same Chromium profile, same tab and same session** alive. After the user finishes the required action, **Continue Agent** gives control back to the paused employee.
+
+### Browser automation
+
+Playwright connects to Chromium **inside the QEMU guest** over a local forwarded CDP port. Agentie does not launch a separate hidden host browser as a fallback for Company Computer work.
+
+Consequential browser actions continue through the existing approval system.
+
+### Guest Terminal and applications
+
+Commands such as:
+
+```text
+Run pwd in the terminal
+Computer terminal: ls -la
+Open terminal in the computer
+Open file manager in the computer
+Open Chromium in the computer
+Install inkscape on the computer
+```
+
+execute against the real persistent guest. Ordinary commands run as the unprivileged `agentie` user. Package installation, persistent system changes, destructive commands and detected external-write commands require Agentie's approval before execution.
+
+An explicit legacy `Desktop control: terminal ...` path remains a deliberately restricted host-workspace inspection helper; it does not expose an arbitrary host shell. Normal agent terminal work routes to the Company Computer guest.
+
+### Non-browser desktop control
+
+For applications outside Chromium, Agentie has a separate guest-display input layer. It can perform controlled mouse, keyboard and scrolling operations against the actual X display using the guest automation component rather than creating a fake desktop or a second browser.
+
+Examples:
+
+```text
+Company Computer control: click at 420, 240
+Company Computer control: type focused: hello world
+Company Computer control: press Enter
+Company Computer control: scroll down 4
+```
+
+### Host ↔ guest file transfer
+
+Agentie transfers files through the QEMU Guest Agent. Transfers are confined to the Agentie host workspace and `/home/agentie` inside the guest, with a 100 MB per-file limit.
+
+Examples:
+
+```text
+Copy report.pdf to the computer
+Download /home/agentie/Agentie Exports/result.txt from the computer
+```
+
+Default guest transfer folders are:
+
+```text
+/home/agentie/Agentie Inbox
+/home/agentie/Agentie Exports
+```
+
+## Browser and research
+
+Agentie includes browser interaction, screenshots, monitoring, deep research, citation verification, teachable browser workflows, and Company Computer fallback when a direct integration is not available.
+
+## Local-first model routing
+
+Agentie should not spend a remote model call for work that can be handled safely and deterministically on-device.
+
+The intended routing order is broadly:
+
+1. parse native/local commands
+2. use local agent/NPC behavior where appropriate
+3. use skills, plugins and tools
+4. reuse deterministic taught workflows
+5. call a configured powerful model when genuine reasoning/generation is needed
+6. use Browser / Company Computer execution when direct integrations are unavailable or insufficient
+
+Routing modes are:
+
+- `Local` — never silently falls back to cloud
+- `Auto` — prefers local execution/model and escalates complex work automatically
+- `Powerful` — explicitly uses the configured cloud/powerful model
+
+## Approval model
+
+Agentie uses layered permissions:
+
+1. global capability policy
+2. per-agent capability override
+3. action-level approval for consequential operations
+
+The Company Computer extends the same model rather than creating a separate security system. Sending/posting, destructive operations, persistent system changes and similar actions can therefore pause on the standard Agentie approval card.
+
+## Web UI
+
+The UI includes persistent agent switching, avatars/activity state, group chats, agent profiles/instructions, Project Brain views, job cards, approvals, attachments, routines, skills/plugins, model routing and the embedded Computer card.
+
+The Computer card preserves the existing window experience: embedded view, minimize, fullscreen/maximize, stop, mouse/keyboard interaction and user takeover controls.
 
 ## Architecture
 
 ```text
 agentie-v2/
 ├── agentie/
-│   ├── agents/              # assistant definitions
-│   ├── core/                # agents, memory, jobs, routing, browser, Computer, skills
-│   ├── models/              # AI provider configuration
-│   └── tools/               # local/native tools
-├── frontend/                # Agentie web UI
-├── tests/                   # regression suite
-├── workspace/               # local agent workspace/runtime data
-├── main.py                  # FastAPI application
-├── pyproject.toml
-└── README.md
+│   ├── agents/
+│   ├── core/
+│   │   ├── company_computer.py
+│   │   ├── company_computer_commands.py
+│   │   ├── company_computer_desktop.py
+│   │   ├── company_computer_files.py
+│   │   ├── company_computer_idle.py
+│   │   ├── browser_automation.py
+│   │   ├── browser_monitor.py
+│   │   ├── agent_registry.py
+│   │   ├── agent_prompt.py
+│   │   ├── memory_store.py
+│   │   ├── project_brain.py
+│   │   ├── team_orchestrator.py
+│   │   ├── manager_autopilot.py
+│   │   └── ...
+│   ├── models/
+│   └── tools/
+├── frontend/
+├── tests/
+├── workspace/
+├── main.py
+└── pyproject.toml
 ```
-
-Important core modules include `agent_registry.py`, `agent_prompt.py`, `npc_brain.py`, `job_engine.py`, `team_orchestrator.py`, `manager_autopilot.py`, `project_brain.py`, `result_memory.py`, `memory_store.py`, `workflow_teaching.py`, `workflow_browser_runtime.py`, `advanced_local_router.py`, `agent_access.py`, `skill_registry.py`, `native_last30days.py`, `external_skill_runtime.py`, `capability_router.py`, `browser_automation.py`, and `computer_session.py`.
-
-## Local-first execution philosophy
-
-Agentie should not call a paid/remote model for work that can be handled safely and deterministically on-device.
-
-The intended routing order is broadly:
-
-1. Parse obvious native/local commands.
-2. Use agent NPC/local intelligence for supported conversation and role behavior.
-3. Use skills/plugins/tools when a capability is available.
-4. Reuse deterministic taught workflows for repeatable browser work.
-5. Use a configured large model when genuine reasoning/generation is needed.
-6. Use Browser/Computer execution when direct integrations are unavailable or insufficient.
-
-Provider failure should therefore affect only work that genuinely requires that provider, not timers, local conversation, status checks, taught-workflow replay, job controls, memory commands, or other supported local operations.
-
-## API/provider efficiency
-
-Agentie treats provider calls as a limited resource:
-
-- Manager Autopilot planning and specialist selection are local.
-- Team/job status checks are local and do not ask each worker model to restate backend state.
-- Artifact generation steps use local generators after their source result exists.
-- Teach-by-Demonstration recording and replay planning are local.
-- A real quota/rate-limit response starts a short provider/model cooldown so other background agents fail fast locally instead of repeatedly hitting the same exhausted API.
-- Deep Research keeps successfully gathered web evidence and can return a deterministic evidence summary when synthesis is unavailable.
-- Observability traces continue to expose provider-call/token use so expensive routes can be identified and reduced over time.
-
-## Capability permission model
-
-Agentie uses a layered permission model:
-
-1. Global capability policy - the normal default after a user chooses **Always allow for all agents**.
-2. Per-agent override - an agent can be explicitly allowed or blocked regardless of the global default.
-3. Action-level approval - destructive, sending, posting or otherwise consequential tool actions can still require approval.
-
-This means users do not need to approve the same safe tool separately for every agent, while sensitive agents can still be restricted.
-
-## Last30Days
-
-Agentie now includes a native Last30Days-compatible research engine that works on Python 3.11+ and is the default for normal `Last30Days ...` commands.
-
-The native engine searches recent-source lanes for Reddit, X, YouTube, Hacker News, GitHub and the general web, de-duplicates evidence, synthesizes only from the gathered evidence, cites evidence IDs, and returns a dedicated research card. If the configured AI provider is unavailable, the gathered evidence is still returned as a deterministic summary rather than failing the whole skill.
-
-Useful commands:
-
-```text
-Last30Days status
-Last30Days AI coding agents
-Last30Days what users want in AI assistants
-```
-
-The original upstream engine is still optional:
-
-```text
-Install Last30Days skill
-Update Last30Days skill
-```
-
-That optional upstream runtime is installed into `workspace/external_skills/last30days-skill` and currently requires Python 3.12+. Agentie's native implementation does not require that runtime.
 
 ## Run locally
 
-Python 3.10+ is required. Python 3.11 is currently used during development. Some optional external skills may require newer runtimes independently.
+Python 3.10+ is required. Python 3.11 is the primary development runtime.
 
 ```powershell
 cd C:\Users\user\agentie-v2
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
-pip install -e .
+python -m pip install -e .
 python main.py
 ```
 
-Create a `.env` from `.env.example` and configure the provider settings required by your environment. Never commit real API keys or secrets.
+Create `.env` from `.env.example` and configure the model/provider settings you want. Never commit real API keys or secrets.
+
+On first Company Computer use, Agentie locates or prepares QEMU and the guest image/runtime. The host must support the appropriate virtualization accelerator (WHPX, HVF or KVM).
 
 ## Tests
-
-Agentie uses regression tests heavily because new capabilities must not break existing agents, memory, Computer, jobs or routing.
 
 Run the complete regression suite after every meaningful change:
 
@@ -317,52 +300,42 @@ Run the complete regression suite after every meaningful change:
 python -m unittest discover -s tests -p "test_*regression.py" -v
 ```
 
-For a new feature, run its targeted regression file first, then run the related subsystem tests, then the full suite, and finally perform the manual UI/workflow test in Agentie.
+Company Computer regressions cover accelerator selection, explicit compatibility mode, QCOW2 persistence, resource sizing, lifecycle and ownership, takeover, browser integration, idle suspension, file transfer, guest commands, approval gating, non-browser desktop input and frontend integration.
+
+A GitHub Actions regression workflow also runs the same suite on pushes to `main11` when repository Actions are enabled.
 
 ## Development rules
 
 When extending Agentie:
 
-1. Inspect existing functionality and the relevant repo architecture before adding new code.
-2. Do not duplicate an existing subsystem, state store, router, permission model or UI implementation.
-3. Prefer the smallest safe patch over broad rewrites and connect new behavior to the existing source of truth.
-4. Preserve backend/API contracts during UI-only changes.
-5. Keep local operations local where possible.
-6. Require approvals for consequential/irreversible operations.
-7. Preserve per-agent memory and project-context isolation.
-8. Add regression tests for every new feature or meaningful bug fix.
-9. Run targeted tests, related subsystem tests and the full regression suite before considering a feature complete.
-10. Keep this README updated as major capabilities are added.
+1. inspect the existing implementation before adding another subsystem
+2. do not duplicate state stores, routers, permission models or UI unnecessarily
+3. preserve working functionality and backend contracts
+4. keep local operations local when possible
+5. require approval for consequential or irreversible operations
+6. preserve agent-memory and project-context isolation
+7. do not expose fake tools, placeholder integrations or simulated runtime capabilities
+8. add regression tests for every meaningful feature/change
+9. run targeted tests, related subsystem tests and the full regression suite
+10. keep major runtime documentation current
 
-## Current development roadmap
+## Current roadmap
 
-### 1. Teach by Demonstration - active
-Harden browser workflow recording/replay, parameterized inputs, interruption/recovery and later promote stable demonstrated workflows into installable/reusable skills. Arbitrary non-browser desktop demonstrations remain later Computer work.
+### Durable execution
+Continue moving long-running jobs/routines from process-local workers toward durable restart-safe execution.
 
-### 2. Manager Autopilot
-Harden end-to-end manager planning, specialist selection, failure recovery and eventually manager-level final synthesis while keeping specialist context bounded and provider use economical.
+### Company Computer autonomy
+Harden visual observe-act-verify behavior, resilient application interaction, desktop teaching, session recovery and multi-step user/agent handoff on top of the QEMU Company Computer.
 
-### 3. Skills and plugin permissions
-Continue hardening real external skill/MCP discovery, credentials, health checks and permission UX. Global defaults + per-agent restrictions are now implemented, and Last30Days now has a native Python 3.11+ runtime.
+### Approval policy engine
+Expand action policies from one-time approval into richer per-agent/tool/action rules while preserving explicit approval for sensitive operations.
 
-### 4. Background/routine reliability
-Harden scheduled work, restart recovery, missed-run behavior, job continuation and failure recovery.
+### Integrations
+Continue hardening real end-user connections for services such as GitHub, Gmail, Calendar, Slack, Notion and messaging platforms.
 
-### 5. Voice
-Turn the microphone UI into a complete speech-input workflow and later support richer voice interaction.
-
-### 6. Integration hardening
-Finish end-user connection and reliability flows for services such as GitHub, Gmail, Calendar, Slack and Notion.
-
-### 7. Authentication/accounts
-Add production user/account isolation if Agentie moves from a local personal workspace into a multi-user product.
-
-### 8. Final UI/UX polish
-Once the underlying capabilities are stable, finish the cohesive desktop/web experience around those stable contracts.
-
-### 9. Computer reliability and autonomy - later
-Return to WSL/KasmVNC reliability, Browser/Computer fallback, arbitrary desktop demonstration capture, observe-act-verify autonomy and visual task execution after the other core systems are stable.
+### Authentication/accounts
+Add production account isolation if Agentie evolves from a local personal workspace into a hosted multi-user product.
 
 ## Status
 
-Agentie v2 is under active development. It already has a substantial working agent runtime; the current focus is making that runtime more autonomous, local-first, provider-efficient, reliable and capable before treating the UI as final.
+Agentie v2 is under active development. The Company Computer is designed as a persistent, shared QEMU execution environment while Agentie's broader runtime remains local-first, provider-efficient and approval-aware.
