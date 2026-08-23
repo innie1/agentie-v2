@@ -46,12 +46,13 @@ class GroupChatAgentAvatarRegressionTests(unittest.TestCase):
         for marker in (
             "function scrollHost(){const shell=document.querySelector('.chat-shell')",
             "getComputedStyle(shell)",
-            "shell.scrollHeight>shell.clientHeight+1",
+            "if(/auto|scroll|overlay/.test(overflow))return shell",
             "document.scrollingElement||document.documentElement||document.body",
             "window.__agentieGroupScrollRoot=scrollHost",
         ):
             self.assertIn(marker, runtime)
         self.assertIn("window.__agentieGroupScrollRoot?.()", guard)
+        self.assertIn("if(/auto|scroll|overlay/.test(overflow))return shell", guard)
 
 
 if __name__ == "__main__":
