@@ -36,11 +36,12 @@ class GroupChatOfflineRetentionRegressionTests(unittest.TestCase):
         self.assertIn("/platform/agent-chats/${encodeURIComponent(id)}", src)
         self.assertIn("saveThread(data)", src)
 
-    def test_cache_loads_before_single_visible_group_controller_and_create_menu_loads_last(self):
-        bundle='_frontend_bundle("platform_next4.js", "platform_chat_focus_guard.js", "group_chat_markdown.js", "model_router.js", "group_chat_offline_cache.js", "navigation_connect.js", "group_chat_instant_open.js", "create_menu.js")'
+    def test_cache_loads_before_single_visible_group_controller_and_only_create_loader_is_eager(self):
+        bundle='_frontend_bundle("platform_next4.js", "platform_chat_focus_guard.js", "group_chat_markdown.js", "model_router.js", "group_chat_offline_cache.js", "navigation_connect.js", "group_chat_instant_open.js", "create_menu_loader.js")'
         self.assertIn(bundle, self.api)
         self.assertLess(bundle.index('group_chat_offline_cache.js'), bundle.index('navigation_connect.js'))
-        self.assertLess(bundle.index('group_chat_instant_open.js'), bundle.index('create_menu.js'))
+        self.assertLess(bundle.index('group_chat_instant_open.js'), bundle.index('create_menu_loader.js'))
+        self.assertNotIn('"group_chat_instant_open.js", "create_menu.js")', self.api)
         self.assertIn('@router.get("/platform-group-chat-offline-cache.js")', self.api)
 
     def test_instant_open_uses_real_chat_scroll_container(self):
