@@ -15,12 +15,23 @@ def agent_from_session(session_id):
     m=re.match(r"^agent:(agt_[a-z0-9]+):",str(session_id or ""),re.I);return get_agent(m.group(1)) if m else None
 def _identity_snapshot(agent):return {"name":agent.get("name"),"role":str(agent.get("role") or "general"),"purpose":str(agent.get("purpose") or "").strip(),"personality":str(agent.get("personality") or "").strip(),"goal":str(agent.get("goal") or "").strip(),"responsibilities":list(agent.get("responsibilities") or []),"company_identity":str(agent.get("company_identity") or "").strip()}
 def _base_profile(agent):return {"agent_id":agent["id"],**_identity_snapshot(agent),"manual_instructions":"","communication":{},"task_preferences":{},"durable_context":[],"learned_rules":[],"learning_candidates":{},"learning_audit":[],"updated_at":_now()}
+def _looks_like_generated_builder_text(value):
+    text=str(value or "").strip();low=text.casefold()
+    if not text:return False
+    generated_signature=("do not assume a predefined profession or department" in low and "never claim an action succeeded unless" in low)
+    older_signature=(text.startswith("Job ownership:") or text.startswith("Configured work:")) and "work from the user's configured goal" in low
+    return bool(generated_signature or older_signature)
 def get_instruction_profile(agent):
     data=_load();profiles=data.setdefault("agents",{});profile=profiles.get(agent["id"])
     if not isinstance(profile,dict):profile=_base_profile(agent);profiles[agent["id"]]=profile;_save(data)
     changed=False
     for key,default in (("manual_instructions",""),("communication",{}),("task_preferences",{}),("durable_context",[]),("learned_rules",[]),("learning_candidates",{}),("learning_audit",[])):
         if key not in profile:profile[key]=default;changed=True
+    # A previous creator version stored Agentie's generated builder boilerplate in
+    # the user-authored field. Clear only that recognizable generated text; real
+    # user instructions are preserved untouched.
+    if _looks_like_generated_builder_text(profile.get("manual_instructions")):
+        profile["manual_instructions"]="";changed=True
     for key,value in _identity_snapshot(agent).items():
         if profile.get(key)!=value:profile[key]=value;changed=True
     if changed:profile["updated_at"]=_now();_save(data)
@@ -94,34 +105,25 @@ def learn_from_user_message(agent,message):
         profile["updated_at"]=_now();profiles[agent["id"]]=profile;_save(data)
     return changes
 def build_agent_instructions(agent):
-    p=get_instruction_profile(agent);name=str(agent.get("name") or "Agent");role=str(agent.get("role") or "general");purpose=str(agent.get("purpose") or "").strip();personality=str(agent.get("personality") or "").strip();goal=str(agent.get("goal") or "").strip();company_identity=str(agent.get("company_identity") or "").strip();responsibilities=[str(x).strip() for x in (agent.get("responsibilities") or []) if str(x).strip()];permissions=agent.get("permissions") or {};skills=agent.get("skills") or []
-    lines=[f"You are {name}, a persistent Agentie AI employee.",f"Your role is {role}.","Keep your identity, private memory, and task context scoped to this agent. Do not pretend to remember another agent's private conversations."]
-    if permissions.get("delegate"):lines.append("If a task clearly belongs to another existing agent, you may delegate a bounded handoff when that is the better way to complete the user's goal.")
-    else:lines.append("If a task clearly belongs to another existing agent, identify or recommend the better owner when useful, but do not independently delegate or hand off work because this agent does not have delegation permission.")
+    p=get_instruction_profile(agent);name=str(agent.get("name") or "Agent");role=str(agent.get("role") or "general");personality=str(agent.get("personality") or "").strip();goal=str(agent.get("goal") or "").strip();company_identity=str(agent.get("company_identity") or "").strip();responsibilities=[str(x).strip() for x in (agent.get("responsibilities") or []) if str(x).strip()];permissions=agent.get("permissions") or {}
+    lines=[f"You are {name}, a persistent Agentie AI employee.",f"Role: {role}."]
+    if goal:lines.append(f"Goal: {goal}.")
+    if personality:lines.append(f"Working personality: {personality}.")
+    if responsibilities:lines.append("Responsibilities:\n- "+"\n- ".join(responsibilities[:8]))
     if company_identity:lines.append(f"Company identity: {company_identity}. When communicating externally, identify yourself consistently as {name} from {company_identity} unless the user explicitly instructs otherwise.")
-    if personality:lines.append(f"Personality and working style: {personality}.")
-    if purpose:lines.append(f"Primary purpose: {purpose}.")
-    if goal:lines.append(f"Primary goal: {goal}.")
-    if responsibilities:lines.append("Core responsibilities:\n- "+"\n- ".join(responsibilities))
-    lines.append("Act like a capable employee with professional judgment, not a passive chatbot. When useful, make a recommendation, flag meaningful risks, and respectfully disagree when the user's proposed approach conflicts with the evidence, your role, or the stated goal.")
-    lines.append("For advice, strategy, prioritization, or choice questions, keep four things distinct: FACTS are supported by known context or verified evidence; OPINIONS are your role-based judgment; RECOMMENDATIONS are the action or option you advise; RISKS/UNCERTAINTY are important unknowns, assumptions, tradeoffs, or failure modes.")
-    lines.append("Never present an estimate, assumption, prediction, or opinion as a fact. If a recommendation depends on current or externally verifiable information, use an available tool/MCP/research capability when appropriate instead of inventing certainty; otherwise state what still needs verification.")
-    lines.append("Do not agree merely to be agreeable. If you recommend a different path, say so briefly, explain the strongest reason, and give the better alternative. Do not be argumentative and do not manufacture objections when the user's plan is sound.")
-    lines.append("A recommendation is not authorization. Sending, publishing, deleting, paying, spending, purchasing, transferring, hiring/firing, committing/pushing/merging, or another consequential action still requires the normal Agentie permission/approval path before execution. You may advise on the action without executing it.")
-    if permissions.get("delegate"):
-        lines.append("You are allowed to coordinate and delegate work to other Agentie agents.")
-        lines.append("As a manager, prioritize work by expected goal impact, urgency, dependencies, reversibility, and risk. Challenge low-value or poorly sequenced work, identify missing capabilities, and recommend another specialist only when the existing team does not already cover that capability.")
-    if skills:lines.append("Assigned skills: "+", ".join(map(str,skills))+".")
+    lines.append("Keep private memory and task context scoped to this agent. Use professional judgment, make useful recommendations, and surface meaningful uncertainty or risks instead of pretending certainty.")
+    if permissions.get("delegate"):lines.append("You may delegate bounded work to another Agentie agent when that agent clearly owns the work better.")
+    else:lines.append("If another agent clearly owns a task better, recommend the better owner rather than pretending this role owns it.")
     comm=p.get("communication") or {};tasks=p.get("task_preferences") or {}
     if comm.get("default_length")=="concise":lines.append("Default conversational replies should be concise unless the task requires depth.")
-    if tasks.get("reports")=="detailed":lines.append("For reports, research, analysis, and formal breakdowns, be detailed even though ordinary replies are concise.")
+    if tasks.get("reports")=="detailed":lines.append("Reports, research and analysis should be detailed when needed.")
     if comm.get("format")=="bullets_when_useful":lines.append("Use bullet points when they improve clarity.")
     elif comm.get("format")=="prose":lines.append("Prefer cohesive prose over list-heavy formatting.")
     if comm.get("tone"):lines.append(f"Preferred communication tone: {comm['tone']}.")
-    if tasks.get("implementation_output")=="copyable":lines.append("When giving implementation prompts, commands, or code, make them easy to copy and paste.")
+    if tasks.get("implementation_output")=="copyable":lines.append("Implementation prompts, commands and code should be easy to copy and paste.")
     rules=[str(x).strip() for x in p.get("learned_rules",[]) if str(x).strip()]
-    if rules:lines.append("Learned durable user preferences:\n- "+"\n- ".join(rules[-12:]))
+    if rules:lines.append("Learned durable preferences:\n- "+"\n- ".join(rules[-12:]))
     manual=str(p.get("manual_instructions") or "").strip()
-    if manual:lines.append("USER-EDITED AGENT INSTRUCTIONS (higher priority than automatically learned preferences):\n"+manual)
-    lines.append("The user's current explicit request wins over defaults. User-edited agent instructions outrank automatically learned preferences.")
+    if manual:lines.append("User instructions:\n"+manual)
+    lines.append("The user's current explicit request wins over defaults. User-authored instructions outrank automatically learned preferences.")
     return "\n".join(lines)
