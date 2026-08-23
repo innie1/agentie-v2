@@ -38,6 +38,36 @@ async def _json(request: Request) -> dict[str, Any]:
     return value
 
 
+def _default_group_job_metadata(thread: dict[str, Any], message: str) -> dict[str, Any] | None:
+    """Address an unmentioned user message to every participant in the group.
+
+    Explicit @mentions keep the existing targeted behavior in agent_threads.
+    This only fills the natural group-chat case where the user simply types a
+    message into a group and reasonably expects the group members to answer.
+    """
+    if agent_threads._mentioned_agents(thread, message):
+        return None
+    agents = []
+    for agent_id in thread.get("participant_ids") or []:
+        agent = agent_threads.get_agent(str(agent_id))
+        if agent and all(existing["id"] != agent["id"] for existing in agents):
+            agents.append(agent)
+    if not agents:
+        return None
+    task = agent_threads._task_without_mentions(message, agents)
+    mode = agent_threads._interaction_mode(task)
+    job = agent_threads.create_team_job(task, agents, requested_by="user", interaction_mode=mode)
+    agent_threads.start_team_job(job["id"])
+    return {
+        "team_job_id": job["id"],
+        "to_agent_ids": [agent["id"] for agent in agents],
+        "mentions": [agent["name"] for agent in agents],
+        "materialize_replies": True,
+        "interaction_mode": mode,
+        "source": "group_chat_default_all",
+    }
+
+
 @router.on_event("startup")
 async def _start_google_event_bridge() -> None:
     start_google_workspace_event_bridge()
@@ -147,12 +177,15 @@ async def platform_agent_chat_message(thread_id: str, request: Request):
     if not message:
         raise HTTPException(400, "Message is required.")
     target = str(data.get("target_agent_id") or "").strip()
+    metadata = None
     if target:
         agent = next((x for x in available_agents() if str(x["id"]) == target), None)
         if not agent or target not in thread.get("participant_ids", []):
             raise HTTPException(400, "Target agent is not a participant in this chat.")
         message = f"@{agent['name']} {message}"
-    agent_threads.post_message(thread["id"], "user", None, "User", message)
+    else:
+        metadata = _default_group_job_metadata(thread, message)
+    agent_threads.post_message(thread["id"], "user", None, "User", message, metadata)
     return connected_thread(agent_threads.get_thread(thread["id"]) or thread)
 
 
