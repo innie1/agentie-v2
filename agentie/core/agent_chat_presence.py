@@ -114,6 +114,7 @@ def list_connected_threads() -> list[dict[str, Any]]:
         out.append({
             "id": card.get("id"),
             "name": card.get("name"),
+            "participant_ids": card.get("participant_ids") or [],
             "participants": card.get("participants") or [],
             "owner_agent_id": card.get("owner_agent_id"),
             "owner_agent_name": card.get("owner_agent_name"),
