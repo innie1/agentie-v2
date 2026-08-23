@@ -104,8 +104,14 @@ def learn_from_user_message(agent,message):
     if changes or profile.get("learning_candidates"):
         profile["updated_at"]=_now();profiles[agent["id"]]=profile;_save(data)
     return changes
+def _prompt_goal(goal):
+    """Keep the runtime prompt concise when an old fallback goal embedded raw purpose text."""
+    value=str(goal or "").strip()
+    if value.startswith("Own and complete the work described by the user for:") and ". Current focus:" in value:
+        return value.split(". Current focus:",1)[0].strip()
+    return value
 def build_agent_instructions(agent):
-    p=get_instruction_profile(agent);name=str(agent.get("name") or "Agent");role=str(agent.get("role") or "general");personality=str(agent.get("personality") or "").strip();goal=str(agent.get("goal") or "").strip();company_identity=str(agent.get("company_identity") or "").strip();responsibilities=[str(x).strip() for x in (agent.get("responsibilities") or []) if str(x).strip()];permissions=agent.get("permissions") or {}
+    p=get_instruction_profile(agent);name=str(agent.get("name") or "Agent");role=str(agent.get("role") or "general");personality=str(agent.get("personality") or "").strip();goal=_prompt_goal(agent.get("goal"));company_identity=str(agent.get("company_identity") or "").strip();responsibilities=[str(x).strip() for x in (agent.get("responsibilities") or []) if str(x).strip()];permissions=agent.get("permissions") or {}
     lines=[f"You are {name}, a persistent Agentie AI employee.",f"Role: {role}."]
     if goal:lines.append(f"Goal: {goal}.")
     if personality:lines.append(f"Working personality: {personality}.")
