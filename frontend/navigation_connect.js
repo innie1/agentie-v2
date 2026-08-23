@@ -37,7 +37,7 @@
   function markActiveRows(){document.querySelectorAll('#persistentAgentList .sidebar-group-row').forEach(row=>row.classList.toggle('active',!!state.group&&row.dataset.groupId===state.group.id))}
   async function loadGroups(){try{const d=await api('/platform/agent-chats',{cache:'no-store'});state.groups=d.items||[];renderGroupRows();return state.groups}catch(_){return state.groups}}
 
-  function scrollHost(){const shell=document.querySelector('.chat-shell');if(shell){const css=getComputedStyle(shell),overflow=String(css.overflowY||css.overflow||'');if(/auto|scroll|overlay/.test(overflow)&&shell.scrollHeight>shell.clientHeight+1)return shell}return document.scrollingElement||document.documentElement||document.body}
+  function scrollHost(){const shell=document.querySelector('.chat-shell');if(shell){const css=getComputedStyle(shell),overflow=String(css.overflowY||css.overflow||'');if(/auto|scroll|overlay/.test(overflow))return shell}return document.scrollingElement||document.documentElement||document.body}
   window.__agentieGroupScrollRoot=scrollHost;
   function isNearBottom(host,threshold=120){return !host||host.scrollHeight-host.scrollTop-host.clientHeight<=threshold}
   function setHostScroll(host,value){if(!host)return;state.restoringScroll=true;host.scrollTop=value;requestAnimationFrame(()=>{state.restoringScroll=false})}
