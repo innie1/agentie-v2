@@ -51,10 +51,10 @@
 
   function installProfile(){
     const sidebar=document.querySelector('.sidebar'),plugin=document.getElementById('agentiePluginsButton');if(!sidebar||!plugin)return;
-    const old=sidebar.querySelector('.agentie-profile-wrap');if(old)old.remove();
+    const old=sidebar.querySelector('.agentie-profile-wrap:not(.agentie-connected-profile)');if(old)old.remove();
     let wrap=sidebar.querySelector('.agentie-connected-profile');
     if(!wrap){
-      wrap=document.createElement('div');wrap.className='agentie-connected-profile';
+      wrap=document.createElement('div');wrap.className='agentie-profile-wrap agentie-connected-profile';
       wrap.innerHTML='<button class="agentie-connected-profile-button" type="button"><span class="agentie-connected-profile-icon">👤</span><span>Profile</span></button><div class="agentie-connected-profile-menu"><button type="button" data-connected-profile="settings">⚙ Settings</button><button type="button" data-connected-profile="activity">◷ Activity</button><button type="button" data-connected-profile="automation">↻ Automation</button></div>';
       sidebar.appendChild(wrap);
       const button=wrap.querySelector('.agentie-connected-profile-button'),menu=wrap.querySelector('.agentie-connected-profile-menu');
