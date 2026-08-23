@@ -63,14 +63,24 @@ def _presence(thread_card: dict[str, Any]) -> list[dict[str, Any]]:
     participant_ids = list(thread_card.get("participant_ids") or [])
     participant_names = list(thread_card.get("participants") or [])
     rows = {str(aid): {"agent_id": str(aid), "agent_name": participant_names[i] if i < len(participant_names) else str(aid), "status": "idle", "outstanding_tasks": 0, "last_activity_at": None} for i, aid in enumerate(participant_ids)}
+    seen_jobs: set[str] = set()
     for message in thread_card.get("messages") or []:
         sender_id = str(message.get("sender_id") or "")
         if sender_id in rows:
             rows[sender_id]["last_activity_at"] = message.get("at") or rows[sender_id]["last_activity_at"]
+        meta = message.get("metadata") or {}
         job = message.get("job") or {}
+        job_id = str(job.get("id") or meta.get("team_job_id") or "")
+        if job_id:
+            if job_id in seen_jobs:
+                continue
+            seen_jobs.add(job_id)
+            if not job.get("handoffs"):
+                job = agent_threads.get_team_job(job_id) or {}
         for handoff in job.get("handoffs") or []:
-            name = str(handoff.get("agent") or "")
-            match_id = next((aid for aid, row in rows.items() if row["agent_name"].casefold() == name.casefold()), None)
+            handoff_agent_id = str(handoff.get("to_agent_id") or handoff.get("agent_id") or "")
+            name = str(handoff.get("to_agent_name") or handoff.get("agent") or "")
+            match_id = handoff_agent_id if handoff_agent_id in rows else next((aid for aid, row in rows.items() if row["agent_name"].casefold() == name.casefold()), None)
             if not match_id:
                 continue
             status = _status_for_handoff(handoff.get("status"))
