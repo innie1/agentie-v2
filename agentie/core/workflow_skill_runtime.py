@@ -111,30 +111,29 @@ def _input_prompt(skill:dict[str,Any],missing:list[str])->dict[str,Any]:
 
 
 async def execute_workflow_skill(skill_name_or_id:str,session_id:str|None,*,inputs:dict[str,Any]|None=None,requested_by:str="user",source:str="chat")->dict[str,Any]:
-    """Execute a manually authored workflow Skill through a real persistent agent.
+    """Execute an active workflow Skill through a real persistent agent.
 
-    Taught-browser Skills keep their deterministic replay in workflow_browser_runtime.
-    This path is for instruction workflows: the selected agent gets the exact Skill
-    contract and only its explicitly granted tools/plugins. Consequential tools keep
-    using Agentie's existing approval system.
+    Active Skills live in the shared workspace catalog. Agent association is only
+    an organizational preference, not a permission gate. Required capabilities
+    must still be enabled/connected globally, and consequential actions still use
+    Agentie's normal approval system.
     """
     skill=get_workflow_skill(skill_name_or_id)
     if not skill:return {"message":"Reusable Skill was not found.","card":None,"status":"not_found"}
     if str(skill.get("status") or "draft")!="active":return {"message":f"Skill “{skill['name']}” is {skill.get('status') or 'draft'}. Review and activate it before execution.","card":skill_card(skill),"status":"inactive"}
     if skill.get("source_workflow_id"):return {"message":"This Skill has a deterministic taught workflow and must run through the taught-workflow replay path.","card":skill_card(skill),"status":"deterministic_replay"}
     m=re.match(r"^agent:(agt_[a-z0-9]+):",str(session_id or ""),re.I);agent=get_agent(m.group(1)) if m else None
-    if not agent:return {"message":f"Select an agent that should run “{skill['name']}”. Skills execute through a real agent so its permissions, tools, memory and approvals remain enforceable.","card":skill_card(skill),"status":"needs_agent"}
-    if not skill_allowed(agent,str(skill["id"])):return {"message":f"{agent['name']} is not assigned Skill “{skill['name']}”. Assign it from the agent's capabilities before running it.","card":skill_card(skill),"status":"needs_access"}
+    if not agent:return {"message":f"Select an agent that should run “{skill['name']}”. Skills execute through a real agent so its identity, memory and approvals remain scoped correctly.","card":skill_card(skill),"status":"needs_agent"}
     missing=missing_inputs(skill,inputs)
     if missing:return _input_prompt(skill,missing)
     access=missing_access(skill,agent)
-    if access:return {"message":f"{agent['name']} is missing required access for Skill “{skill['name']}”: {', '.join(access)}. Grant the capability/plugin first; Agentie will not bypass permissions.","card":skill_card(skill),"status":"needs_access","missing_access":access}
+    if access:return {"message":f"Workspace access required for Skill “{skill['name']}” is not available: {', '.join(access)}. Enable or connect it in the shared Plugins/Skills catalog first.","card":skill_card(skill),"status":"needs_access","missing_access":access}
     run=_new_run(skill,agent,inputs,requested_by,source);run=_mutate(run["id"],status="working",started_at=_now()) or run
     before={str(x.get("id")) for x in approval_tools.recent_approvals(agent_id=agent["id"],limit=200)}
     safe_inputs={str(k):str(v) for k,v in dict(inputs or {}).items() if not _SENSITIVE.search(str(k))}
     input_block="\n".join(f"- {k}: {v}" for k,v in safe_inputs.items()) or "- No extra runtime inputs."
     prompt=(instruction_block(skill)+"\n\nRUNTIME INPUTS:\n"+input_block+"\n\nEXECUTION CONTRACT:\n"
-            "Execute this reusable Skill now as the configured agent. Use only tools/plugins actually granted to you. Follow the steps and decision rules, validate the expected result, and obey every approval boundary. "
+            "Execute this reusable Skill now as the configured agent. Choose relevant capabilities from the shared workspace catalog when the task requires them. Follow the steps and decision rules, validate the expected result, and obey every approval boundary. "
             "If a required action needs approval, request the normal Agentie approval and stop at that boundary. If something cannot be verified, report the real failure instead of claiming success. Return the verified work result, not a description of what you would do.")
     try:
         from agentie.core.runner import run_agent
