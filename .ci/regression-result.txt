@@ -1,4 +1,4 @@
-tested_sha=130fcb1262d027e7ac1224f56c9e5cd082d82ff3
+tested_sha=412fcb7b07bf81fc2414a8a412678937dbecb268
 exit_code=1
 --- regression tail ---
 test_connection_closed_becomes_inline_setup_card_with_retry (test_plugin_setup_regression.PluginSetupRegressionTests.test_connection_closed_becomes_inline_setup_card_with_retry) ... ok
@@ -248,6 +248,6 @@ Traceback (most recent call last):
 AttributeError: <module 'agentie.core.desktop_runtime' from '/home/runner/work/agentie-v2/agentie-v2/agentie/core/desktop_runtime.py'> does not have the attribute 'ensure_wsl_desktop'
 
 ----------------------------------------------------------------------
-Ran 647 tests in 20.901s
+Ran 652 tests in 31.110s
 
 FAILED (errors=3)
