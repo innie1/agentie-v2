@@ -93,6 +93,46 @@ allowed_users=anybody
 needs_root_rights=yes
 EOF
 chmod 0644 /etc/X11/Xwrapper.config
+
+# Recreate the desktop bootstrap files on every repair pass. Persistent disks
+# created by an older/broken first boot may have the packages installed while
+# the service file or xinit script is missing.
+cat >/home/agentie/.xinitrc <<'EOF'
+#!/bin/sh
+export DISPLAY=:0
+export XDG_RUNTIME_DIR=/tmp/runtime-agentie
+mkdir -p "$XDG_RUNTIME_DIR"
+chmod 700 "$XDG_RUNTIME_DIR"
+dbus-launch --exit-with-session sh -c '
+  pcmanfm --desktop --profile LXDE >/tmp/pcmanfm.log 2>&1 &
+  chromium --user-data-dir=/home/agentie/.config/chromium-agentie --remote-debugging-port=9222 --remote-debugging-address=0.0.0.0 --remote-allow-origins=* --no-first-run --no-default-browser-check --restore-last-session about:blank >/tmp/chromium.log 2>&1 &
+  exec openbox-session
+'
+EOF
+chmod 0755 /home/agentie/.xinitrc
+
+cat >/etc/systemd/system/agentie-desktop.service <<'EOF'
+[Unit]
+Description=Agentie lightweight desktop
+After=network-online.target cloud-final.service
+Wants=network-online.target
+
+[Service]
+User=agentie
+Environment=HOME=/home/agentie
+WorkingDirectory=/home/agentie
+TTYPath=/dev/tty1
+StandardInput=tty-force
+TTYReset=yes
+TTYVHangup=yes
+ExecStart=/usr/bin/startx /home/agentie/.xinitrc -- :0 -nolisten tcp vt1
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=graphical.target
+EOF
+
 chown -R agentie:agentie /home/agentie
 chown agentie:agentie /tmp/runtime-agentie
 chmod 0700 /tmp/runtime-agentie
@@ -120,7 +160,7 @@ systemctl enable qemu-guest-agent >/dev/null 2>&1 || true
 # Do not restart qemu-guest-agent from a command currently travelling through
 # that same QGA channel. The active service is already what made this setup
 # request possible.
-systemctl enable agentie-desktop.service >/dev/null 2>&1 || true
+systemctl enable agentie-desktop.service
 systemctl restart agentie-desktop.service
 sleep 2
 systemctl is-active --quiet agentie-desktop.service
