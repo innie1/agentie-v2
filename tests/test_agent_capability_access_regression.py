@@ -44,7 +44,8 @@ class AgentCapabilityAccessRegressionTests(unittest.TestCase):
     def test_tool_selection_no_longer_creates_agent_level_approval_gate(self):
         self.assertIsNone(agent_access.guard_agent_capability(f"agent:{self.agent['id']}:main",'Use filesystem to inspect the project'))
         source=Path('agentie/core/agent_access.py').read_text(encoding='utf-8')
-        self.assertIn('Approval is attached to consequential actions',source)
+        self.assertIn('normal approval when the *action* is consequential',source)
+        self.assertIn('Tool selection is no longer an agent-level approval gate',source)
         self.assertIn('return None',source.split('def guard_agent_capability',1)[1])
 
     def test_plugins_ui_blocks_old_per_agent_editor_and_explains_shared_tools(self):
