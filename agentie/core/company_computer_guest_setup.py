@@ -48,7 +48,7 @@ chmod 0644 /etc/X11/Xwrapper.config
 chown -R agentie:agentie /home/agentie
 chown agentie:agentie /tmp/runtime-agentie
 chmod 0700 /tmp/runtime-agentie
-# QEMU Guest Agent is the privileged maintenance channel. The interactive
+# QEMU Guest Agent is Agentie's privileged maintenance channel. The interactive
 # desktop user must not retain cloud-image passwordless sudo that could bypass
 # Agentie's approval layer.
 if command -v gpasswd >/dev/null 2>&1; then gpasswd -d agentie sudo >/dev/null 2>&1 || true; fi
@@ -69,7 +69,9 @@ TTYVHangup=yes
 EOF
 systemctl daemon-reload
 systemctl enable qemu-guest-agent >/dev/null 2>&1 || true
-systemctl restart qemu-guest-agent >/dev/null 2>&1 || true
+# Do not restart qemu-guest-agent from a command currently travelling through
+# that same QGA channel. The active service is already what made this setup
+# request possible.
 systemctl enable agentie-desktop.service >/dev/null 2>&1 || true
 systemctl restart agentie-desktop.service
 sleep 2
