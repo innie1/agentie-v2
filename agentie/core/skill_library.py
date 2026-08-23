@@ -4,7 +4,7 @@ import re
 from typing import Any
 
 from agentie.core.agent_registry import get_agent
-from agentie.core.agent_access import set_skill_access
+from agentie.core.agent_access import _mutate_agent
 from agentie.core.skill_portability import export_skill,import_skill_from_upload
 from agentie.core.workflow_skills import create_workflow_skill,get_workflow_skill,list_workflow_skills,set_workflow_skill_status,skill_card
 
@@ -32,15 +32,25 @@ def duplicate_skill(name_or_id:str,new_name:str)->dict[str,Any]:
     if get_workflow_skill(clean):raise ValueError("A workflow Skill with that name already exists.")
     return create_workflow_skill(name=clean,description=str(source.get("description") or ""),when_to_use=str(source.get("when_to_use") or ""),required_inputs=list(source.get("required_inputs") or []),required_access=list(source.get("required_access") or []),steps=list(source.get("steps") or []),decision_rules=list(source.get("decision_rules") or []),expected_output=str(source.get("expected_output") or ""),validation_rules=list(source.get("validation_rules") or []),approval_boundaries=list(source.get("approval_boundaries") or []),failure_handling=str(source.get("failure_handling") or ""),source_workflow_id=None,status="draft")
 def assign_skill(name_or_id:str,agent_id_or_name:str)->dict[str,Any]:
+    """Associate a Skill with an Agent as a preferred/relevant workflow.
+
+    Assignment is organizational metadata only. Active Skills are workspace-wide
+    capabilities and this association does not grant or block runtime access.
+    """
     skill=get_workflow_skill(name_or_id);agent=get_agent(agent_id_or_name)
     if not skill:raise ValueError("Workflow skill was not found.")
     if not agent:raise ValueError("Agent was not found.")
-    set_skill_access(agent["id"],skill["id"],"allow")
-    return {"skill":skill_card(skill),"agent":{"id":agent["id"],"name":agent["name"],"job":agent.get("role")}}
+    sid=str(skill["id"])
+    def attach(target):
+        values=[str(x) for x in target.get("skills") or []]
+        if sid not in values:values.append(sid)
+        target["skills"]=sorted(set(values))
+    updated=_mutate_agent(agent["id"],attach)
+    return {"skill":skill_card(skill),"agent":{"id":updated["id"],"name":updated["name"],"job":updated.get("role")},"assignment_mode":"preference"}
 def route_skill_library_command(message:str)->dict[str,Any]|None:
     text=" ".join(str(message or "").strip().split());lower=text.casefold().strip(" .?!")
     if lower in {"skill library","show skill library","open skill library","list reusable skills","browse skills"}:
-        data=list_library();return {"message":f"Skill Library has {len(data['skills'])} reusable Skill(s) and {len(data['templates'])} starter template(s).","card":{"type":"note","title":"Skill Library","content":"\n".join([f"Installed: {len(data['skills'])}",f"Starter templates: {len(data['templates'])}","Use the Skill Library UI to install, assign, duplicate, export or import Skills."])},"library":data}
+        data=list_library();return {"message":f"Skill Library has {len(data['skills'])} reusable Skill(s) and {len(data['templates'])} starter template(s).","card":{"type":"note","title":"Skill Library","content":"\n".join([f"Installed: {len(data['skills'])}",f"Starter templates: {len(data['templates'])}","Use the Skill Library UI to install, associate, duplicate, export or import Skills."])},"library":data}
     m=re.match(r"^(?:install|add)\s+(?:skill\s+)?template\s+(.+)$",text,re.I)
     if m:
         wanted=m.group(1).strip(' .?!\"“”');tid=next((k for k,v in _TEMPLATES.items() if k==wanted.casefold() or v['name'].casefold()==wanted.casefold()),wanted.casefold())
@@ -56,5 +66,5 @@ def route_skill_library_command(message:str)->dict[str,Any]|None:
     if m:
         try:result=assign_skill(m.group(1).strip(),m.group(2).strip())
         except ValueError as exc:return {"message":str(exc),"card":None}
-        return {"message":f"Assigned “{result['skill']['name']}” to {result['agent']['name']}.","card":result['skill']}
+        return {"message":f"Associated “{result['skill']['name']}” with {result['agent']['name']} as a preferred workflow.","card":result['skill']}
     return None
