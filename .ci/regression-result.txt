@@ -1,4 +1,4 @@
-tested_sha=6009fdcecadf244259bdb612cfa59045e58750eb
+tested_sha=5bad2f5692c79c45171f0d94f7514a94005c3334
 exit_code=1
 --- regression tail ---
 test_show_active_jobs_is_local (test_local_learning_job_controls_regression.LocalLearningJobControlsRegressionTests.test_show_active_jobs_is_local) ... ok
@@ -248,6 +248,6 @@ Traceback (most recent call last):
 AssertionError: 'Hypervisor' not found in 'Install or use a Windows QEMU build with WHPX support.'
 
 ----------------------------------------------------------------------
-Ran 656 tests in 22.340s
+Ran 659 tests in 21.870s
 
 FAILED (failures=1)
