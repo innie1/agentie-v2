@@ -84,7 +84,7 @@ class NavigationRewireConnectedRegressionTests(unittest.TestCase):
 
     def test_only_navigation_connect_owns_group_chat_runtime(self):
         self.assertIn("/platform/agent-chats", self.source)
-        self.assertIn("setInterval(refreshGroup,2200)", self.source)
+        self.assertIn("state.poll=setInterval(refreshGroup,", self.source)
         self.assertNotIn("/platform/agent-chats", self.model)
         self.assertNotIn("activeGroup", self.model)
         self.assertNotIn("sidebar-group-row", self.model)
