@@ -74,7 +74,7 @@ class SidebarProfileGroupChatUnificationRegressionTests(unittest.TestCase):
         for marker in (
             "document.getElementById('messages')",
             "document.getElementById('messageInput')",
-            "#sendButton",
+            "document.getElementById('sendButton')",
             "row.className=isUser?'user-row':'assistant-row'",
             "bubble.className='bubble '+(isUser?'user':'assistant')",
             "/platform/agent-chats/${encodeURIComponent(id)}/messages",
