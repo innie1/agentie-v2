@@ -2,11 +2,15 @@ from __future__ import annotations
 
 """Windows WHPX compatibility adjustments for Agentie Company Computer.
 
-Recent QEMU/WHPX builds on Windows can terminate with ``Unexpected VP exit
-code 4`` when an x86 guest is launched with ``-cpu host``.  Agentie does not
-need host CPU passthrough for its lightweight Debian desktop, so on WHPX we
-let QEMU use its compatible default CPU model instead.  KVM/HVF behavior is
-left unchanged.
+Current QEMU/WHPX builds on Windows can terminate with ``Unexpected VP exit
+code 4`` in two relevant cases for Agentie's Linux guest:
+
+* x86 guests launched with ``-cpu host``;
+* multi-vCPU guests hitting WHPX/APIC interrupt-controller failures.
+
+Agentie does not require host CPU passthrough, and a single hardware-accelerated
+vCPU is preferable to falling back to slow TCG.  Therefore WHPX uses QEMU's
+compatible default CPU model and one vCPU.  KVM/HVF behavior is left unchanged.
 """
 
 from typing import Any
@@ -23,21 +27,29 @@ def _whpx_safe_qemu_args(config: dict[str, Any], *, resume_snapshot: bool = Fals
     accelerator = str(acceleration.get("accelerator") or "").lower()
     machine = str(profile.get("machine") or "").lower()
 
-    if accelerator == "whpx" and machine not in {"arm64", "aarch64"}:
-        # QEMU's WHPX backend on current Windows builds can crash when the
-        # x86 guest uses `-cpu host`.  Remove only that exact pair and retain
-        # every other VM argument unchanged.
-        cleaned: list[str] = []
-        index = 0
-        while index < len(args):
-            if index + 1 < len(args) and args[index] == "-cpu" and args[index + 1] == "host":
-                index += 2
-                continue
-            cleaned.append(args[index])
-            index += 1
-        return cleaned
+    if accelerator != "whpx" or machine in {"arm64", "aarch64"}:
+        return args
 
-    return args
+    cleaned: list[str] = []
+    index = 0
+    while index < len(args):
+        # `-cpu host` is unstable with WHPX on current Windows/QEMU builds.
+        if index + 1 < len(args) and args[index] == "-cpu" and args[index + 1] == "host":
+            index += 2
+            continue
+
+        # WHPX has an upstream APIC failure that can surface as VP exit code 4
+        # with multiple vCPUs.  Keep hardware acceleration but force one vCPU
+        # until upstream WHPX is reliable for this Linux guest workload.
+        if index + 1 < len(args) and args[index] == "-smp":
+            cleaned.extend(["-smp", "1"])
+            index += 2
+            continue
+
+        cleaned.append(args[index])
+        index += 1
+
+    return cleaned
 
 
 computer._qemu_args = _whpx_safe_qemu_args
