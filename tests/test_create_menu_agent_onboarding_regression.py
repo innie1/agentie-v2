@@ -83,6 +83,14 @@ class CreateMenuAgentOnboardingRegressionTests(unittest.TestCase):
         self.assertIn('.agentie-choice-row,.platform-option,.n4-agent-pick', self.loader)
         self.assertIn('accent-color:#0b84ff', self.loader)
 
+    def test_default_profile_hides_internal_counts_and_details(self):
+        self.assertIn('.employee-profile-personality,.employee-profile-stats{display:none!important}', self.loader)
+        self.assertIn('.employee-profile-section{display:none!important}', self.loader)
+        self.assertIn('.employee-profile-section:first-child{display:block!important', self.loader)
+        self.assertIn('.employee-profile-section:first-child>strong{display:none!important}', self.loader)
+        self.assertIn('background:linear-gradient', self.loader)
+        self.assertNotIn('radial-gradient', self.loader)
+
     def test_group_and_skill_items_reuse_existing_creators(self):
         self.assertIn("document.querySelector('.n4-chats')", self.ui)
         self.assertIn("x.textContent.trim()==='New group chat'", self.ui)
@@ -90,7 +98,27 @@ class CreateMenuAgentOnboardingRegressionTests(unittest.TestCase):
         self.assertNotIn('/agent-threads', self.ui)
         self.assertNotIn('/workflow-skills', self.ui)
 
-    def test_unusual_custom_job_stays_user_defined_not_a_fixed_profession(self):
+    def test_product_ideas_request_becomes_clean_visible_identity(self):
+        description='I need someone who helps organize product ideas.'
+        with (
+            patch.object(agent_builder, 'recommend_skills', return_value=[]),
+            patch.object(agent_builder, 'recommend_plugins', return_value=[]),
+            patch.object(agent_builder, 'recommend_manager', return_value=None),
+            patch.object(agent_builder, 'recommend_collaborators', return_value=[]),
+            patch.object(agent_builder, 'routine_suggestions', return_value=[]),
+            patch.object(agent_builder, 'capability_gaps', return_value=[]),
+        ):
+            draft=agent_builder.draft_agent_spec(description, name='Mat')
+        self.assertEqual(draft['name'], 'Mat')
+        self.assertEqual(draft['job'], 'Product Ideas')
+        self.assertEqual(draft['description'], description)
+        self.assertNotIn('I need someone', draft['job'])
+        self.assertNotIn('described by the user', draft['goal'])
+        self.assertIn('product ideas', draft['goal'].lower())
+        self.assertEqual(len(draft['responsibilities']), 3)
+        self.assertIn('Organize product ideas', draft['responsibilities'][0])
+
+    def test_unusual_custom_job_gets_a_concise_title_without_fixed_profession(self):
         description='Track greenhouse temperature readings and keep a daily change log.'
         with (
             patch.object(agent_builder, 'recommend_skills', return_value=[]),
@@ -102,11 +130,26 @@ class CreateMenuAgentOnboardingRegressionTests(unittest.TestCase):
         ):
             draft=agent_builder.draft_agent_spec(description, name='Greenhouse')
         self.assertEqual(draft['name'], 'Greenhouse')
-        self.assertEqual(draft['job'], description.rstrip('.'))
+        self.assertEqual(draft['job'], 'Greenhouse Temperature')
+        self.assertEqual(draft['description'], description)
+        self.assertNotEqual(draft['job'], description.rstrip('.'))
         self.assertEqual(draft['runtime_profile'], 'general')
         self.assertIn('Do not assume a predefined profession or department', draft['instructions'])
         self.assertNotIn('Sales Agent', draft['job'])
         self.assertNotIn('Research Agent', draft['job'])
+
+    def test_task_verbs_select_relevant_existing_skills_without_agent_classes(self):
+        skills=[
+            {'id':'planning','name':'Planning & Reasoning','description':'Planning and verification','capabilities':['planning'],'enabled':True,'kind':'capability'},
+            {'id':'knowledge-memory','name':'Knowledge Memory','description':'Long-term knowledge','capabilities':['memory'],'enabled':True,'kind':'capability'},
+            {'id':'research','name':'Research','description':'Web research','capabilities':['web_search'],'enabled':True,'kind':'capability'},
+        ]
+        with patch.object(agent_builder, 'list_skills', return_value=skills):
+            recommended=agent_builder.recommend_skills('I need someone who helps organize product ideas.')
+        ids=[item['id'] for item in recommended]
+        self.assertIn('planning', ids)
+        self.assertIn('knowledge-memory', ids)
+        self.assertNotIn('research', ids)
 
 
 if __name__ == '__main__':
