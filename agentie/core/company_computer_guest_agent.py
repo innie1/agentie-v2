@@ -6,6 +6,7 @@ import time
 from typing import Any
 
 from agentie.core import company_computer as computer
+from agentie.core import company_computer_resume_compat as _resume_compat  # resumes paused VM before QGA use
 
 
 def _qga_request(payload: dict[str, Any], timeout: float = 10.0) -> dict[str, Any]:
