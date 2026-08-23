@@ -68,12 +68,17 @@ async def platform_group_chat_markdown_js():
     return _frontend_script("group_chat_markdown.js")
 
 
+@router.get("/platform-navigation-connect.js")
+async def platform_navigation_connect_js():
+    return _frontend_script("navigation_connect.js")
+
+
 @router.get("/platform-next4.js")
 async def platform_next4_js():
-    # One connected UI bundle keeps group chat behavior additive: live composer
-    # focus guard, safe Markdown rendering, and model routing all share the same
-    # existing platform surface.
-    return _frontend_bundle("platform_next4.js", "platform_chat_focus_guard.js", "group_chat_markdown.js", "model_router.js")
+    # Keep the existing connected surfaces, then install one final navigation
+    # connection layer after model_router so visible controls cannot become dead
+    # buttons when earlier launchers are hidden or relocated.
+    return _frontend_bundle("platform_next4.js", "platform_chat_focus_guard.js", "group_chat_markdown.js", "model_router.js", "navigation_connect.js")
 
 
 @router.get("/platform/model-routing/status")
