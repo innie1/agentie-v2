@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import base64
 import time
 from typing import Any
 
 from agentie.core import company_computer as computer
 from agentie.core import company_computer_windows_accel as _windows_accel  # registers Windows acceleration fix
-from agentie.core import company_computer_whpx as _whpx_compat  # removes WHPX-incompatible -cpu host
+from agentie.core import company_computer_whpx as _whpx_compat  # removes WHPX-incompatible CPU/APIC settings
 from agentie.core import company_computer_guest_agent as _guest_agent  # registers QGA API on computer
 
 _SETUP_MARKER = "/var/lib/agentie/runtime-v3"
@@ -28,6 +29,39 @@ def _wait_for_qga(timeout: int = 300) -> None:
     )
 
 
+def _guest_output(result: dict[str, Any]) -> str:
+    """Decode QGA guest-exec stdout/stderr for actionable setup errors."""
+    chunks: list[str] = []
+    for key, label in (("out-data", "stdout"), ("err-data", "stderr")):
+        raw = result.get(key)
+        if not raw:
+            continue
+        try:
+            text = base64.b64decode(str(raw)).decode("utf-8", "replace").strip()
+        except Exception:
+            text = str(raw).strip()
+        if text:
+            chunks.append(f"{label}: {text}")
+    return " | ".join(chunks)[-1800:]
+
+
+def _wait_for_cloud_init(timeout: int = 300) -> None:
+    """Let Debian finish first-boot package work before Agentie's repair pass."""
+    command = (
+        "if command -v cloud-init >/dev/null 2>&1; then "
+        "cloud-init status --wait >/tmp/agentie-cloud-init-status.txt 2>&1 || true; "
+        "fi; exit 0"
+    )
+    try:
+        computer.guest_exec(["/bin/bash", "-lc", command], timeout=max(60, int(timeout)))
+    except computer.ComputerError as exc:
+        # QGA is already alive. A cloud-init wait timeout should not permanently
+        # brick the persistent VM; the repair script below also waits for package
+        # manager processes and repairs interrupted dpkg state.
+        if "timed out" not in str(exc).lower():
+            raise
+
+
 def _marker_exists() -> bool:
     try:
         result = computer.guest_exec(["/usr/bin/test", "-f", _SETUP_MARKER], timeout=15)
@@ -40,6 +74,17 @@ def _repair_script() -> str:
     return r"""
 set -eu
 export DEBIAN_FRONTEND=noninteractive
+
+# QGA can become reachable before cloud-init has completely released apt/dpkg.
+# Wait for any first-boot package manager work before repairing the guest.
+for _i in $(seq 1 150); do
+  if ! pgrep -x apt-get >/dev/null 2>&1 && ! pgrep -x apt >/dev/null 2>&1 && ! pgrep -x dpkg >/dev/null 2>&1; then
+    break
+  fi
+  sleep 2
+done
+
+dpkg --configure -a
 apt-get update
 apt-get install -y --no-install-recommends xserver-xorg-legacy xdotool
 mkdir -p /etc/X11 /var/lib/agentie /tmp/runtime-agentie /home/agentie/Downloads /home/agentie/Desktop
@@ -91,15 +136,24 @@ def ensure_guest_runtime(*, timeout: int = 300) -> dict[str, Any]:
     """
     computer.start()
     _wait_for_qga(timeout)
+    _wait_for_cloud_init(timeout)
     if not _marker_exists():
         result = computer.guest_exec(["/bin/bash", "-lc", _repair_script()], timeout=max(300, timeout))
         if int(result.get("exitcode") or 0) != 0:
-            raise computer.ComputerError("Could not finish Company Computer guest preparation.")
+            detail = _guest_output(result)
+            raise computer.ComputerError(
+                "Could not finish Company Computer guest preparation."
+                + (f" Details: {detail}" if detail else f" Guest exit code: {result.get('exitcode')}.")
+            )
     else:
         active = computer.guest_exec(["/bin/systemctl", "is-active", "--quiet", "agentie-desktop.service"], timeout=20)
         if int(active.get("exitcode") or 0) != 0:
             restart = computer.guest_exec(["/bin/systemctl", "restart", "agentie-desktop.service"], timeout=60)
             if int(restart.get("exitcode") or 0) != 0:
-                raise computer.ComputerError("Company Computer desktop service could not be restarted.")
+                detail = _guest_output(restart)
+                raise computer.ComputerError(
+                    "Company Computer desktop service could not be restarted."
+                    + (f" Details: {detail}" if detail else "")
+                )
     computer.touch_activity()
     return computer.status()
