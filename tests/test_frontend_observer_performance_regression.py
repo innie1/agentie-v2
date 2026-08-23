@@ -7,24 +7,26 @@ class FrontendObserverPerformanceRegressionTests(unittest.TestCase):
     def setUpClass(cls):
         cls.loader = Path('frontend/create_menu_loader.js').read_text(encoding='utf-8')
 
-    def test_shared_tool_catalog_does_not_use_competing_mutation_observer(self):
+    def test_shared_tool_catalog_has_no_competing_background_observer(self):
         self.assertIn('function ensureSharedToolCatalog()', self.loader)
-        self.assertNotIn('new MutationObserver(ensureSharedToolCatalog)', self.loader)
-        self.assertNotIn('MutationObserver(ensureSharedToolCatalog', self.loader)
         self.assertIn('if(pluginPanel)ensureSharedToolCatalog()', self.loader)
         self.assertIn("setTimeout(ensureSharedToolCatalog,180)", self.loader)
+        self.assertNotIn('MutationObserver', self.loader)
 
-    def test_profile_observer_only_processes_added_profile_modals(self):
-        self.assertIn('function polishAddedNode(node)', self.loader)
-        self.assertIn('for(const node of record.addedNodes)polishAddedNode(node)', self.loader)
-        self.assertNotIn("new MutationObserver(()=>document.querySelectorAll('.employee-profile-modal').forEach(polishAgentProfile))", self.loader)
-        self.assertIn("card.dataset.agentiePolished!=='1'", self.loader)
-        self.assertIn("edit&&edit.textContent.trim()!=='Edit details'", self.loader)
+    def test_profile_polish_is_user_event_driven_not_background_dom_scanning(self):
+        self.assertIn('function polishOpenProfiles()', self.loader)
+        self.assertIn('function scheduleProfilePolish()', self.loader)
+        self.assertIn("document.addEventListener('click',scheduleProfilePolish,false)", self.loader)
+        self.assertIn('setTimeout(()=>{polishTimerA=null;polishOpenProfiles()},0)', self.loader)
+        self.assertIn('setTimeout(()=>{polishTimerB=null;polishOpenProfiles()},160)', self.loader)
+        self.assertNotIn('profileObserver', self.loader)
+        self.assertNotIn('polishAddedNode', self.loader)
 
-    def test_profile_polish_is_idempotent(self):
+    def test_profile_polish_remains_idempotent(self):
         self.assertIn("card.dataset.agentiePolished='1'", self.loader)
         self.assertIn("form.dataset.agentieUnified==='1'", self.loader)
         self.assertIn("if(save.textContent!=='Save details')", self.loader)
+        self.assertIn("actions.querySelector('.agentie-profile-delete')", self.loader)
 
 
 if __name__ == '__main__':
