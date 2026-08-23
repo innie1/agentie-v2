@@ -6,7 +6,8 @@ from typing import Any
 
 from agentie.core import company_computer as computer
 from agentie.core import company_computer_windows_accel as _windows_accel  # registers Windows acceleration fix
-from agentie.core import company_computer_whpx as _whpx_compat  # removes WHPX-incompatible CPU/APIC settings
+from agentie.core import company_computer_whpx as _whpx_compat  # removes WHPX-incompatible CPU/APIC/graphics settings
+from agentie.core import company_computer_runtime_profile as _runtime_profile  # relaunches stale live QEMU hardware profiles
 from agentie.core import company_computer_guest_agent as _guest_agent  # registers QGA API on computer
 
 _SETUP_MARKER = "/var/lib/agentie/runtime-v6"
@@ -46,7 +47,6 @@ def _guest_output(result: dict[str, Any]) -> str:
 
 
 def _wait_for_cloud_init(timeout: int = 300) -> None:
-    """Let Debian finish first-boot package work before Agentie's repair pass."""
     command = (
         "if command -v cloud-init >/dev/null 2>&1; then "
         "cloud-init status --wait >/tmp/agentie-cloud-init-status.txt 2>&1 || true; "
@@ -138,8 +138,6 @@ export HOME=/home/agentie
 export XDG_RUNTIME_DIR=/tmp/runtime-agentie
 mkdir -p "$XDG_RUNTIME_DIR"
 chmod 0700 "$XDG_RUNTIME_DIR"
-# The X11 socket can exist before Xorg is ready to accept clients. Wait until a
-# real X11 client can query the display before launching Openbox or Chromium.
 for _i in $(seq 1 120); do
   if DISPLAY=:0 /usr/bin/xdotool getdisplaygeometry >/dev/null 2>&1; then
     break
@@ -215,8 +213,6 @@ systemctl enable qemu-guest-agent >/dev/null 2>&1 || true
 systemctl enable agentie-xorg.service agentie-desktop.service
 systemctl restart agentie-xorg.service
 
-# Do not rely on the Unix socket alone: Xorg creates it before initialization is
-# necessarily complete. Require a successful X11 query before starting desktop.
 for _i in $(seq 1 120); do
   if DISPLAY=:0 /usr/bin/xdotool getdisplaygeometry >/dev/null 2>&1; then
     break
