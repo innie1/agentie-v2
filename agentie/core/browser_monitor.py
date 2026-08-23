@@ -35,7 +35,6 @@ _COMPUTER_PREFIX = "use computer for:"
 def _load_state() -> dict[str, dict[str, Any]]:
     try:return json.loads(STATE_FILE.read_text(encoding="utf-8")) if STATE_FILE.exists() else {}
     except Exception:return {}
-
 def _save_state(data: dict[str, dict[str, Any]]) -> None:STATE_FILE.parent.mkdir(parents=True, exist_ok=True);STATE_FILE.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
 def _set_live_state(*, active: bool, status: str, url: str = "", detail: str = "", error: str | None = None) -> None:
     LIVE_DIR.mkdir(parents=True, exist_ok=True);previous=get_live_state();state={"active":bool(active),"status":status,"url":url,"detail":detail,"error":error,"updated_at":datetime.now().astimezone().isoformat(timespec="milliseconds"),"frame_version":int(previous.get("frame_version") or 0),"stop_requested":bool(previous.get("stop_requested",False)) if active else False};LIVE_STATE_FILE.write_text(json.dumps(state,indent=2,ensure_ascii=False),encoding="utf-8")
@@ -105,7 +104,6 @@ def _service_for_task(text: str, *, ignore_plugins: bool = False) -> dict[str, A
         if connected and any(any(p in name or name in p for p in meta["plugins"]) for name in connected):return None
         return {"service":service,"url":meta["url"],"consequential":bool(_CONSEQUENTIAL_EXTERNAL.search(low)),"task":str(text).strip()}
     return None
-
 def _fallback_proposal(text: str,candidate: dict[str,Any])->dict[str,Any]:
     service=str(candidate["service"]);task=str(candidate["task"]);return {"message":f"I don’t see a connected {service} capability for this task. Agentie can use its Computer instead.","card":{"type":"computer_fallback_proposal","service":service,"url":candidate["url"],"task":task,"consequential":candidate["consequential"],"actions":[{"action":"use_computer","label":"Use Computer","command":f"Use Computer for: {task}"},{"action":"keep_in_chat","label":"Keep in chat"}]}}
 def _desktop_fallback_card(info:dict[str,Any],candidate:dict[str,Any],task:str,*,navigated_url:str|None=None)->dict[str,Any]:
@@ -151,7 +149,7 @@ async def route_browser_request(message:str,session_id:str|None=None)->dict[str,
     if _scheduled_request(text):return None
     if text.casefold().startswith(_COMPUTER_PREFIX):return await _launch_computer_fallback(text[len(_COMPUTER_PREFIX):].strip(),session_id)
     from agentie.core.desktop_runtime import route_desktop_request
-    desktop=await asyncio.to_thread(route_desktop_request,text)
+    desktop=await asyncio.to_thread(route_desktop_request,text,session_id)
     if desktop is not None:return desktop
     from agentie.core.browser_automation import browser_session_command
     interactive=await browser_session_command(text,session_id)
