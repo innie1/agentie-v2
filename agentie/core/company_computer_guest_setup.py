@@ -6,11 +6,11 @@ from typing import Any
 
 from agentie.core import company_computer as computer
 from agentie.core import company_computer_windows_accel as _windows_accel  # registers Windows acceleration fix
-from agentie.core import company_computer_whpx as _whpx_compat  # removes WHPX-incompatible CPU/APIC/graphics settings
+from agentie.core import company_computer_whpx as _whpx_compat  # registers stable WHPX hardware profile
 from agentie.core import company_computer_runtime_profile as _runtime_profile  # relaunches stale live QEMU hardware profiles
 from agentie.core import company_computer_guest_agent as _guest_agent  # registers QGA API on computer
 
-_SETUP_MARKER = "/var/lib/agentie/runtime-v6"
+_SETUP_MARKER = "/var/lib/agentie/runtime-v7"
 
 
 def _wait_for_qga(timeout: int = 300) -> None:
@@ -31,7 +31,6 @@ def _wait_for_qga(timeout: int = 300) -> None:
 
 
 def _guest_output(result: dict[str, Any]) -> str:
-    """Decode QGA guest-exec stdout/stderr for actionable setup errors."""
     chunks: list[str] = []
     for key, label in (("out-data", "stdout"), ("err-data", "stderr")):
         raw = result.get(key)
@@ -81,23 +80,90 @@ def _desktop_diagnostics_command() -> list[str]:
     return [
         "/bin/bash",
         "-lc",
-        "echo '--- agentie-xorg.service ---'; "
-        "systemctl status agentie-xorg.service --no-pager -l || true; "
-        "echo '--- agentie-desktop.service ---'; "
-        "systemctl status agentie-desktop.service --no-pager -l || true; "
-        "echo '--- xorg journal ---'; "
-        "journalctl -u agentie-xorg.service -n 60 --no-pager || true; "
-        "echo '--- desktop journal ---'; "
-        "journalctl -u agentie-desktop.service -n 60 --no-pager || true; "
-        "echo '--- Xorg log ---'; "
-        "tail -n 80 /var/log/Xorg.0.log 2>/dev/null || true; "
-        "echo '--- Openbox log ---'; "
-        "tail -n 80 /tmp/openbox.log 2>/dev/null || true; "
-        "echo '--- PCManFM log ---'; "
-        "tail -n 80 /tmp/pcmanfm.log 2>/dev/null || true; "
-        "echo '--- Chromium log ---'; "
-        "tail -n 80 /tmp/chromium.log 2>/dev/null || true",
+        "echo '--- kernel ---'; uname -a || true; "
+        "echo '--- dri ---'; ls -la /dev/dri 2>/dev/null || true; "
+        "echo '--- virtio gpu module ---'; modinfo virtio_gpu 2>/dev/null | head -n 20 || true; "
+        "echo '--- agentie-xorg.service ---'; systemctl status agentie-xorg.service --no-pager -l || true; "
+        "echo '--- agentie-desktop.service ---'; systemctl status agentie-desktop.service --no-pager -l || true; "
+        "echo '--- xorg journal ---'; journalctl -u agentie-xorg.service -n 60 --no-pager || true; "
+        "echo '--- desktop journal ---'; journalctl -u agentie-desktop.service -n 60 --no-pager || true; "
+        "echo '--- Xorg log ---'; tail -n 80 /var/log/Xorg.0.log 2>/dev/null || true; "
+        "echo '--- Openbox log ---'; tail -n 80 /tmp/openbox.log 2>/dev/null || true; "
+        "echo '--- PCManFM log ---'; tail -n 80 /tmp/pcmanfm.log 2>/dev/null || true; "
+        "echo '--- Chromium log ---'; tail -n 80 /tmp/chromium.log 2>/dev/null || true",
     ]
+
+
+def _ensure_full_graphics_kernel(timeout: int) -> None:
+    """Upgrade old genericcloud kernels in place so virtio-vga has a DRM driver."""
+    probe = computer.guest_exec(
+        [
+            "/bin/bash",
+            "-lc",
+            "uname -r; "
+            "if [ -e /dev/dri/card0 ]; then exit 0; fi; "
+            "case \"$(uname -r)\" in *cloud-amd64*) exit 10;; esac; "
+            "modprobe virtio_gpu >/dev/null 2>&1 || true; "
+            "udevadm settle >/dev/null 2>&1 || true; "
+            "test -e /dev/dri/card0",
+        ],
+        timeout=30,
+    )
+    code = int(probe.get("exitcode") or 0)
+    if code == 0:
+        return
+
+    if code == 10:
+        install = computer.guest_exec(
+            [
+                "/bin/bash",
+                "-lc",
+                "set -eu; export DEBIAN_FRONTEND=noninteractive; "
+                "for i in $(seq 1 150); do "
+                "if ! pgrep -x apt-get >/dev/null 2>&1 && ! pgrep -x apt >/dev/null 2>&1 && ! pgrep -x dpkg >/dev/null 2>&1; then break; fi; sleep 2; done; "
+                "dpkg --configure -a; apt-get update; "
+                "apt-get install -y --no-install-recommends linux-image-amd64; "
+                "test -e /boot/vmlinuz-$(readlink /vmlinuz | sed 's#boot/vmlinuz-##') || test -L /vmlinuz || ls /boot/vmlinuz-* >/dev/null",
+            ],
+            timeout=max(300, timeout),
+        )
+        if int(install.get("exitcode") or 0) != 0:
+            detail = _guest_output(install)
+            raise computer.ComputerError(
+                "Could not install the full Debian kernel required for Company Computer graphics."
+                + (f" Details: {detail}" if detail else "")
+            )
+
+        # Reboot the guest, not QEMU. The persistent disk and host-side VM process
+        # remain intact; only Debian restarts into the newly installed full kernel.
+        computer.guest_exec(
+            [
+                "/bin/bash",
+                "-lc",
+                "nohup /bin/sh -c 'sleep 1; systemctl reboot' >/tmp/agentie-kernel-reboot.log 2>&1 & exit 0",
+            ],
+            timeout=15,
+        )
+        time.sleep(8)
+        _wait_for_qga(max(180, timeout))
+
+    verify = computer.guest_exec(
+        [
+            "/bin/bash",
+            "-lc",
+            "modprobe virtio_gpu >/dev/null 2>&1 || true; "
+            "udevadm settle >/dev/null 2>&1 || true; "
+            "echo kernel=$(uname -r); "
+            "test -e /dev/dri/card0",
+        ],
+        timeout=30,
+    )
+    if int(verify.get("exitcode") or 0) != 0:
+        detail = _guest_output(verify)
+        raise computer.ComputerError(
+            "Company Computer booted, but Debian still has no virtio graphics device after the kernel repair."
+            + (f" Details: {detail}" if detail else "")
+        )
 
 
 def _repair_script() -> str:
@@ -220,6 +286,10 @@ for _i in $(seq 1 120); do
   sleep 0.25
 done
 if ! DISPLAY=:0 /usr/bin/xdotool getdisplaygeometry >/dev/null 2>&1; then
+  echo '--- kernel ---' >&2
+  uname -a >&2 || true
+  echo '--- dri ---' >&2
+  ls -la /dev/dri >&2 2>/dev/null || true
   echo '--- agentie-xorg.service status ---' >&2
   systemctl status agentie-xorg.service --no-pager -l >&2 || true
   echo '--- agentie-xorg.service journal ---' >&2
@@ -249,7 +319,7 @@ if ! systemctl is-active --quiet agentie-xorg.service || ! systemctl is-active -
   exit 1
 fi
 
-touch /var/lib/agentie/runtime-v6
+touch /var/lib/agentie/runtime-v7
 """.strip()
 
 
@@ -264,7 +334,6 @@ def _run_repair(timeout: int) -> None:
 
 
 def ensure_guest_runtime(*, timeout: int = 300) -> dict[str, Any]:
-    """Make first-use guest prerequisites reliable without recreating its disk."""
     current = computer.status()
     if current.get("state") == "SUSPENDED":
         computer.resume()
@@ -272,6 +341,7 @@ def ensure_guest_runtime(*, timeout: int = 300) -> dict[str, Any]:
         computer.start()
     _wait_for_qga(timeout)
     _wait_for_cloud_init(timeout)
+    _ensure_full_graphics_kernel(timeout)
 
     if not _marker_exists():
         _run_repair(timeout)
