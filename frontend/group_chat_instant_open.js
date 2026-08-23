@@ -14,7 +14,7 @@
     const shell=document.querySelector('.chat-shell');
     if(shell){
       const css=getComputedStyle(shell),overflow=String(css.overflowY||css.overflow||'');
-      if(/auto|scroll|overlay/.test(overflow)&&shell.scrollHeight>shell.clientHeight+1)return shell;
+      if(/auto|scroll|overlay/.test(overflow))return shell;
     }
     return document.scrollingElement||document.documentElement||document.body;
   }
