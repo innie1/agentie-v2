@@ -13,7 +13,7 @@ from typing import Any
 
 from agentie.core import company_computer as computer
 
-_PROFILE_VERSION = "2026-08-whpx-pc-standard-vga-v2"
+_PROFILE_VERSION = "2026-08-whpx-q35-virtio-full-kernel-v3"
 _PROFILE_FILE = computer.ROOT / "runtime-profile.version"
 _ORIGINAL_START = computer.start
 
@@ -32,9 +32,6 @@ def _mark_profile_current() -> None:
 
 def _live_runtime_needs_relaunch() -> bool:
     row = computer._row()
-    # A stale live QEMU process must be relaunched even if VNC never opened.
-    # Hardware initialization failures can leave QMP/QGA ports alive while the
-    # display port is absent, which previously prevented the migration.
     return computer._is_pid_alive(row.get("vm_pid")) and not _profile_is_current()
 
 
@@ -48,9 +45,6 @@ def start() -> dict[str, Any]:
                 "Release Computer control and start it again."
             )
 
-        # A paused VM cannot process ACPI powerdown. Resume it before asking the
-        # normal stop path to shut down gracefully. If QMP resume itself fails,
-        # stop() still has a terminate fallback and never deletes the QCOW2 disk.
         if row.get("state") == "SUSPENDED" and computer._is_pid_alive(row.get("vm_pid")):
             try:
                 computer._qmp_command("cont")
