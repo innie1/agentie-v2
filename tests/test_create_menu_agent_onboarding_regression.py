@@ -39,7 +39,7 @@ class CreateMenuAgentOnboardingRegressionTests(unittest.TestCase):
         self.assertNotIn('visibility:hidden', self.ui)
         self.assertNotIn('pointer-events:none', self.ui)
         self.assertIn("event.target.closest?.('#sendButton')", self.ui)
-        self.assertIn("event.target===composerInput()", self.ui)
+        self.assertIn("event.target!==composerInput()", self.ui)
         self.assertIn("setComposerPlaceholder('Describe what you want this agent to do…')", self.ui)
         self.assertIn("setComposerPlaceholder('Type my name…')", self.ui)
 
