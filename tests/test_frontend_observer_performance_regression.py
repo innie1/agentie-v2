@@ -10,8 +10,9 @@ class FrontendObserverPerformanceRegressionTests(unittest.TestCase):
     def test_shared_tool_catalog_does_not_use_competing_mutation_observer(self):
         self.assertIn('function ensureSharedToolCatalog()', self.loader)
         self.assertNotIn('new MutationObserver(ensureSharedToolCatalog)', self.loader)
+        self.assertNotIn('MutationObserver(ensureSharedToolCatalog', self.loader)
+        self.assertIn('if(pluginPanel)ensureSharedToolCatalog()', self.loader)
         self.assertIn("setTimeout(ensureSharedToolCatalog,180)", self.loader)
-        self.assertIn('two observers that remove/recreate each other', self.loader)
 
     def test_profile_observer_only_processes_added_profile_modals(self):
         self.assertIn('function polishAddedNode(node)', self.loader)
