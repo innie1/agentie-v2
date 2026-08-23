@@ -170,8 +170,8 @@ def _ensure_polling() -> None:
 async def _start(name: str, session_id: str | None) -> dict[str, Any]:
     owner = _owner_from_session(session_id);item = start_recording(name, owner)
     try:
-        page = await browser._ensure_page()
-        if not browser._USING_WSL_CHROME:
+        page = await browser._ensure_page(session_id=session_id)
+        if not browser._USING_COMPANY_COMPUTER:
             cancel_recording();_reset_probe_state();return {"message": "Teach mode needs the visible browser inside Agentie Computer. Start the Computer/browser and try again.", "card": None}
         _reset_probe_state();await _install_probe(page);await _drain(page);_ensure_polling();recording = active_recording() or item
         card = {"type":"note","title":f"Teaching: {recording['name']}","content":"Recording visible browser actions locally. Perform the workflow once in Agentie Computer, then say “Stop teaching”.\n\nPasswords/secrets are never stored."}
@@ -193,13 +193,13 @@ async def _replay(item: dict[str, Any], session_id: str | None, *, source_label:
         return {"message": f"This {source_label} contains a protected value ({fields}). Agentie intentionally did not save the secret. Complete the protected field manually before replay or re-teach that step without a secret.", "card": _workflow_note(item)}
     actions: list[str] = []
     try:
-        page = await browser._ensure_page()
+        page = await browser._ensure_page(session_id=session_id)
         for step in item.get("steps") or []:
             command = str(step.get("command") or "").strip()
             if not command:continue
             if str(step.get("kind")) == "open":
                 url = str((step.get("metadata") or {}).get("url") or "").strip()
-                if url:page = await browser._ensure_page(url);actions.append(f"Opened {url}");continue
+                if url:page = await browser._ensure_page(url,session_id);actions.append(f"Opened {url}");continue
             result, page = await browser._perform(page, command);actions.append(result);await browser._publish_frame(page, status="working", url=page.url, detail=result)
         mark_run(str(item.get("id")));await browser._publish_frame(page, status="done", url=page.url, detail=f"Workflow {item['name']} complete")
         return {"message": f"Completed {source_label} “{item['name']}” locally.", "card": {"type":"browser_actions","title":f"Workflow · {item['name']}","url":page.url,"actions":actions,"workflow_id":item.get("id"),"provider_calls":0}}
@@ -231,8 +231,6 @@ async def _run_skill(name: str, session_id: str | None) -> dict[str, Any]:
     if str(skill.get("status") or "draft")!="active":return {"message":f"Skill “{skill['name']}” is {skill.get('status') or 'draft'}. Review it and activate it before execution.","card":skill_card(skill)}
     source_id=str(skill.get("source_workflow_id") or "").strip()
     if source_id:
-        # Taught Skills preserve deterministic local replay instead of being
-        # converted into a model-driven approximation.
         item=get_workflow(source_id,None)
         if not item:return {"message":f"Skill “{skill['name']}” is linked to a taught workflow that no longer exists. Re-teach or edit the Skill before running it.","card":skill_card(skill)}
         return await _replay(item,session_id,source_label=f"Skill {skill['name']}")
