@@ -84,10 +84,11 @@ class CreateMenuAgentOnboardingRegressionTests(unittest.TestCase):
         self.assertIn('accent-color:#0b84ff', self.loader)
 
     def test_default_profile_hides_internal_counts_and_details(self):
-        self.assertIn('.employee-profile-personality,.employee-profile-stats{display:none!important}', self.loader)
-        self.assertIn('.employee-profile-section{display:none!important}', self.loader)
-        self.assertIn('.employee-profile-section:first-child{display:block!important', self.loader)
-        self.assertIn('.employee-profile-section:first-child>strong{display:none!important}', self.loader)
+        scope='.employee-profile-card:not(.employee-profile-form)'
+        self.assertIn(f'{scope} .employee-profile-personality,{scope} .employee-profile-stats{{display:none!important}}', self.loader)
+        self.assertIn(f'{scope} .employee-profile-section{{display:none!important}}', self.loader)
+        self.assertIn(f'{scope} .employee-profile-section:first-child{{display:block!important', self.loader)
+        self.assertIn(f'{scope} .employee-profile-section:first-child>strong{{display:none!important}}', self.loader)
         self.assertIn('background:linear-gradient', self.loader)
         self.assertNotIn('radial-gradient', self.loader)
 
