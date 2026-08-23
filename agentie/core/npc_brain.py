@@ -14,8 +14,9 @@ _ACKS={
     "can you help me":"Yes. Tell me what you want to accomplish.","are you there":"Yes. I’m here.",
 }
 
-# Local deterministic response profiles are capability behaviors, not employee
-# classes. A title such as CTO, Researcher or Chief of Staff does not select one.
+# Local deterministic response profiles are lightweight response helpers, not
+# employee classes or tool grants. They are inferred from the user's configured
+# work for the agent; globally available tools do not define the agent identity.
 _CAPABILITY_FOCUS={"coding":"engineering","research":"research","planning":"planning"}
 
 def _normalized(text):
@@ -48,24 +49,18 @@ def job_title(goal,max_words=8):
         display.append(suffix)
     return " ".join(display[:max_words]).strip() or "Agent Job"
 
-def role_profile(agent):
-    """Return only an explicitly granted local capability profile.
+def _configured_work_text(agent):
+    parts=[agent.get("role"),agent.get("purpose"),agent.get("goal"),*(agent.get("responsibilities") or [])]
+    return _normalized(" ".join(str(x or "") for x in parts))
 
-    Job titles remain identity/context. They do not silently grant coding,
-    research, planning, delegation, or any other runtime behavior.
-    """
+def role_profile(agent):
+    """Choose a local response helper from configured work, never from tool access."""
     permissions=dict(agent.get("permissions") or {})
     if bool(permissions.get("delegate")):return "planning"
-    try:
-        from agentie.core.agent_access import skill_allowed
-        if skill_allowed(agent,"code-execution"):return "coding"
-        if skill_allowed(agent,"research"):return "research"
-        if skill_allowed(agent,"planning"):return "planning"
-    except Exception:
-        skills={str(x).casefold() for x in agent.get("skills") or []}
-        if "code-execution" in skills:return "coding"
-        if "research" in skills:return "research"
-        if "planning" in skills:return "planning"
+    work=_configured_work_text(agent)
+    if re.search(r"\b(?:engineering|software|developer|development|code|coding|debug|programming|technical implementation|application build|app build)\b",work):return "coding"
+    if re.search(r"\b(?:research|investigate|market analysis|evidence|sources|verify|verification|competitor|fact check)\b",work):return "research"
+    if re.search(r"\b(?:planning|plan|roadmap|strategy|operations|coordinate|coordination|organize|prioritize|project management)\b",work):return "planning"
     return "general"
 
 def _adapt(agent,message):
