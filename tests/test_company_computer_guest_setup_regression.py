@@ -38,7 +38,7 @@ class CompanyComputerGuestSetupRegressionTests(unittest.TestCase):
         self.assertIn("gpasswd -d agentie sudo", script)
         self.assertIn("/etc/sudoers.d", script)
         self.assertNotIn("systemctl restart qemu-guest-agent", script)
-        self.assertIn("touch /var/lib/agentie/runtime-v5", script)
+        self.assertIn("touch /var/lib/agentie/runtime-v7", script)
         self.assertNotIn("qemu-img", script)
         self.assertNotIn("rm -f /home/agentie/.config/chromium-agentie", script)
 
@@ -56,22 +56,47 @@ class CompanyComputerGuestSetupRegressionTests(unittest.TestCase):
         self.assertIn("--restore-last-session", script)
         self.assertIn("pcmanfm --desktop", script)
 
-    def test_repair_surfaces_xorg_and_desktop_diagnostics(self):
+    def test_repair_surfaces_xorg_kernel_and_desktop_diagnostics(self):
         script = setup._repair_script()
+        diagnostics = " ".join(setup._desktop_diagnostics_command())
         self.assertIn("systemctl status agentie-xorg.service --no-pager -l", script)
         self.assertIn("systemctl status agentie-desktop.service --no-pager -l", script)
-        self.assertIn("journalctl -u agentie-xorg.service", script)
-        self.assertIn("journalctl -u agentie-desktop.service", script)
-        self.assertIn("/var/log/Xorg.0.log", script)
-        self.assertIn("/tmp/openbox.log", script)
-        self.assertIn("/tmp/pcmanfm.log", script)
-        self.assertIn("/tmp/chromium.log", script)
+        self.assertIn("journalctl -u agentie-xorg.service", diagnostics)
+        self.assertIn("/var/log/Xorg.0.log", diagnostics)
+        self.assertIn("uname -a", diagnostics)
+        self.assertIn("/dev/dri", diagnostics)
+        self.assertIn("virtio_gpu", diagnostics)
 
-    def test_health_checks_both_services_and_x_socket(self):
+    def test_health_checks_real_x11_query_not_socket_only(self):
         command = " ".join(setup._desktop_health_command())
         self.assertIn("agentie-xorg.service", command)
         self.assertIn("agentie-desktop.service", command)
-        self.assertIn("/tmp/.X11-unix/X0", command)
+        self.assertIn("xdotool getdisplaygeometry", command)
+
+    def test_full_graphics_kernel_is_noop_when_dri_already_available(self):
+        completed = {"exited": True, "exitcode": 0}
+        with patch.object(setup.computer, "guest_exec", return_value=completed) as guest:
+            setup._ensure_full_graphics_kernel(60)
+        self.assertEqual(guest.call_count, 1)
+        self.assertIn("/dev/dri/card0", guest.call_args.args[0][-1])
+
+    def test_cloud_kernel_is_upgraded_and_guest_rebooted_in_place(self):
+        cloud_kernel = {"exited": True, "exitcode": 10}
+        completed = {"exited": True, "exitcode": 0}
+        with patch.object(
+            setup.computer,
+            "guest_exec",
+            side_effect=[cloud_kernel, completed, completed, completed],
+        ) as guest, patch.object(setup.time, "sleep"), patch.object(setup, "_wait_for_qga") as wait_qga:
+            setup._ensure_full_graphics_kernel(90)
+        install_command = guest.call_args_list[1].args[0][-1]
+        reboot_command = guest.call_args_list[2].args[0][-1]
+        verify_command = guest.call_args_list[3].args[0][-1]
+        self.assertIn("apt-get install -y --no-install-recommends linux-image-amd64", install_command)
+        self.assertIn("systemctl reboot", reboot_command)
+        self.assertIn("modprobe virtio_gpu", verify_command)
+        self.assertIn("/dev/dri/card0", verify_command)
+        wait_qga.assert_called_once()
 
     def test_first_use_repairs_in_place_then_checks_health(self):
         status = {"computer_id": "company-default", "state": "READY", "disk_exists": True}
@@ -79,6 +104,7 @@ class CompanyComputerGuestSetupRegressionTests(unittest.TestCase):
         with patch.object(setup.computer, "start", return_value=status) as start, \
              patch.object(setup, "_wait_for_qga") as wait_qga, \
              patch.object(setup, "_wait_for_cloud_init") as wait_cloud, \
+             patch.object(setup, "_ensure_full_graphics_kernel") as ensure_kernel, \
              patch.object(setup, "_marker_exists", return_value=False), \
              patch.object(setup.computer, "guest_exec", return_value=completed) as guest, \
              patch.object(setup.computer, "touch_activity") as touch, \
@@ -87,10 +113,11 @@ class CompanyComputerGuestSetupRegressionTests(unittest.TestCase):
         start.assert_called_once()
         wait_qga.assert_called_once()
         wait_cloud.assert_called_once()
+        ensure_kernel.assert_called_once()
         self.assertGreaterEqual(guest.call_count, 2)
         repair_argv = guest.call_args_list[0].args[0]
         self.assertEqual(repair_argv[:2], ["/bin/bash", "-lc"])
-        self.assertIn("runtime-v5", repair_argv[-1])
+        self.assertIn("runtime-v7", repair_argv[-1])
         self.assertNotIn("qemu-img", repair_argv[-1])
         touch.assert_called_once()
         self.assertEqual(result["computer_id"], "company-default")
@@ -102,6 +129,7 @@ class CompanyComputerGuestSetupRegressionTests(unittest.TestCase):
         with patch.object(setup.computer, "start", return_value=status), \
              patch.object(setup, "_wait_for_qga"), \
              patch.object(setup, "_wait_for_cloud_init"), \
+             patch.object(setup, "_ensure_full_graphics_kernel"), \
              patch.object(setup, "_marker_exists", return_value=True), \
              patch.object(setup.computer, "guest_exec", side_effect=[inactive, completed, completed]) as guest, \
              patch.object(setup.computer, "touch_activity"), \
@@ -120,6 +148,7 @@ class CompanyComputerGuestSetupRegressionTests(unittest.TestCase):
         with patch.object(setup.computer, "start", return_value={}), \
              patch.object(setup, "_wait_for_qga"), \
              patch.object(setup, "_wait_for_cloud_init"), \
+             patch.object(setup, "_ensure_full_graphics_kernel"), \
              patch.object(setup, "_marker_exists", return_value=False), \
              patch.object(setup.computer, "guest_exec", return_value=failed):
             with self.assertRaises(setup.computer.ComputerError) as ctx:
