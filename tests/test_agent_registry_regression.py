@@ -24,7 +24,7 @@ class AgentRegistryRegressionTests(unittest.TestCase):
             item.stop()
         self.temp.cleanup()
 
-    def test_create_agent_has_private_memory_neutral_runtime_and_explicit_permissions(self):
+    def test_create_agent_has_private_memory_neutral_runtime_and_shared_capabilities(self):
         result = agent_registry.create_agent("Alex", "CTO", "manager")
         agent = result["agent"]
         self.assertTrue(result["created"])
@@ -36,7 +36,7 @@ class AgentRegistryRegressionTests(unittest.TestCase):
         self.assertEqual(agent["base"], "general")
         self.assertEqual(agent["runtime_profile"], "general")
         self.assertFalse(agent["permissions"]["delegate"])
-        self.assertEqual(agent["permissions"].get("capability_mode"), "explicit")
+        self.assertEqual(agent["permissions"].get("capability_mode"), "shared")
 
     def test_duplicate_name_reuses_existing_agent(self):
         first = agent_registry.create_agent("Alex", "CTO", "manager")
@@ -54,7 +54,7 @@ class AgentRegistryRegressionTests(unittest.TestCase):
         self.assertEqual(result["card"]["role"].lower(), "cto")
         self.assertEqual(result["card"]["base"], "general")
         self.assertFalse(result["card"]["permissions"]["delegate"])
-        self.assertEqual(result["card"]["permissions"].get("capability_mode"), "explicit")
+        self.assertEqual(result["card"]["permissions"].get("capability_mode"), "shared")
 
     def test_agent_role_creation_with_purpose(self):
         result = role_store.route_role_command("Create a content creator agent for INNIE")
