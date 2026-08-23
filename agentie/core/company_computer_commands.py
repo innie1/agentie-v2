@@ -89,6 +89,55 @@ def _run_as_root(command: str, timeout: int) -> dict[str, Any]:
     return computer.guest_exec(["/bin/bash", "-lc", command], timeout=timeout)
 
 
+def _execute_command(raw: str, agent_id: str, reason: str | None, timeout: int) -> dict[str, Any]:
+    computer.acquire_agent(agent_id)
+    try:
+        root_required = bool(reason and _SYSTEM_CHANGE.search(raw))
+        result = _run_as_root(raw, timeout) if root_required else _run_as_agentie(raw, timeout)
+        stdout = _decode(result.get("out-data"))
+        stderr = _decode(result.get("err-data"))
+        exit_code = int(result.get("exitcode") or 0)
+        terminal = {
+            "command": raw,
+            "output": stdout[:50000],
+            "error": stderr[:20000],
+            "exit_code": exit_code,
+            "guest": "company-default",
+            "user": "root" if root_required else "agentie",
+            "persistent": True,
+            "truncated": bool(result.get("out-truncated") or result.get("err-truncated")),
+        }
+        return {
+            "message": "Company Computer terminal command completed." if exit_code == 0 else f"Company Computer terminal command exited with code {exit_code}.",
+            "card": {"type": "desktop_view", "app": "terminal", "mode": "qemu", "terminal": terminal},
+            "terminal": terminal,
+        }
+    finally:
+        try:
+            computer.release_control(agent_id)
+        except Exception:
+            pass
+
+
+def execute_approved_guest_command(command: str, agent_id: str, *, timeout: int = 300) -> dict[str, Any]:
+    """Execute a command whose specific approval has just been resolved.
+
+    This is intentionally separate from `run_guest_command` so approval
+    resolution can execute the approved action exactly once without creating a
+    second approval or relying on a retry from the UI.
+    """
+    raw = str(command or "").strip()
+    owner = str(agent_id or "").strip()
+    if not raw or not owner:
+        raise ValueError("Approved Company Computer command is missing command or agent ownership metadata.")
+    if len(raw) > _MAX_COMMAND:
+        raise ValueError("Company Computer terminal commands are limited to 4000 characters.")
+    reason = _approval_reason(raw)
+    if reason is None:
+        raise ValueError("Approved Company Computer command is no longer classified as consequential.")
+    return _execute_command(raw, owner, reason, timeout)
+
+
 def run_guest_command(command: str, session_id: str | None = None, *, timeout: int = 120) -> dict[str, Any]:
     """Execute a real command inside the persistent Company Computer.
 
@@ -124,34 +173,7 @@ def run_guest_command(command: str, session_id: str | None = None, *, timeout: i
         }
     if reason:
         consume_approval(action)
-
-    agent_id = _agent_id(session_id)
-    computer.acquire_agent(agent_id)
-    try:
-        result = _run_as_root(raw, timeout) if reason and _SYSTEM_CHANGE.search(raw) else _run_as_agentie(raw, timeout)
-        stdout = _decode(result.get("out-data"))
-        stderr = _decode(result.get("err-data"))
-        exit_code = int(result.get("exitcode") or 0)
-        terminal = {
-            "command": raw,
-            "output": stdout[:50000],
-            "error": stderr[:20000],
-            "exit_code": exit_code,
-            "guest": "company-default",
-            "user": "root" if reason and _SYSTEM_CHANGE.search(raw) else "agentie",
-            "persistent": True,
-            "truncated": bool(result.get("out-truncated") or result.get("err-truncated")),
-        }
-        return {
-            "message": "Company Computer terminal command completed." if exit_code == 0 else f"Company Computer terminal command exited with code {exit_code}.",
-            "card": {"type": "desktop_view", "app": "terminal", "mode": "qemu", "terminal": terminal},
-            "terminal": terminal,
-        }
-    finally:
-        try:
-            computer.release_control(agent_id)
-        except Exception:
-            pass
+    return _execute_command(raw, _agent_id(session_id), reason, timeout)
 
 
 def install_guest_package(package: str, session_id: str | None = None) -> dict[str, Any]:
