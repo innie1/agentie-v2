@@ -9,7 +9,7 @@ from agentie.core import company_computer_windows_accel as _windows_accel  # reg
 from agentie.core import company_computer_whpx as _whpx_compat  # removes WHPX-incompatible CPU/APIC settings
 from agentie.core import company_computer_guest_agent as _guest_agent  # registers QGA API on computer
 
-_SETUP_MARKER = "/var/lib/agentie/runtime-v5"
+_SETUP_MARKER = "/var/lib/agentie/runtime-v6"
 
 
 def _wait_for_qga(timeout: int = 300) -> None:
@@ -73,7 +73,7 @@ def _desktop_health_command() -> list[str]:
         "-lc",
         "systemctl is-active --quiet agentie-xorg.service && "
         "systemctl is-active --quiet agentie-desktop.service && "
-        "test -S /tmp/.X11-unix/X0",
+        "DISPLAY=:0 /usr/bin/xdotool getdisplaygeometry >/dev/null 2>&1",
     ]
 
 
@@ -138,11 +138,15 @@ export HOME=/home/agentie
 export XDG_RUNTIME_DIR=/tmp/runtime-agentie
 mkdir -p "$XDG_RUNTIME_DIR"
 chmod 0700 "$XDG_RUNTIME_DIR"
-for _i in $(seq 1 60); do
-  [ -S /tmp/.X11-unix/X0 ] && break
+# The X11 socket can exist before Xorg is ready to accept clients. Wait until a
+# real X11 client can query the display before launching Openbox or Chromium.
+for _i in $(seq 1 120); do
+  if DISPLAY=:0 /usr/bin/xdotool getdisplaygeometry >/dev/null 2>&1; then
+    break
+  fi
   sleep 0.25
 done
-[ -S /tmp/.X11-unix/X0 ] || exit 1
+DISPLAY=:0 /usr/bin/xdotool getdisplaygeometry >/dev/null 2>&1 || exit 1
 exec /usr/bin/dbus-run-session -- /bin/sh -lc '
   pcmanfm --desktop --profile LXDE >/tmp/pcmanfm.log 2>&1 &
   chromium --user-data-dir=/home/agentie/.config/chromium-agentie --remote-debugging-port=9222 --remote-debugging-address=0.0.0.0 --remote-allow-origins=* --no-first-run --no-default-browser-check --restore-last-session about:blank >/tmp/chromium.log 2>&1 &
@@ -211,11 +215,15 @@ systemctl enable qemu-guest-agent >/dev/null 2>&1 || true
 systemctl enable agentie-xorg.service agentie-desktop.service
 systemctl restart agentie-xorg.service
 
-for _i in $(seq 1 60); do
-  [ -S /tmp/.X11-unix/X0 ] && break
+# Do not rely on the Unix socket alone: Xorg creates it before initialization is
+# necessarily complete. Require a successful X11 query before starting desktop.
+for _i in $(seq 1 120); do
+  if DISPLAY=:0 /usr/bin/xdotool getdisplaygeometry >/dev/null 2>&1; then
+    break
+  fi
   sleep 0.25
 done
-if [ ! -S /tmp/.X11-unix/X0 ]; then
+if ! DISPLAY=:0 /usr/bin/xdotool getdisplaygeometry >/dev/null 2>&1; then
   echo '--- agentie-xorg.service status ---' >&2
   systemctl status agentie-xorg.service --no-pager -l >&2 || true
   echo '--- agentie-xorg.service journal ---' >&2
@@ -227,7 +235,7 @@ fi
 
 systemctl restart agentie-desktop.service
 sleep 4
-if ! systemctl is-active --quiet agentie-xorg.service || ! systemctl is-active --quiet agentie-desktop.service; then
+if ! systemctl is-active --quiet agentie-xorg.service || ! systemctl is-active --quiet agentie-desktop.service || ! DISPLAY=:0 /usr/bin/xdotool getdisplaygeometry >/dev/null 2>&1; then
   echo '--- agentie-xorg.service status ---' >&2
   systemctl status agentie-xorg.service --no-pager -l >&2 || true
   echo '--- agentie-desktop.service status ---' >&2
@@ -245,7 +253,7 @@ if ! systemctl is-active --quiet agentie-xorg.service || ! systemctl is-active -
   exit 1
 fi
 
-touch /var/lib/agentie/runtime-v5
+touch /var/lib/agentie/runtime-v6
 """.strip()
 
 
@@ -261,7 +269,11 @@ def _run_repair(timeout: int) -> None:
 
 def ensure_guest_runtime(*, timeout: int = 300) -> dict[str, Any]:
     """Make first-use guest prerequisites reliable without recreating its disk."""
-    computer.start()
+    current = computer.status()
+    if current.get("state") == "SUSPENDED":
+        computer.resume()
+    else:
+        computer.start()
     _wait_for_qga(timeout)
     _wait_for_cloud_init(timeout)
 
