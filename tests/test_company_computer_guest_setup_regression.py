@@ -21,6 +21,15 @@ class CompanyComputerGuestSetupRegressionTests(unittest.TestCase):
         self.assertIn("pgrep -x apt-get", script)
         self.assertIn("dpkg --configure -a", script)
 
+    def test_repair_recreates_missing_desktop_service_and_xinit(self):
+        script = setup._repair_script()
+        self.assertIn("cat >/etc/systemd/system/agentie-desktop.service", script)
+        self.assertIn("cat >/home/agentie/.xinitrc", script)
+        self.assertIn("ExecStart=/usr/bin/startx /home/agentie/.xinitrc -- :0 -nolisten tcp vt1", script)
+        self.assertIn("chromium --user-data-dir=/home/agentie/.config/chromium-agentie", script)
+        self.assertIn("systemctl daemon-reload", script)
+        self.assertIn("systemctl enable agentie-desktop.service", script)
+
     def test_first_use_waits_for_cloud_init_then_repairs_in_place_without_recreating_disk(self):
         status = {"computer_id": "company-default", "state": "READY", "disk_exists": True}
         completed = {"exited": True, "exitcode": 0}
