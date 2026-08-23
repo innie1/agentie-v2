@@ -4,6 +4,7 @@ import time
 from typing import Any
 
 from agentie.core import company_computer as computer
+from agentie.core import company_computer_windows_accel as _windows_accel  # registers Windows acceleration fix
 from agentie.core import company_computer_guest_agent as _guest_agent  # registers QGA API on computer
 
 _SETUP_MARKER = "/var/lib/agentie/runtime-v3"
