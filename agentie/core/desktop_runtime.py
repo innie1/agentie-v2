@@ -8,7 +8,16 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
-from agentie.core.company_computer import ComputerError, resume as resume_computer, start as start_computer, status as computer_status, stop as stop_computer, suspend as suspend_computer
+from agentie.core.company_computer import (
+    ComputerError,
+    acquire_user,
+    continue_agent,
+    resume as resume_computer,
+    start as start_computer,
+    status as computer_status,
+    stop as stop_computer,
+    suspend as suspend_computer,
+)
 
 WORKSPACE = Path.cwd() / "workspace"
 
@@ -124,6 +133,10 @@ def _natural_command(text: str) -> str | None:
         return "resume"
     if low in {"computer status", "desktop status"}:
         return "status"
+    if low in {"take computer control", "take control", "user control", "take user control"}:
+        return "take user control"
+    if low in {"continue agent", "return control to agent", "give control back to agent"}:
+        return "continue agent"
     if re.fullmatch(r"(?:open|show|view|look at) (?:the )?(?:workspace )?files", low) or low in {"files", "file manager", "open file manager", "open computer files"}:
         return "files"
     if re.fullmatch(r"(?:open|show|view) computer notes", low):
@@ -180,8 +193,15 @@ def route_desktop_request(message: str) -> dict[str, Any] | None:
     low = command.lower().strip()
     try:
         if low in {"start", "start real desktop", "home", "desktop", "show home"}:
-            info = start_computer()
-            return {"message": "Agentie Computer ready.", "card": _real_desktop_card(info)}
+            start_computer()
+            info = acquire_user()
+            return {"message": "Agentie Computer ready for you.", "card": _real_desktop_card(info)}
+        if low in {"take user control", "user control", "take control"}:
+            info = acquire_user()
+            return {"message": "User Control enabled on the same Agentie Computer.", "card": _real_desktop_card(info)}
+        if low in {"continue agent", "return to agent"}:
+            info = continue_agent()
+            return {"message": "Control returned to the agent.", "card": _real_desktop_card(info)}
         if low in {"status", "real desktop status"}:
             info = computer_status()
             state = str(info.get("state") or "STOPPED").replace("_", " ").title()
@@ -193,8 +213,9 @@ def route_desktop_request(message: str) -> dict[str, Any] | None:
             info = suspend_computer()
             return {"message": "Agentie Computer suspended.", "card": _real_desktop_card(info, "suspended")}
         if low in {"resume", "wake"}:
-            info = resume_computer()
-            return {"message": "Agentie Computer resumed.", "card": _real_desktop_card(info)}
+            resume_computer()
+            info = acquire_user()
+            return {"message": "Agentie Computer resumed for you.", "card": _real_desktop_card(info)}
         if low in {"files", "open files", "show files"}:
             return {"message": "Workspace files.", "card": desktop_card("files", items=_file_items())}
         if low.startswith("open file "):
@@ -208,7 +229,8 @@ def route_desktop_request(message: str) -> dict[str, Any] | None:
         if low in {"plugins", "open plugins"}:
             return {"message": "Plugins.", "card": desktop_card("plugins", items=_read_json("mcp_servers.json", []))}
         if low == "terminal":
-            info = start_computer()
+            start_computer()
+            info = acquire_user()
             return {"message": "The real Linux Terminal is available inside Agentie Computer.", "card": _real_desktop_card(info)}
         if low.startswith("terminal "):
             result = _terminal(command[9:])
