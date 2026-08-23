@@ -38,7 +38,12 @@ class NavigationRewireConnectedRegressionTests(unittest.TestCase):
     def test_group_row_opens_real_thread_in_normal_main_chat(self):
         src = self.source
         self.assertIn("#persistentAgentList .sidebar-group-row", src)
-        self.assertIn("openGroup(groupRow.dataset.groupId)", src)
+        self.assertIn("document.addEventListener('pointerdown'", src)
+        self.assertIn("state.lastPointerGroup=id", src)
+        self.assertIn("openGroup(id)", src)
+        self.assertIn("showOpeningGroup(id)", src)
+        self.assertIn("Opening group chat…", src)
+        self.assertIn("Could not open group chat:", src)
         self.assertIn("/platform/agent-chats/${encodeURIComponent(id)}", src)
         self.assertIn("document.getElementById('messages')", src)
         self.assertIn("row.className=isUser?'user-row':'assistant-row'", src)
