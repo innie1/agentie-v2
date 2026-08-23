@@ -42,7 +42,7 @@ def _guest_output(result: dict[str, Any]) -> str:
             text = str(raw).strip()
         if text:
             chunks.append(f"{label}: {text}")
-    return " | ".join(chunks)[-1800:]
+    return " | ".join(chunks)[-4000:]
 
 
 def _wait_for_cloud_init(timeout: int = 300) -> None:
@@ -55,9 +55,6 @@ def _wait_for_cloud_init(timeout: int = 300) -> None:
     try:
         computer.guest_exec(["/bin/bash", "-lc", command], timeout=max(60, int(timeout)))
     except computer.ComputerError as exc:
-        # QGA is already alive. A cloud-init wait timeout should not permanently
-        # brick the persistent VM; the repair script below also waits for package
-        # manager processes and repairs interrupted dpkg state.
         if "timed out" not in str(exc).lower():
             raise
 
@@ -76,7 +73,6 @@ set -eu
 export DEBIAN_FRONTEND=noninteractive
 
 # QGA can become reachable before cloud-init has completely released apt/dpkg.
-# Wait for any first-boot package manager work before repairing the guest.
 for _i in $(seq 1 150); do
   if ! pgrep -x apt-get >/dev/null 2>&1 && ! pgrep -x apt >/dev/null 2>&1 && ! pgrep -x dpkg >/dev/null 2>&1; then
     break
@@ -86,7 +82,13 @@ done
 
 dpkg --configure -a
 apt-get update
-apt-get install -y --no-install-recommends xserver-xorg-legacy xdotool
+# Repair the complete desktop stack, not just the two packages that older
+# bootstrap code used. A persistent disk may have been created before cloud-init
+# finished installing the graphical environment.
+apt-get install -y --no-install-recommends \
+  xserver-xorg xserver-xorg-legacy xinit openbox dbus-x11 pcmanfm xterm \
+  chromium qemu-guest-agent xdotool curl ca-certificates unzip fonts-dejavu-core
+
 mkdir -p /etc/X11 /var/lib/agentie /tmp/runtime-agentie /home/agentie/Downloads /home/agentie/Desktop
 cat >/etc/X11/Xwrapper.config <<'EOF'
 allowed_users=anybody
@@ -94,9 +96,6 @@ needs_root_rights=yes
 EOF
 chmod 0644 /etc/X11/Xwrapper.config
 
-# Recreate the desktop bootstrap files on every repair pass. Persistent disks
-# created by an older/broken first boot may have the packages installed while
-# the service file or xinit script is missing.
 cat >/home/agentie/.xinitrc <<'EOF'
 #!/bin/sh
 export DISPLAY=:0
@@ -136,9 +135,7 @@ EOF
 chown -R agentie:agentie /home/agentie
 chown agentie:agentie /tmp/runtime-agentie
 chmod 0700 /tmp/runtime-agentie
-# QEMU Guest Agent is Agentie's privileged maintenance channel. The interactive
-# desktop user must not retain cloud-image passwordless sudo that could bypass
-# Agentie's approval layer.
+
 if command -v gpasswd >/dev/null 2>&1; then gpasswd -d agentie sudo >/dev/null 2>&1 || true; fi
 if [ -d /etc/sudoers.d ]; then
   for f in /etc/sudoers.d/*; do
@@ -146,7 +143,7 @@ if [ -d /etc/sudoers.d ]; then
     sed -i '/^[[:space:]]*agentie[[:space:]]/d' "$f" || true
   done
 fi
-# Ensure startx can own a guest virtual terminal when launched from systemd.
+
 mkdir -p /etc/systemd/system/agentie-desktop.service.d
 cat >/etc/systemd/system/agentie-desktop.service.d/10-agentie-runtime.conf <<'EOF'
 [Service]
@@ -155,25 +152,35 @@ StandardInput=tty-force
 TTYReset=yes
 TTYVHangup=yes
 EOF
+
 systemctl daemon-reload
 systemctl enable qemu-guest-agent >/dev/null 2>&1 || true
-# Do not restart qemu-guest-agent from a command currently travelling through
-# that same QGA channel. The active service is already what made this setup
-# request possible.
 systemctl enable agentie-desktop.service
-systemctl restart agentie-desktop.service
-sleep 2
-systemctl is-active --quiet agentie-desktop.service
+
+# systemctl restart often returns only a non-zero code when X fails. Include the
+# service status and journal in stderr so Agentie can show the real root cause.
+if ! systemctl restart agentie-desktop.service; then
+  echo '--- agentie-desktop.service status ---' >&2
+  systemctl status agentie-desktop.service --no-pager -l >&2 || true
+  echo '--- agentie-desktop.service journal ---' >&2
+  journalctl -u agentie-desktop.service -n 80 --no-pager >&2 || true
+  exit 1
+fi
+sleep 3
+if ! systemctl is-active --quiet agentie-desktop.service; then
+  echo '--- agentie-desktop.service status ---' >&2
+  systemctl status agentie-desktop.service --no-pager -l >&2 || true
+  echo '--- agentie-desktop.service journal ---' >&2
+  journalctl -u agentie-desktop.service -n 80 --no-pager >&2 || true
+  exit 1
+fi
+
 touch /var/lib/agentie/runtime-v3
 """.strip()
 
 
 def ensure_guest_runtime(*, timeout: int = 300) -> dict[str, Any]:
-    """Make first-use guest prerequisites reliable without manual host commands.
-
-    The persistent guest is upgraded in place. This does not recreate its
-    QCOW2 disk, Chromium profile, files, applications, or login state.
-    """
+    """Make first-use guest prerequisites reliable without recreating its disk."""
     computer.start()
     _wait_for_qga(timeout)
     _wait_for_cloud_init(timeout)
