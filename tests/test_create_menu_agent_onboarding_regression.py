@@ -49,18 +49,29 @@ class CreateMenuAgentOnboardingRegressionTests(unittest.TestCase):
         self.assertIn("String(rawName||'').trim()||DEFAULT_NAME", self.ui)
         self.assertIn("fallback.textContent='Use New Agentie'", self.ui)
 
-    def test_name_goes_directly_to_real_create_without_visible_technical_review(self):
+    def test_name_goes_directly_to_real_create_with_main_model_identity_and_no_agent_tool_grants(self):
         self.assertIn('async function createFromName', self.ui)
         self.assertIn("api('/agent-builder/draft'", self.ui)
         self.assertIn("api('/agent-builder/create'", self.ui)
-        self.assertIn("skills:autoCapabilityIds(draft,'skill')", self.ui)
-        self.assertIn("plugins:autoCapabilityIds(draft,'plugin')", self.ui)
-        self.assertIn("kind==='skill'||!!item.installed", self.ui)
+        self.assertIn("IDENTITY_MARKER='[agentie:use-main-identity-model]'", self.ui)
+        self.assertIn("skills:[],plugins:[],instructions:''", self.ui)
+        self.assertNotIn('autoCapabilityIds', self.ui)
         self.assertIn('can_delegate:!!draft.can_delegate_recommended', self.ui)
         self.assertNotIn('renderReview', self.ui)
         self.assertNotIn('Recommended Skills', self.ui)
         self.assertNotIn('Recommended plugins / MCPs', self.ui)
         self.assertIn('Do not assume a predefined profession or department', self.builder)
+
+    def test_main_model_personality_runs_only_for_real_creator_marker(self):
+        description='I need someone who helps organize product ideas.'
+        with patch.object(agent_builder,'_main_model_personality',return_value='Methodical and curious, turning scattered ideas into clear priorities while questioning weak assumptions.') as generate:
+            normal=agent_builder.draft_agent_spec(description,name='Mat')
+            cloud=agent_builder.draft_agent_spec(description+'\n\n[agentie:use-main-identity-model]',name='Mat')
+        self.assertEqual(normal['personality_source'],'fallback')
+        self.assertEqual(cloud['personality_source'],'main_api')
+        self.assertIn('Methodical and curious',cloud['working_style'])
+        self.assertEqual(generate.call_count,1)
+        self.assertNotIn('[agentie:',cloud['description'])
 
     def test_new_agent_opens_with_natural_welcome_not_job_description(self):
         self.assertIn("welcome.textContent.trim().startsWith('Chatting with ')", self.ui)
@@ -91,6 +102,22 @@ class CreateMenuAgentOnboardingRegressionTests(unittest.TestCase):
         self.assertIn(f'{scope} .employee-profile-section:first-child>strong{{display:none!important}}', self.loader)
         self.assertIn('background:linear-gradient', self.loader)
         self.assertNotIn('radial-gradient', self.loader)
+
+    def test_profile_details_are_unified_and_delete_uses_existing_approval_command(self):
+        self.assertIn("edit.textContent='Edit details'",self.loader)
+        self.assertIn("btn.textContent.trim()==='Instructions'",self.loader)
+        self.assertIn("label.textContent='Instructions'",self.loader)
+        self.assertIn("button.textContent='Delete agent'",self.loader)
+        self.assertIn("runProfile(`Delete agent ${agent.id}`",self.loader)
+        self.assertIn("window.addAssistant(data.message",self.loader)
+        self.assertNotIn('Generated system instructions',self.loader)
+        self.assertNotIn('Learned preferences',self.loader)
+
+    def test_shared_tool_catalog_blocks_old_per_agent_access_editor(self):
+        self.assertIn('Shared workspace tools',self.loader)
+        self.assertIn('agentie-shared-access-sentinel',self.loader)
+        self.assertIn('.agent-access-box:not(.agentie-shared-access-sentinel)',self.loader)
+        self.assertIn('available to every agent automatically',self.loader)
 
     def test_group_and_skill_items_reuse_existing_creators(self):
         self.assertIn("document.querySelector('.n4-chats')", self.ui)
@@ -135,11 +162,10 @@ class CreateMenuAgentOnboardingRegressionTests(unittest.TestCase):
         self.assertEqual(draft['description'], description)
         self.assertNotEqual(draft['job'], description.rstrip('.'))
         self.assertEqual(draft['runtime_profile'], 'general')
-        self.assertIn('Do not assume a predefined profession or department', draft['instructions'])
         self.assertNotIn('Sales Agent', draft['job'])
         self.assertNotIn('Research Agent', draft['job'])
 
-    def test_task_verbs_select_relevant_existing_skills_without_agent_classes(self):
+    def test_task_verbs_still_recommend_relevant_skills_for_discovery_not_grants(self):
         skills=[
             {'id':'planning','name':'Planning & Reasoning','description':'Planning and verification','capabilities':['planning'],'enabled':True,'kind':'capability'},
             {'id':'knowledge-memory','name':'Knowledge Memory','description':'Long-term knowledge','capabilities':['memory'],'enabled':True,'kind':'capability'},
