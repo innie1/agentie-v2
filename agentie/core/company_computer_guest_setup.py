@@ -9,7 +9,7 @@ from agentie.core import company_computer_windows_accel as _windows_accel  # reg
 from agentie.core import company_computer_whpx as _whpx_compat  # removes WHPX-incompatible CPU/APIC settings
 from agentie.core import company_computer_guest_agent as _guest_agent  # registers QGA API on computer
 
-_SETUP_MARKER = "/var/lib/agentie/runtime-v4"
+_SETUP_MARKER = "/var/lib/agentie/runtime-v5"
 
 
 def _wait_for_qga(timeout: int = 300) -> None:
@@ -93,6 +93,8 @@ def _desktop_diagnostics_command() -> list[str]:
         "tail -n 80 /var/log/Xorg.0.log 2>/dev/null || true; "
         "echo '--- Openbox log ---'; "
         "tail -n 80 /tmp/openbox.log 2>/dev/null || true; "
+        "echo '--- PCManFM log ---'; "
+        "tail -n 80 /tmp/pcmanfm.log 2>/dev/null || true; "
         "echo '--- Chromium log ---'; "
         "tail -n 80 /tmp/chromium.log 2>/dev/null || true",
     ]
@@ -103,7 +105,6 @@ def _repair_script() -> str:
 set -eu
 export DEBIAN_FRONTEND=noninteractive
 
-# QGA can become reachable before cloud-init has completely released apt/dpkg.
 for _i in $(seq 1 150); do
   if ! pgrep -x apt-get >/dev/null 2>&1 && ! pgrep -x apt >/dev/null 2>&1 && ! pgrep -x dpkg >/dev/null 2>&1; then
     break
@@ -115,7 +116,7 @@ dpkg --configure -a
 apt-get update
 apt-get install -y --no-install-recommends \
   xserver-xorg xserver-xorg-core xserver-xorg-video-all xserver-xorg-legacy \
-  openbox dbus-x11 pcmanfm xterm chromium qemu-guest-agent xdotool \
+  openbox dbus dbus-x11 pcmanfm xterm chromium qemu-guest-agent xdotool \
   curl ca-certificates unzip fonts-dejavu-core
 
 mkdir -p /etc/X11 /var/lib/agentie /tmp/runtime-agentie /home/agentie/Downloads /home/agentie/Desktop
@@ -125,8 +126,6 @@ needs_root_rights=yes
 EOF
 chmod 0644 /etc/X11/Xwrapper.config
 
-# Stop the old startx-based unit before replacing it. startx is intended for an
-# interactive console session and repeatedly exited under systemd on Debian 13.
 systemctl stop agentie-desktop.service >/dev/null 2>&1 || true
 systemctl stop agentie-xorg.service >/dev/null 2>&1 || true
 rm -rf /etc/systemd/system/agentie-desktop.service.d
@@ -144,10 +143,10 @@ for _i in $(seq 1 60); do
   sleep 0.25
 done
 [ -S /tmp/.X11-unix/X0 ] || exit 1
-exec dbus-launch --exit-with-session sh -lc '
+exec /usr/bin/dbus-run-session -- /bin/sh -lc '
   pcmanfm --desktop --profile LXDE >/tmp/pcmanfm.log 2>&1 &
   chromium --user-data-dir=/home/agentie/.config/chromium-agentie --remote-debugging-port=9222 --remote-debugging-address=0.0.0.0 --remote-allow-origins=* --no-first-run --no-default-browser-check --restore-last-session about:blank >/tmp/chromium.log 2>&1 &
-  exec openbox-session >/tmp/openbox.log 2>&1
+  exec /usr/bin/openbox --sm-disable >/tmp/openbox.log 2>&1
 '
 EOF
 chmod 0755 /home/agentie/.agentie-desktop-session.sh
@@ -187,7 +186,7 @@ Environment=DISPLAY=:0
 Environment=XDG_RUNTIME_DIR=/tmp/runtime-agentie
 WorkingDirectory=/home/agentie
 ExecStart=/home/agentie/.agentie-desktop-session.sh
-Restart=always
+Restart=on-failure
 RestartSec=2
 
 [Install]
@@ -198,7 +197,6 @@ chown -R agentie:agentie /home/agentie
 chown agentie:agentie /tmp/runtime-agentie
 chmod 0700 /tmp/runtime-agentie
 
-# Keep privileged system changes behind Agentie's approval/QGA path.
 if command -v gpasswd >/dev/null 2>&1; then gpasswd -d agentie sudo >/dev/null 2>&1 || true; fi
 if [ -d /etc/sudoers.d ]; then
   for f in /etc/sudoers.d/*; do
@@ -213,7 +211,6 @@ systemctl enable qemu-guest-agent >/dev/null 2>&1 || true
 systemctl enable agentie-xorg.service agentie-desktop.service
 systemctl restart agentie-xorg.service
 
-# Wait for Xorg's Unix socket before starting the user desktop session.
 for _i in $(seq 1 60); do
   [ -S /tmp/.X11-unix/X0 ] && break
   sleep 0.25
@@ -229,7 +226,7 @@ if [ ! -S /tmp/.X11-unix/X0 ]; then
 fi
 
 systemctl restart agentie-desktop.service
-sleep 3
+sleep 4
 if ! systemctl is-active --quiet agentie-xorg.service || ! systemctl is-active --quiet agentie-desktop.service; then
   echo '--- agentie-xorg.service status ---' >&2
   systemctl status agentie-xorg.service --no-pager -l >&2 || true
@@ -241,10 +238,14 @@ if ! systemctl is-active --quiet agentie-xorg.service || ! systemctl is-active -
   journalctl -u agentie-desktop.service -n 80 --no-pager >&2 || true
   echo '--- Openbox log ---' >&2
   tail -n 80 /tmp/openbox.log >&2 2>/dev/null || true
+  echo '--- PCManFM log ---' >&2
+  tail -n 80 /tmp/pcmanfm.log >&2 2>/dev/null || true
+  echo '--- Chromium log ---' >&2
+  tail -n 80 /tmp/chromium.log >&2 2>/dev/null || true
   exit 1
 fi
 
-touch /var/lib/agentie/runtime-v4
+touch /var/lib/agentie/runtime-v5
 """.strip()
 
 
@@ -269,8 +270,6 @@ def ensure_guest_runtime(*, timeout: int = 300) -> dict[str, Any]:
     else:
         health = computer.guest_exec(_desktop_health_command(), timeout=20)
         if int(health.get("exitcode") or 0) != 0:
-            # A prepared persistent guest may still be partially damaged after a
-            # host crash or package update. Reapply the idempotent runtime setup.
             _run_repair(timeout)
 
     health = computer.guest_exec(_desktop_health_command(), timeout=20)
