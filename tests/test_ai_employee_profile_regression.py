@@ -36,6 +36,7 @@ class AIEmployeeProfileRegressionTests(unittest.TestCase):
         self.assertTrue(agent["goal"])
         self.assertGreaterEqual(len(agent["responsibilities"]), 3)
         self.assertEqual(agent["company_identity"], "")
+        self.assertEqual(agent["permissions"]["capability_mode"], "shared")
         self.assertIn("sales", agent["goal"].lower())
 
         role_store.route_role_command(f"Set agent {agent['id']} personality to Friendly, professional, proactive")
@@ -76,6 +77,7 @@ class AIEmployeeProfileRegressionTests(unittest.TestCase):
             permissions={"delegate": True, "shared_company_memory": "read"},
         )["agent"]
         self.assertTrue(explicit["permissions"]["delegate"])
+        self.assertEqual(explicit["permissions"]["capability_mode"],"shared")
 
     def test_npc_explicit_statements_update_the_same_persistent_profile(self):
         agent = agent_registry.create_agent("Ben", "Sales & Outreach", "general")["agent"]
@@ -95,8 +97,8 @@ class AIEmployeeProfileRegressionTests(unittest.TestCase):
         updated = agent_registry.get_agent(agent["id"])
         self.assertEqual(updated["company_identity"], "COAN Industries")
 
-    def test_identity_is_used_by_generated_agent_prompt(self):
-        agent = agent_registry.create_agent("Ben", "Sales & Outreach", "general")["agent"]
+    def test_identity_is_used_by_concise_generated_agent_prompt_without_raw_purpose_or_tool_grants(self):
+        agent = agent_registry.create_agent("Ben", "Sales & Outreach", "general",purpose="I need someone who helps with sales")["agent"]
         updated = agent_registry.update_agent_profile(
             agent["id"],
             personality="Friendly, professional, proactive",
@@ -106,15 +108,23 @@ class AIEmployeeProfileRegressionTests(unittest.TestCase):
         )
         prompt = agent_prompt.build_agent_instructions(updated)
         self.assertIn("You are Ben, a persistent Agentie AI employee.", prompt)
+        self.assertIn("Role: Sales & Outreach.",prompt)
         self.assertIn("Company identity: COAN Industries", prompt)
-        self.assertIn("Personality and working style: Friendly, professional, proactive.", prompt)
-        self.assertIn("Primary goal: Increase sales.", prompt)
+        self.assertIn("Working personality: Friendly, professional, proactive.", prompt)
+        self.assertIn("Goal: Increase sales.", prompt)
         self.assertIn("Follow up leads", prompt)
-        self.assertIn("make a recommendation, flag meaningful risks, and respectfully disagree", prompt)
-        self.assertIn("FACTS are supported by known context or verified evidence", prompt)
-        self.assertIn("OPINIONS are your role-based judgment", prompt)
-        self.assertIn("RECOMMENDATIONS are the action or option you advise", prompt)
-        self.assertIn("RISKS/UNCERTAINTY", prompt)
+        self.assertNotIn("Primary purpose:",prompt)
+        self.assertNotIn("I need someone who helps with sales",prompt)
+        self.assertNotIn("Assigned skills:",prompt)
+        self.assertIn("professional judgment",prompt)
+
+    def test_generated_builder_text_is_migrated_out_of_user_instructions_but_real_user_text_survives(self):
+        agent=agent_registry.create_agent("Gen","Product Ideas")["agent"]
+        generated="Job ownership: Product Ideas.\nWork from the user's configured goal, responsibilities, knowledge, skills, plugins and approval boundaries. Do not assume a predefined profession or department beyond what the user configured. Use the least costly real capability that can complete the work, and never claim an action succeeded unless it actually did."
+        agent_prompt.set_manual_instructions(agent,generated)
+        self.assertEqual(agent_prompt.get_instruction_profile(agent)["manual_instructions"],"")
+        agent_prompt.set_manual_instructions(agent,"Challenge weak assumptions before prioritizing an idea.")
+        self.assertEqual(agent_prompt.get_instruction_profile(agent)["manual_instructions"],"Challenge weak assumptions before prioritizing an idea.")
 
     def test_generated_and_uploaded_avatars_are_real_persistent_modes(self):
         agent = agent_registry.create_agent("Ben", "Sales", "general")["agent"]
@@ -146,34 +156,25 @@ class AIEmployeeProfileRegressionTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             agent_registry.set_agent_avatar(agent["id"], "uploaded", wrong.name)
 
-    def test_profile_ui_uses_existing_top_chat_avatar_and_real_agent_data(self):
-        text = Path("frontend/plugins.js").read_text(encoding="utf-8")
-        profile = text.split("// AI employee identity/profile v2.", 1)[1]
-        self.assertIn("no second agent store", profile)
+    def test_profile_ui_keeps_existing_avatar_but_hides_internal_stats_and_unifies_details(self):
+        profile_source = Path("frontend/plugins.js").read_text(encoding="utf-8")
+        loader=Path("frontend/create_menu_loader.js").read_text(encoding="utf-8")
+        profile = profile_source.split("// AI employee identity/profile v2.", 1)[1]
         self.assertIn(".top-agent-orb", profile)
-        self.assertIn("openProfile(activeAgent())", profile)
-        self.assertIn("Open ${a.name} profile", profile)
-        self.assertIn("employee-profile-stats", profile)
-        self.assertIn("stat('Skills'", profile)
-        self.assertIn("stat('Duties'", profile)
-        self.assertIn("stat('Permissions'", profile)
         self.assertIn("Generate local avatar", profile)
         self.assertIn("/files/upload", profile)
-        self.assertNotIn("72.9K", profile)
-        self.assertNotIn("342.9K", profile)
-        self.assertNotIn("Likes", profile)
-        self.assertNotIn("Views", profile)
+        self.assertIn("employee-profile-stats", profile)
+        self.assertIn(".employee-profile-personality,.employee-profile-card:not(.employee-profile-form) .employee-profile-stats",loader)
+        self.assertIn("edit.textContent='Edit details'",loader)
+        self.assertIn("label.textContent='Instructions'",loader)
+        self.assertIn("button.textContent='Delete agent'",loader)
 
-    def test_profile_instructions_toggle_reuses_the_same_modal_and_profile_card(self):
-        text = Path("frontend/project_workspace.js").read_text(encoding="utf-8")
-        self.assertIn("__agentieProfileInstructionsToggle", text)
-        self.assertIn("const profileCard=modal.querySelector('.employee-profile-card')", text)
-        self.assertIn("profileCard.remove()", text)
-        self.assertIn("modal.appendChild(profileCard)", text)
-        self.assertIn("Generated system instructions", text)
-        self.assertIn("Save instructions", text)
-        self.assertIn("Set agent ${agent.id} instructions to ${manual}", text)
-        self.assertIn("e.stopImmediatePropagation()", text)
+    def test_separate_profile_instructions_button_is_suppressed_by_unified_details_layer(self):
+        loader=Path("frontend/create_menu_loader.js").read_text(encoding="utf-8")
+        self.assertIn("btn.textContent.trim()==='Instructions'",loader)
+        self.assertIn("btn.remove()",loader)
+        self.assertIn("Show ${agent.id} instructions",loader)
+        self.assertNotIn("Generated system instructions",loader)
 
     def test_top_avatar_refreshes_profile_before_opening_it(self):
         text = Path("frontend/project_workspace.js").read_text(encoding="utf-8")
