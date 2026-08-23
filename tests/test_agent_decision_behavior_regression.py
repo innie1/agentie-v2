@@ -33,7 +33,7 @@ class AgentDecisionBehaviorRegressionTests(unittest.TestCase):
         self.assertNotIn("FACTS are supported",prompt)
         self.assertIn("distinguish supported facts from opinions, recommendations, and risks/uncertainty",assistant)
         self.assertIn("Advice is not authorization",assistant)
-        self.assertIn("Consequential",assistant)
+        self.assertIn("consequential actions",assistant.lower())
 
     def test_opinion_question_is_enriched_by_npc_instead_of_answered_as_fake_local_fact(self):
         result = try_npc_response(self.ceo, "What do you think about expanding the laundry business to offices first?")
