@@ -3,7 +3,12 @@ name: Agentie regression suite
 on:
   push:
     branches: [main11]
+    paths-ignore:
+      - '.ci/regression-result.txt'
   workflow_dispatch:
+
+permissions:
+  contents: write
 
 jobs:
   regression:
@@ -18,4 +23,30 @@ jobs:
       - name: Install Agentie
         run: python -m pip install -e .
       - name: Run complete regression suite
-        run: python -m unittest discover -s tests -p 'test_*regression.py' -v
+        id: tests
+        shell: bash
+        run: |
+          set +e
+          python -m unittest discover -s tests -p 'test_*regression.py' -v > regression.log 2>&1
+          code=$?
+          echo "exit_code=$code" >> "$GITHUB_OUTPUT"
+          cat regression.log
+          exit 0
+      - name: Publish temporary regression marker
+        shell: bash
+        run: |
+          mkdir -p .ci
+          {
+            echo "tested_sha=$GITHUB_SHA"
+            echo "exit_code=${{ steps.tests.outputs.exit_code }}"
+            echo "--- regression tail ---"
+            tail -n 250 regression.log
+          } > .ci/regression-result.txt
+          git config user.name "agentie-regression-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add .ci/regression-result.txt
+          git commit -m "Record Agentie regression result [skip ci]" || true
+          git push origin HEAD:main11
+      - name: Fail workflow when regressions fail
+        if: steps.tests.outputs.exit_code != '0'
+        run: exit 1
