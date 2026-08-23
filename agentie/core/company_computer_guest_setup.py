@@ -9,7 +9,7 @@ from agentie.core import company_computer_windows_accel as _windows_accel  # reg
 from agentie.core import company_computer_whpx as _whpx_compat  # removes WHPX-incompatible CPU/APIC settings
 from agentie.core import company_computer_guest_agent as _guest_agent  # registers QGA API on computer
 
-_SETUP_MARKER = "/var/lib/agentie/runtime-v3"
+_SETUP_MARKER = "/var/lib/agentie/runtime-v4"
 
 
 def _wait_for_qga(timeout: int = 300) -> None:
@@ -42,7 +42,7 @@ def _guest_output(result: dict[str, Any]) -> str:
             text = str(raw).strip()
         if text:
             chunks.append(f"{label}: {text}")
-    return " | ".join(chunks)[-4000:]
+    return " | ".join(chunks)[-5000:]
 
 
 def _wait_for_cloud_init(timeout: int = 300) -> None:
@@ -67,6 +67,37 @@ def _marker_exists() -> bool:
         return False
 
 
+def _desktop_health_command() -> list[str]:
+    return [
+        "/bin/bash",
+        "-lc",
+        "systemctl is-active --quiet agentie-xorg.service && "
+        "systemctl is-active --quiet agentie-desktop.service && "
+        "test -S /tmp/.X11-unix/X0",
+    ]
+
+
+def _desktop_diagnostics_command() -> list[str]:
+    return [
+        "/bin/bash",
+        "-lc",
+        "echo '--- agentie-xorg.service ---'; "
+        "systemctl status agentie-xorg.service --no-pager -l || true; "
+        "echo '--- agentie-desktop.service ---'; "
+        "systemctl status agentie-desktop.service --no-pager -l || true; "
+        "echo '--- xorg journal ---'; "
+        "journalctl -u agentie-xorg.service -n 60 --no-pager || true; "
+        "echo '--- desktop journal ---'; "
+        "journalctl -u agentie-desktop.service -n 60 --no-pager || true; "
+        "echo '--- Xorg log ---'; "
+        "tail -n 80 /var/log/Xorg.0.log 2>/dev/null || true; "
+        "echo '--- Openbox log ---'; "
+        "tail -n 80 /tmp/openbox.log 2>/dev/null || true; "
+        "echo '--- Chromium log ---'; "
+        "tail -n 80 /tmp/chromium.log 2>/dev/null || true",
+    ]
+
+
 def _repair_script() -> str:
     return r"""
 set -eu
@@ -82,12 +113,10 @@ done
 
 dpkg --configure -a
 apt-get update
-# Repair the complete desktop stack, not just the two packages that older
-# bootstrap code used. A persistent disk may have been created before cloud-init
-# finished installing the graphical environment.
 apt-get install -y --no-install-recommends \
-  xserver-xorg xserver-xorg-legacy xinit openbox dbus-x11 pcmanfm xterm \
-  chromium qemu-guest-agent xdotool curl ca-certificates unzip fonts-dejavu-core
+  xserver-xorg xserver-xorg-core xserver-xorg-video-all xserver-xorg-legacy \
+  openbox dbus-x11 pcmanfm xterm chromium qemu-guest-agent xdotool \
+  curl ca-certificates unzip fonts-dejavu-core
 
 mkdir -p /etc/X11 /var/lib/agentie /tmp/runtime-agentie /home/agentie/Downloads /home/agentie/Desktop
 cat >/etc/X11/Xwrapper.config <<'EOF'
@@ -96,35 +125,68 @@ needs_root_rights=yes
 EOF
 chmod 0644 /etc/X11/Xwrapper.config
 
-cat >/home/agentie/.xinitrc <<'EOF'
-#!/bin/sh
+# Stop the old startx-based unit before replacing it. startx is intended for an
+# interactive console session and repeatedly exited under systemd on Debian 13.
+systemctl stop agentie-desktop.service >/dev/null 2>&1 || true
+systemctl stop agentie-xorg.service >/dev/null 2>&1 || true
+rm -rf /etc/systemd/system/agentie-desktop.service.d
+
+cat >/home/agentie/.agentie-desktop-session.sh <<'EOF'
+#!/bin/bash
+set -eu
 export DISPLAY=:0
+export HOME=/home/agentie
 export XDG_RUNTIME_DIR=/tmp/runtime-agentie
 mkdir -p "$XDG_RUNTIME_DIR"
-chmod 700 "$XDG_RUNTIME_DIR"
-dbus-launch --exit-with-session sh -c '
+chmod 0700 "$XDG_RUNTIME_DIR"
+for _i in $(seq 1 60); do
+  [ -S /tmp/.X11-unix/X0 ] && break
+  sleep 0.25
+done
+[ -S /tmp/.X11-unix/X0 ] || exit 1
+exec dbus-launch --exit-with-session sh -lc '
   pcmanfm --desktop --profile LXDE >/tmp/pcmanfm.log 2>&1 &
   chromium --user-data-dir=/home/agentie/.config/chromium-agentie --remote-debugging-port=9222 --remote-debugging-address=0.0.0.0 --remote-allow-origins=* --no-first-run --no-default-browser-check --restore-last-session about:blank >/tmp/chromium.log 2>&1 &
-  exec openbox-session
+  exec openbox-session >/tmp/openbox.log 2>&1
 '
 EOF
-chmod 0755 /home/agentie/.xinitrc
+chmod 0755 /home/agentie/.agentie-desktop-session.sh
+chown agentie:agentie /home/agentie/.agentie-desktop-session.sh
 
-cat >/etc/systemd/system/agentie-desktop.service <<'EOF'
+cat >/etc/systemd/system/agentie-xorg.service <<'EOF'
 [Unit]
-Description=Agentie lightweight desktop
-After=network-online.target cloud-final.service
-Wants=network-online.target
+Description=Agentie Xorg display server
+After=systemd-user-sessions.service
 
 [Service]
-User=agentie
-Environment=HOME=/home/agentie
-WorkingDirectory=/home/agentie
+Type=simple
+ExecStart=/usr/bin/Xorg :0 -noreset -nolisten tcp -ac vt1
+Restart=always
+RestartSec=2
 TTYPath=/dev/tty1
 StandardInput=tty-force
 TTYReset=yes
 TTYVHangup=yes
-ExecStart=/usr/bin/startx /home/agentie/.xinitrc -- :0 -nolisten tcp vt1
+
+[Install]
+WantedBy=graphical.target
+EOF
+
+cat >/etc/systemd/system/agentie-desktop.service <<'EOF'
+[Unit]
+Description=Agentie lightweight desktop session
+Requires=agentie-xorg.service
+After=agentie-xorg.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=agentie
+Environment=HOME=/home/agentie
+Environment=DISPLAY=:0
+Environment=XDG_RUNTIME_DIR=/tmp/runtime-agentie
+WorkingDirectory=/home/agentie
+ExecStart=/home/agentie/.agentie-desktop-session.sh
 Restart=always
 RestartSec=2
 
@@ -136,6 +198,7 @@ chown -R agentie:agentie /home/agentie
 chown agentie:agentie /tmp/runtime-agentie
 chmod 0700 /tmp/runtime-agentie
 
+# Keep privileged system changes behind Agentie's approval/QGA path.
 if command -v gpasswd >/dev/null 2>&1; then gpasswd -d agentie sudo >/dev/null 2>&1 || true; fi
 if [ -d /etc/sudoers.d ]; then
   for f in /etc/sudoers.d/*; do
@@ -144,39 +207,55 @@ if [ -d /etc/sudoers.d ]; then
   done
 fi
 
-mkdir -p /etc/systemd/system/agentie-desktop.service.d
-cat >/etc/systemd/system/agentie-desktop.service.d/10-agentie-runtime.conf <<'EOF'
-[Service]
-TTYPath=/dev/tty1
-StandardInput=tty-force
-TTYReset=yes
-TTYVHangup=yes
-EOF
-
 systemctl daemon-reload
+systemctl reset-failed agentie-xorg.service agentie-desktop.service >/dev/null 2>&1 || true
 systemctl enable qemu-guest-agent >/dev/null 2>&1 || true
-systemctl enable agentie-desktop.service
+systemctl enable agentie-xorg.service agentie-desktop.service
+systemctl restart agentie-xorg.service
 
-# systemctl restart often returns only a non-zero code when X fails. Include the
-# service status and journal in stderr so Agentie can show the real root cause.
-if ! systemctl restart agentie-desktop.service; then
-  echo '--- agentie-desktop.service status ---' >&2
-  systemctl status agentie-desktop.service --no-pager -l >&2 || true
-  echo '--- agentie-desktop.service journal ---' >&2
-  journalctl -u agentie-desktop.service -n 80 --no-pager >&2 || true
+# Wait for Xorg's Unix socket before starting the user desktop session.
+for _i in $(seq 1 60); do
+  [ -S /tmp/.X11-unix/X0 ] && break
+  sleep 0.25
+done
+if [ ! -S /tmp/.X11-unix/X0 ]; then
+  echo '--- agentie-xorg.service status ---' >&2
+  systemctl status agentie-xorg.service --no-pager -l >&2 || true
+  echo '--- agentie-xorg.service journal ---' >&2
+  journalctl -u agentie-xorg.service -n 80 --no-pager >&2 || true
+  echo '--- Xorg log ---' >&2
+  tail -n 100 /var/log/Xorg.0.log >&2 2>/dev/null || true
   exit 1
 fi
+
+systemctl restart agentie-desktop.service
 sleep 3
-if ! systemctl is-active --quiet agentie-desktop.service; then
+if ! systemctl is-active --quiet agentie-xorg.service || ! systemctl is-active --quiet agentie-desktop.service; then
+  echo '--- agentie-xorg.service status ---' >&2
+  systemctl status agentie-xorg.service --no-pager -l >&2 || true
   echo '--- agentie-desktop.service status ---' >&2
   systemctl status agentie-desktop.service --no-pager -l >&2 || true
-  echo '--- agentie-desktop.service journal ---' >&2
+  echo '--- Xorg log ---' >&2
+  tail -n 100 /var/log/Xorg.0.log >&2 2>/dev/null || true
+  echo '--- desktop journal ---' >&2
   journalctl -u agentie-desktop.service -n 80 --no-pager >&2 || true
+  echo '--- Openbox log ---' >&2
+  tail -n 80 /tmp/openbox.log >&2 2>/dev/null || true
   exit 1
 fi
 
-touch /var/lib/agentie/runtime-v3
+touch /var/lib/agentie/runtime-v4
 """.strip()
+
+
+def _run_repair(timeout: int) -> None:
+    result = computer.guest_exec(["/bin/bash", "-lc", _repair_script()], timeout=max(300, timeout))
+    if int(result.get("exitcode") or 0) != 0:
+        detail = _guest_output(result)
+        raise computer.ComputerError(
+            "Could not finish Company Computer guest preparation."
+            + (f" Details: {detail}" if detail else f" Guest exit code: {result.get('exitcode')}.")
+        )
 
 
 def ensure_guest_runtime(*, timeout: int = 300) -> dict[str, Any]:
@@ -184,23 +263,24 @@ def ensure_guest_runtime(*, timeout: int = 300) -> dict[str, Any]:
     computer.start()
     _wait_for_qga(timeout)
     _wait_for_cloud_init(timeout)
+
     if not _marker_exists():
-        result = computer.guest_exec(["/bin/bash", "-lc", _repair_script()], timeout=max(300, timeout))
-        if int(result.get("exitcode") or 0) != 0:
-            detail = _guest_output(result)
-            raise computer.ComputerError(
-                "Could not finish Company Computer guest preparation."
-                + (f" Details: {detail}" if detail else f" Guest exit code: {result.get('exitcode')}.")
-            )
+        _run_repair(timeout)
     else:
-        active = computer.guest_exec(["/bin/systemctl", "is-active", "--quiet", "agentie-desktop.service"], timeout=20)
-        if int(active.get("exitcode") or 0) != 0:
-            restart = computer.guest_exec(["/bin/systemctl", "restart", "agentie-desktop.service"], timeout=60)
-            if int(restart.get("exitcode") or 0) != 0:
-                detail = _guest_output(restart)
-                raise computer.ComputerError(
-                    "Company Computer desktop service could not be restarted."
-                    + (f" Details: {detail}" if detail else "")
-                )
+        health = computer.guest_exec(_desktop_health_command(), timeout=20)
+        if int(health.get("exitcode") or 0) != 0:
+            # A prepared persistent guest may still be partially damaged after a
+            # host crash or package update. Reapply the idempotent runtime setup.
+            _run_repair(timeout)
+
+    health = computer.guest_exec(_desktop_health_command(), timeout=20)
+    if int(health.get("exitcode") or 0) != 0:
+        diagnostics = computer.guest_exec(_desktop_diagnostics_command(), timeout=30)
+        detail = _guest_output(diagnostics)
+        raise computer.ComputerError(
+            "Company Computer desktop services are not healthy."
+            + (f" Details: {detail}" if detail else "")
+        )
+
     computer.touch_activity()
     return computer.status()
