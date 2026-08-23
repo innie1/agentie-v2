@@ -2,15 +2,17 @@ from __future__ import annotations
 
 """Windows WHPX compatibility adjustments for Agentie Company Computer.
 
-Current QEMU/WHPX builds on Windows can terminate with ``Unexpected VP exit
-code 4`` in two relevant cases for Agentie's Linux guest:
+Current QEMU/WHPX builds on Windows can terminate or hang with ``Unexpected VP
+exit code 4`` because of WHPX CPU/APIC handling.  For Agentie's lightweight
+Linux desktop we prefer a stable hardware-accelerated configuration over host
+CPU passthrough or multi-vCPU startup.
 
-* x86 guests launched with ``-cpu host``;
-* multi-vCPU guests hitting WHPX/APIC interrupt-controller failures.
+WHPX therefore uses:
+* QEMU's compatible default x86 CPU model (no ``-cpu host``);
+* one vCPU;
+* userspace interrupt-controller emulation via ``kernel-irqchip=off``.
 
-Agentie does not require host CPU passthrough, and a single hardware-accelerated
-vCPU is preferable to falling back to slow TCG.  Therefore WHPX uses QEMU's
-compatible default CPU model and one vCPU.  KVM/HVF behavior is left unchanged.
+KVM/HVF behavior is left unchanged.
 """
 
 from typing import Any
@@ -38,11 +40,17 @@ def _whpx_safe_qemu_args(config: dict[str, Any], *, resume_snapshot: bool = Fals
             index += 2
             continue
 
-        # WHPX has an upstream APIC failure that can surface as VP exit code 4
-        # with multiple vCPUs.  Keep hardware acceleration but force one vCPU
-        # until upstream WHPX is reliable for this Linux guest workload.
+        # WHPX APIC failures can surface as VP exit code 4 with SMP guests.
         if index + 1 < len(args) and args[index] == "-smp":
             cleaned.extend(["-smp", "1"])
+            index += 2
+            continue
+
+        # Keep WHPX acceleration but move interrupt-controller emulation out of
+        # the Windows hypervisor.  This is an upstream-reported workaround for
+        # WHPX VP-exit/APIC failures on Windows hosts.
+        if index + 1 < len(args) and args[index] == "-accel" and args[index + 1] == "whpx":
+            cleaned.extend(["-accel", "whpx,kernel-irqchip=off"])
             index += 2
             continue
 
