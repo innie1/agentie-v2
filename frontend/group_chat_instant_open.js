@@ -5,7 +5,24 @@
   let generation=0;
   let observer=null;
 
-  const scrollRoot=()=>document.querySelector('.chat-shell')||document.scrollingElement||document.documentElement;
+  function scrollRoot(){
+    const shell=document.querySelector('.chat-shell');
+    if(shell){
+      const css=getComputedStyle(shell),overflow=String(css.overflowY||css.overflow||'');
+      if(/auto|scroll|overlay/.test(overflow)&&shell.scrollHeight>shell.clientHeight+1)return shell;
+    }
+    return document.scrollingElement||document.documentElement||document.body;
+  }
+
+  function setLatest(root){
+    if(!root)return;
+    const bottom=Math.max(0,root.scrollHeight-root.clientHeight);
+    const isDocument=root===document.scrollingElement||root===document.documentElement||root===document.body;
+    if(isDocument){
+      root.scrollTop=bottom;
+      window.scrollTo({top:bottom,left:0,behavior:'auto'});
+    }else root.scrollTop=bottom;
+  }
 
   function finishOpen(messages,token){
     if(!pending||token!==generation||!messages)return;
@@ -17,7 +34,10 @@
       const previous=root.style.scrollBehavior;
       root.style.scrollBehavior='auto';
       messages.style.minHeight='';
-      root.scrollTop=root.scrollHeight;
+      // Set the real scroll container before revealing the retained thread.
+      // MutationObserver callbacks run before paint, so the first visible frame
+      // is already positioned at the latest message instead of travelling down.
+      setLatest(root);
       messages.style.visibility='';
       if(previous)root.style.scrollBehavior=previous;
       else root.style.removeProperty('scroll-behavior');
@@ -37,11 +57,11 @@
     pending=true;
     observer?.disconnect();
 
-    // navigation_connect has already swapped in its tiny loading surface during
-    // this pointer event. Preserve the real chat container height invisibly so
-    // the viewport never collapses upward before the retained thread appears.
+    // This guard listens at window capture, before navigation_connect's
+    // document-level group click handler. Preserve the current page height and
+    // hide the message surface before that handler swaps in its tiny loader.
     const root=scrollRoot();
-    const currentTop=Number(root?.scrollTop||0);
+    const currentTop=Number(root?.scrollTop||window.scrollY||0);
     const viewport=Number(root?.clientHeight||window.innerHeight||0);
     messages.style.minHeight=`${Math.max(viewport,currentTop+viewport)}px`;
     messages.style.visibility='hidden';
@@ -57,7 +77,7 @@
 
   // navigation_connect owns the group runtime. This guard only controls the
   // first paint position so opening a group never visibly travels top -> bottom.
-  document.addEventListener('pointerdown',event=>{
+  window.addEventListener('pointerdown',event=>{
     if(!event.target.closest?.('#persistentAgentList .sidebar-group-row'))return;
     prepareOpen();
   },true);
