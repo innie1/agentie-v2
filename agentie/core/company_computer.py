@@ -68,9 +68,19 @@ def _now() -> float:
     return time.time()
 
 
+def _db() -> sqlite3.Connection:
+    """Open one short-lived Company Computer state connection.
+
+    sqlite3.Connection's context manager commits/rolls back but does not close
+    the handle. Keeping connection ownership explicit is important on Windows,
+    where an open handle prevents test/runtime state files from being removed.
+    """
+    return sqlite3.connect(STATE_DB)
+
+
 def _ensure_db() -> None:
     ROOT.mkdir(parents=True, exist_ok=True)
-    with sqlite3.connect(STATE_DB) as db:
+    with closing(_db()) as db:
         db.execute("""
             CREATE TABLE IF NOT EXISTS computer_state (
               id INTEGER PRIMARY KEY CHECK (id = 1),
@@ -98,7 +108,7 @@ def _ensure_db() -> None:
 
 def _row() -> dict[str, Any]:
     _ensure_db()
-    with sqlite3.connect(STATE_DB) as db:
+    with closing(_db()) as db:
         db.row_factory = sqlite3.Row
         item = db.execute("SELECT * FROM computer_state WHERE id=1").fetchone()
     assert item is not None
@@ -116,7 +126,9 @@ def _update(**fields: Any) -> dict[str, Any]:
     values=dict(fields)
     if isinstance(values.get("browser_state"),dict):values["browser_state"]=json.dumps(values["browser_state"],separators=(",",":"))
     assignments=", ".join(f"{key}=?" for key in values)
-    with sqlite3.connect(STATE_DB) as db:db.execute(f"UPDATE computer_state SET {assignments} WHERE id=1",list(values.values()));db.commit()
+    with closing(_db()) as db:
+        db.execute(f"UPDATE computer_state SET {assignments} WHERE id=1",list(values.values()))
+        db.commit()
     return _row()
 
 
@@ -131,7 +143,6 @@ def _free_port(port:int)->bool:
         with closing(socket.socket(socket.AF_INET,socket.SOCK_STREAM)) as sock:sock.setsockopt(socket.SOL_SOCKET,socket.SO_REUSEADDR,1);sock.bind(("127.0.0.1",port))
         return True
     except OSError:return False
-
 def _port_open(port:int,timeout:float=.15)->bool:
     try:
         with socket.create_connection(("127.0.0.1",port),timeout=timeout):return True
@@ -145,7 +156,6 @@ def host_profile()->dict[str,Any]:
     elif memory_mb<16384:ram_mb,vcpus=2048,min(2,logical)
     else:ram_mb,vcpus=3072,min(4,logical)
     ram_mb=min(ram_mb,max(768,memory_mb//3));return {"system":system,"machine":machine,"logical_cpus":logical,"memory_mb":memory_mb,"vm_ram_mb":ram_mb,"vm_vcpus":max(1,vcpus),"low_end":memory_mb<4096 or logical<=2}
-
 def _qemu_names(profile:dict[str,Any])->list[str]:
     names=["qemu-system-aarch64"] if profile["machine"] in {"arm64","aarch64"} else ["qemu-system-x86_64"];return [name+".exe" for name in names]+names if os.name=="nt" else names
 def qemu_binary(profile:dict[str,Any]|None=None)->str|None:
@@ -169,7 +179,6 @@ def qemu_img_binary(qemu:str|None=None)->str|None:
         for candidate in (bundled/name,bundled/"bin"/name):
             if candidate.exists():return str(candidate)
     return None
-
 def _run_installer(command:list[str],timeout:int=600)->tuple[bool,str]:
     try:
         proc=subprocess.run(command,capture_output=True,text=True,timeout=timeout,shell=False);detail=((proc.stdout or "")+"\n"+(proc.stderr or "")).strip();return proc.returncode==0,detail[-3000:]
@@ -268,14 +277,14 @@ manage_etc_hosts: true
 users:
   - name: agentie
     gecos: Agentie
-    groups: [sudo, audio, video, plugdev]
-    sudo: ALL=(ALL) NOPASSWD:ALL
+    groups: [audio, video, plugdev]
     shell: /bin/bash
 disable_root: true
 ssh_pwauth: false
 package_update: true
 packages:
   - xserver-xorg
+  - xserver-xorg-legacy
   - xinit
   - openbox
   - dbus-x11
@@ -283,11 +292,17 @@ packages:
   - xterm
   - chromium
   - qemu-guest-agent
+  - xdotool
   - curl
   - ca-certificates
   - unzip
   - fonts-dejavu-core
 write_files:
+  - path: /etc/X11/Xwrapper.config
+    permissions: '0644'
+    content: |
+      allowed_users=anybody
+      needs_root_rights=yes
   - path: /home/agentie/.xinitrc
     permissions: '0755'
     owner: agentie:agentie
@@ -313,6 +328,10 @@ write_files:
       User=agentie
       Environment=HOME=/home/agentie
       WorkingDirectory=/home/agentie
+      TTYPath=/dev/tty1
+      StandardInput=tty-force
+      TTYReset=yes
+      TTYVHangup=yes
       ExecStart=/usr/bin/startx /home/agentie/.xinitrc -- :0 -nolisten tcp vt1
       Restart=always
       RestartSec=2
@@ -321,7 +340,10 @@ write_files:
 runcmd:
   - [mkdir, -p, /home/agentie/Downloads]
   - [mkdir, -p, /home/agentie/Desktop]
+  - [mkdir, -p, /tmp/runtime-agentie]
   - [chown, -R, "agentie:agentie", /home/agentie]
+  - [chown, "agentie:agentie", /tmp/runtime-agentie]
+  - [chmod, "0700", /tmp/runtime-agentie]
   - [systemctl, enable, --now, qemu-guest-agent]
   - [systemctl, enable, agentie-desktop.service]
   - [systemctl, set-default, graphical.target]
@@ -389,142 +411,101 @@ def start()->dict[str,Any]:
         config=prepare()
         for port in (VNC_PORT,VNC_WEBSOCKET_PORT,CDP_PORT,QMP_PORT,QGA_PORT):
             if not _free_port(port):raise ComputerError(f"Agentie Computer cannot start because local port {port} is already in use.")
-        resume_snapshot=bool(current.get("suspended_snapshot"));_update(state="STARTING",last_error=None,last_activity=_now(),vm_pid=None);LOG_FILE.parent.mkdir(parents=True,exist_ok=True);log=LOG_FILE.open("ab");kwargs:dict[str,Any]={"stdin":subprocess.DEVNULL,"stdout":log,"stderr":subprocess.STDOUT,"cwd":str(Path.cwd())}
-        if os.name=="nt":kwargs["creationflags"]=subprocess.CREATE_NO_WINDOW|subprocess.CREATE_NEW_PROCESS_GROUP
-        else:kwargs["start_new_session"]=True
-        try:_PROCESS=subprocess.Popen(_qemu_args(config,resume_snapshot=resume_snapshot),**kwargs)
-        except Exception as exc:log.close();_update(state="ERROR",last_error=str(exc),vm_pid=None);raise ComputerError(f"Could not launch QEMU: {exc}") from exc
-        _update(vm_pid=_PROCESS.pid);deadline=time.time()+30
-        while time.time()<deadline:
-            if _PROCESS.poll() is not None:_update(state="ERROR",last_error="QEMU exited during startup.",vm_pid=None);raise ComputerError("QEMU exited while Agentie Computer was starting. Check workspace/company_computer/qemu.log.")
-            if _port_open(VNC_PORT) and _port_open(QMP_PORT):
-                _update(state="READY",suspended_snapshot=0,last_activity=_now())
-                if resume_snapshot:
-                    try:_hmp("delvm agentie-idle")
-                    except Exception:pass
-                return status()
+        _update(state="STARTING",controller_type=None,controller_agent_id=None,job_id=None,takeover_reason=None,last_error=None,suspended_snapshot=0)
+        LOG_FILE.parent.mkdir(parents=True,exist_ok=True);log=LOG_FILE.open("ab",buffering=0);args=_qemu_args(config)
+        try:_PROCESS=subprocess.Popen(args,stdin=subprocess.DEVNULL,stdout=log,stderr=subprocess.STDOUT,cwd=str(ROOT),creationflags=(subprocess.CREATE_NO_WINDOW if os.name=="nt" and hasattr(subprocess,"CREATE_NO_WINDOW") else 0))
+        except Exception as exc:log.close();_update(state="ERROR",last_error=str(exc));raise ComputerError(f"Could not launch Agentie Computer: {exc}") from exc
+        deadline=time.time()+30
+        while time.time()<deadline and _PROCESS.poll() is None:
+            if _port_open(VNC_PORT):break
             time.sleep(.2)
-        _update(state="ERROR",last_error="QEMU display did not become ready.");raise ComputerError("Agentie Computer started QEMU, but its display did not become ready.")
-def _clear_control(next_state:str="READY")->dict[str,Any]:
-    row=_row();return _update(state=next_state,controller_type=None,controller_agent_id=None,job_id=None,takeover_reason=None,control_generation=int(row.get("control_generation") or 0)+1,last_activity=_now())
-def stop()->dict[str,Any]:
-    global _PROCESS
-    with _STATE_LOCK:
-        current=_row();pid=current.get("vm_pid")
-        if not _is_pid_alive(pid):_PROCESS=None;_update(state="STOPPED",vm_pid=None,controller_type=None,controller_agent_id=None,job_id=None,takeover_reason=None,suspended_snapshot=0,last_activity=_now());return status()
-        try:_qmp_command("system_powerdown")
-        except Exception:pass
-        deadline=time.time()+15
-        while time.time()<deadline and _is_pid_alive(pid):time.sleep(.25)
-        if _is_pid_alive(pid):
-            try:_qmp_command("quit")
-            except Exception:
-                try:psutil.Process(int(pid)).terminate()
-                except Exception:pass
-        _PROCESS=None;_update(state="STOPPED",vm_pid=None,controller_type=None,controller_agent_id=None,job_id=None,takeover_reason=None,suspended_snapshot=0,last_activity=_now());return status()
-def suspend()->dict[str,Any]:
-    global _PROCESS
-    with _STATE_LOCK:
-        current=_row()
-        if not _is_pid_alive(current.get("vm_pid")):_update(state="SUSPENDED",vm_pid=None,suspended_snapshot=int(bool(current.get("suspended_snapshot"))));return status()
-        if current.get("controller_type"):raise ComputerError("Cannot suspend Agentie Computer while a user or agent owns control.")
-        try:
-            try:_hmp("delvm agentie-idle")
-            except Exception:pass
-            _hmp("savevm agentie-idle");_qmp_command("quit")
-        except Exception as exc:raise ComputerError(f"Could not suspend Agentie Computer: {exc}") from exc
-        deadline=time.time()+8
-        while time.time()<deadline and _is_pid_alive(current.get("vm_pid")):time.sleep(.2)
-        _PROCESS=None;_update(state="SUSPENDED",vm_pid=None,suspended_snapshot=1,last_activity=_now());return status()
-def resume()->dict[str,Any]:return start()
-def acquire_agent(agent_id:str,job_id:str|None=None)->dict[str,Any]:
-    if not str(agent_id or "").strip():raise ComputerError("Agent identity is required to control Agentie Computer.")
-    start()
-    with _STATE_LOCK:
-        current=_row();owner=current.get("controller_type");owner_agent=current.get("controller_agent_id")
-        if owner=="user":raise ComputerError("User currently controls Agentie Computer.")
-        if owner=="agent" and owner_agent not in {None,agent_id}:raise ComputerError(f"Agentie Computer is currently controlled by agent {owner_agent}.")
-        return _update(state="AGENT_CONTROL",controller_type="agent",controller_agent_id=agent_id,job_id=job_id,takeover_reason=None,last_activity=_now())
-def handoff_agent(from_agent_id:str,to_agent_id:str,job_id:str|None=None)->dict[str,Any]:
-    with _STATE_LOCK:
-        current=_row()
-        if current.get("controller_type")!="agent" or current.get("controller_agent_id")!=from_agent_id:raise ComputerError("Only the agent currently controlling Agentie Computer can hand it off.")
-        return _update(state="AGENT_CONTROL",controller_agent_id=to_agent_id,job_id=job_id,control_generation=int(current.get("control_generation") or 0)+1,last_activity=_now())
-def request_user_takeover(agent_id:str,reason:str)->dict[str,Any]:
-    with _STATE_LOCK:
-        current=_row()
-        if current.get("controller_type")!="agent" or current.get("controller_agent_id")!=agent_id:raise ComputerError("Only the controlling agent can request user takeover.")
-        return _update(state="USER_REQUIRED",takeover_reason=str(reason or "User action required")[:1000],last_activity=_now())
-def acquire_user()->dict[str,Any]:
-    start()
-    with _STATE_LOCK:
-        current=_row()
-        if current.get("controller_type")=="agent" and current.get("state")!="USER_REQUIRED":raise ComputerError("An agent is currently working. It must pause before user takeover.")
-        return _update(state="USER_CONTROL",controller_type="user",control_generation=int(current.get("control_generation") or 0)+1,last_activity=_now())
-def continue_agent()->dict[str,Any]:
-    with _STATE_LOCK:
-        current=_row();agent_id=current.get("controller_agent_id")
-        if current.get("controller_type")!="user" or not agent_id:raise ComputerError("There is no paused agent to continue.")
-        return _update(state="AGENT_CONTROL",controller_type="agent",takeover_reason=None,control_generation=int(current.get("control_generation") or 0)+1,last_activity=_now())
-def release_control(agent_id:str|None=None)->dict[str,Any]:
-    with _STATE_LOCK:
-        current=_row()
-        if agent_id and current.get("controller_type")=="agent" and current.get("controller_agent_id")!=agent_id:raise ComputerError("This agent does not own Agentie Computer.")
-        return _clear_control("IDLE")
-def _session_agent_id(session_key:str|None)->str:
-    text=str(session_key or "")
+        if _PROCESS.poll() is not None:_update(state="ERROR",vm_pid=None,last_error=f"QEMU exited with code {_PROCESS.returncode}. See {LOG_FILE}.");raise ComputerError(f"Agentie Computer could not start. See {LOG_FILE}.")
+        if not _port_open(VNC_PORT):_PROCESS.terminate();_update(state="ERROR",vm_pid=None,last_error="QEMU display did not become ready.");raise ComputerError("Agentie Computer started but its display did not become ready.")
+        _update(state="READY",vm_pid=_PROCESS.pid,last_activity=_now(),last_error=None);_start_display_server();start_idle_monitor();return status()
+def _session_agent_id(session_id:str|None)->str:
+    text=str(session_id or "");
     if text.startswith("agent:"):
         parts=text.split(":")
         if len(parts)>=2 and parts[1]:return parts[1]
-    return "base"
-def acquire_for_session(session_key:str|None,job_id:str|None=None)->dict[str,Any]:return acquire_agent(_session_agent_id(session_key),job_id)
-def request_user_takeover_for_session(session_key:str|None,reason:str)->dict[str,Any]:return request_user_takeover(_session_agent_id(session_key),reason)
-def display_url(*,view_only:bool|None=None)->str:
-    current=_row()
-    if view_only is None:view_only=current.get("controller_type")!="user"
-    flag="1" if view_only else "0";return f"http://127.0.0.1:{DISPLAY_HTTP_PORT}/vnc.html?autoconnect=1&resize=remote&view_only={flag}&host=127.0.0.1&port={VNC_WEBSOCKET_PORT}"
+    return "agt_general"
+def acquire_agent(agent_id:str,job_id:str|None=None)->dict[str,Any]:
+    agent_id=str(agent_id or "").strip() or "agt_general";start()
+    with _STATE_LOCK:
+        row=_row();owner=row.get("controller_agent_id")
+        if row["state"]=="USER_CONTROL":raise ComputerError("The user currently controls Agentie Computer.")
+        if row["state"]=="USER_REQUIRED":raise ComputerError("Agentie Computer is waiting for user action.")
+        if row["state"]=="AGENT_CONTROL" and owner and owner!=agent_id:raise ComputerError(f"Agentie Computer is currently controlled by {owner}.")
+        generation=int(row.get("control_generation") or 0)+(0 if row["state"]=="AGENT_CONTROL" and owner==agent_id else 1);return _update(state="AGENT_CONTROL",controller_type="agent",controller_agent_id=agent_id,job_id=job_id,control_generation=generation,takeover_reason=None,last_activity=_now())
+def acquire_for_session(session_id:str|None=None,job_id:str|None=None)->dict[str,Any]:return acquire_agent(_session_agent_id(session_id),job_id)
+def request_user_takeover(agent_id:str,reason:str)->dict[str,Any]:
+    with _STATE_LOCK:
+        row=_row()
+        if row["state"]!="AGENT_CONTROL" or row.get("controller_agent_id")!=agent_id:raise ComputerError("Only the controlling agent can request user takeover.")
+        return _update(state="USER_REQUIRED",controller_type=None,takeover_reason=str(reason or "User action required")[:1000],last_activity=_now())
+def request_user_takeover_for_session(session_id:str|None,reason:str)->dict[str,Any]:return request_user_takeover(_session_agent_id(session_id),reason)
+def acquire_user()->dict[str,Any]:
+    start()
+    with _STATE_LOCK:
+        row=_row();return _update(state="USER_CONTROL",controller_type="user",last_activity=_now())
+def continue_agent()->dict[str,Any]:
+    with _STATE_LOCK:
+        row=_row();agent_id=row.get("controller_agent_id")
+        if not agent_id:raise ComputerError("There is no paused agent to continue.")
+        if row["state"] not in {"USER_CONTROL","USER_REQUIRED"}:raise ComputerError("Agentie Computer is not waiting for user takeover.")
+        return _update(state="AGENT_CONTROL",controller_type="agent",takeover_reason=None,last_activity=_now())
+def release_control(agent_id:str|None=None)->dict[str,Any]:
+    with _STATE_LOCK:
+        row=_row()
+        if agent_id and row.get("controller_agent_id") and row.get("controller_agent_id")!=agent_id:raise ComputerError("Computer control belongs to another agent.")
+        return _update(state="IDLE",controller_type=None,controller_agent_id=None,job_id=None,takeover_reason=None,last_activity=_now())
+def handoff_agent(from_agent_id:str,to_agent_id:str,job_id:str|None=None)->dict[str,Any]:
+    with _STATE_LOCK:
+        row=_row()
+        if row["state"]!="AGENT_CONTROL" or row.get("controller_agent_id")!=from_agent_id:raise ComputerError("Computer handoff requires current agent ownership.")
+        return _update(state="AGENT_CONTROL",controller_type="agent",controller_agent_id=to_agent_id,job_id=job_id,control_generation=int(row.get("control_generation") or 0)+1,last_activity=_now())
+def suspend()->dict[str,Any]:
+    with _STATE_LOCK:
+        row=_row()
+        if row["state"] in {"AGENT_CONTROL","USER_CONTROL","USER_REQUIRED"}:raise ComputerError("Agentie Computer cannot suspend while it is controlled or waiting for user action.")
+        if not _is_pid_alive(row.get("vm_pid")):return _update(state="STOPPED",vm_pid=None,suspended_snapshot=0)
+        try:_hmp("savevm agentie-idle");_qmp_command("stop")
+        except Exception as exc:raise ComputerError(f"Could not suspend Agentie Computer: {exc}") from exc
+        return _update(state="SUSPENDED",suspended_snapshot=1,last_activity=_now())
+def resume()->dict[str,Any]:
+    with _STATE_LOCK:
+        row=_row()
+        if row["state"]!="SUSPENDED":return start()
+        if _is_pid_alive(row.get("vm_pid")):
+            try:_qmp_command("cont");return _update(state="IDLE",last_activity=_now())
+            except Exception:pass
+        return start()
+def stop()->dict[str,Any]:
+    global _PROCESS
+    with _STATE_LOCK:
+        row=_row();pid=row.get("vm_pid")
+        if _is_pid_alive(pid):
+            try:_qmp_command("system_powerdown")
+            except Exception:pass
+            deadline=time.time()+8
+            while time.time()<deadline and _is_pid_alive(pid):time.sleep(.2)
+            if _is_pid_alive(pid):
+                try:psutil.Process(int(pid)).terminate()
+                except Exception:pass
+        _PROCESS=None;PID_FILE.unlink(missing_ok=True);return _update(state="STOPPED",controller_type=None,controller_agent_id=None,job_id=None,takeover_reason=None,vm_pid=None,suspended_snapshot=0,last_activity=_now())
+def display_url(*,view_only:bool=False)->str:return f"http://127.0.0.1:{DISPLAY_HTTP_PORT}/vnc.html?autoconnect=1&resize=scale&view_only={1 if view_only else 0}&path=websockify?token=&port={VNC_WEBSOCKET_PORT}"
 def status()->dict[str,Any]:
-    current=_row();pid=current.get("vm_pid");alive=_is_pid_alive(pid)
-    if current.get("state") in {"STARTING","READY","AGENT_CONTROL","USER_REQUIRED","USER_CONTROL","IDLE"} and not alive:current=_update(state="STOPPED",vm_pid=None,controller_type=None,controller_agent_id=None,job_id=None,takeover_reason=None);alive=False
-    profile=host_profile();qemu=qemu_binary(profile);accel=acceleration(qemu,profile) if qemu else {"available":False,"accelerator":None,"reason":"QEMU is not installed yet.","action":"Open Agentie Computer to let Agentie prepare QEMU."}
-    return {**current,"computer_id":"company-default","running":alive and current.get("state") not in {"STOPPED","SUSPENDED","ERROR"},"display_ready":alive and _port_open(VNC_PORT) and _port_open(DISPLAY_HTTP_PORT),"browser_ready":alive and _port_open(CDP_PORT),"display_url":display_url(view_only=current.get("controller_type")!="user") if alive else None,"cdp_url":f"http://127.0.0.1:{CDP_PORT}" if alive else None,"disk_path":str(DISK),"disk_exists":DISK.exists(),"profile":profile,"acceleration":accel,"persistent":True}
-def _qga_request(payload:dict[str,Any],timeout:float=10.0)->dict[str,Any]:
-    if not _port_open(QGA_PORT):raise ComputerError("Guest automation channel is not ready yet.")
-    with socket.create_connection(("127.0.0.1",QGA_PORT),timeout=timeout) as sock:
-        sock.settimeout(timeout);file=sock.makefile("rwb",buffering=0);file.write(json.dumps(payload).encode()+b"\n");deadline=time.time()+timeout
-        while time.time()<deadline:
-            line=file.readline()
-            if not line:break
-            try:item=json.loads(line.decode("utf-8","replace"))
-            except json.JSONDecodeError:continue
-            if "return" in item or "error" in item:return item
-    raise ComputerError("Guest automation command timed out.")
-def guest_exec(command:list[str],timeout:int=60)->dict[str,Any]:
-    if not command:raise ValueError("Guest command is required.")
-    response=_qga_request({"execute":"guest-exec","arguments":{"path":command[0],"arg":command[1:],"capture-output":True}})
-    if response.get("error"):raise ComputerError(str(response["error"]))
-    pid=int((response.get("return") or {}).get("pid") or 0)
-    if not pid:raise ComputerError("Guest command did not start.")
-    deadline=time.time()+timeout
-    while time.time()<deadline:
-        item=_qga_request({"execute":"guest-exec-status","arguments":{"pid":pid}});result=item.get("return") or {}
-        if result.get("exited"):touch_activity();return result
-        time.sleep(.2)
-    raise ComputerError("Guest command timed out.")
-def qmp_input(events:list[dict[str,Any]])->None:
-    result=_qmp_command("input-send-event",{"events":events})
-    if result.get("error"):raise ComputerError(str(result["error"]))
-    touch_activity()
+    row=_row();running=_is_pid_alive(row.get("vm_pid"))
+    if row["state"] not in {"STOPPED","ERROR"} and not running:row=_update(state="STOPPED",controller_type=None,controller_agent_id=None,job_id=None,takeover_reason=None,vm_pid=None,suspended_snapshot=0)
+    profile=host_profile();qemu=qemu_binary(profile);accel=acceleration(qemu,profile) if qemu else {"available":False,"accelerator":None,"reason":"QEMU is not installed yet.","action":"Open Agentie Computer to let Agentie install or locate QEMU."}
+    row.update({"computer_id":"company-default","persistent":True,"running":running,"display_ready":running and _port_open(VNC_PORT),"browser_ready":running and _port_open(CDP_PORT),"display_url":display_url(view_only=row.get("controller_type")=="agent"),"cdp_url":f"http://127.0.0.1:{CDP_PORT}","disk_path":str(DISK),"disk_exists":DISK.exists(),"profile":profile,"acceleration":accel})
+    return row
 def start_idle_monitor()->None:
     global _IDLE_THREAD
     if _IDLE_THREAD and _IDLE_THREAD.is_alive():return
-    _IDLE_STOP.clear()
-    def worker()->None:
-        while not _IDLE_STOP.wait(15):
-            try:
-                current=_row()
-                if current.get("state") not in {"READY","IDLE"} or current.get("controller_type"):continue
-                if _now()-float(current.get("last_activity") or _now())>=IDLE_SECONDS:suspend()
-            except Exception:continue
-    _IDLE_THREAD=threading.Thread(target=worker,name="agentie-company-computer-idle",daemon=True);_IDLE_THREAD.start()
-def stop_idle_monitor()->None:_IDLE_STOP.set()
+    _IDLE_STOP.clear();_IDLE_THREAD=threading.Thread(target=_idle_loop,name="agentie-computer-idle",daemon=True);_IDLE_THREAD.start()
+def _idle_loop()->None:
+    while not _IDLE_STOP.wait(10):
+        try:
+            row=_row()
+            if row["state"] in {"READY","IDLE"} and _is_pid_alive(row.get("vm_pid")) and _now()-float(row.get("last_activity") or 0)>=IDLE_SECONDS:suspend()
+        except Exception:pass
