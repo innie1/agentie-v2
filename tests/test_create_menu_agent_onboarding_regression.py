@@ -60,7 +60,9 @@ class CreateMenuAgentOnboardingRegressionTests(unittest.TestCase):
         self.assertNotIn('renderReview', self.ui)
         self.assertNotIn('Recommended Skills', self.ui)
         self.assertNotIn('Recommended plugins / MCPs', self.ui)
-        self.assertIn('Do not assume a predefined profession or department', self.builder)
+        self.assertIn('Never invent a different job', self.builder)
+        self.assertNotIn('Sales Agent', self.builder)
+        self.assertNotIn('Research Agent', self.builder)
 
     def test_main_model_personality_runs_only_for_real_creator_marker(self):
         description='I need someone who helps organize product ideas.'
