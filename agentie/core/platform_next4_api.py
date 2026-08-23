@@ -98,6 +98,11 @@ async def platform_group_chat_markdown_js():
     return _frontend_script("group_chat_markdown.js")
 
 
+@router.get("/platform-group-chat-offline-cache.js")
+async def platform_group_chat_offline_cache_js():
+    return _frontend_script("group_chat_offline_cache.js")
+
+
 @router.get("/platform-navigation-connect.js")
 async def platform_navigation_connect_js():
     return _frontend_script("navigation_connect.js")
@@ -110,10 +115,12 @@ async def platform_group_instant_open_js():
 
 @router.get("/platform-next4.js")
 async def platform_next4_js():
-    # Keep the existing connected surfaces, then install one final navigation
-    # connection layer after model_router. The instant-open guard runs after
-    # navigation so it can preserve the first paint without owning chat state.
-    return _frontend_bundle("platform_next4.js", "platform_chat_focus_guard.js", "group_chat_markdown.js", "model_router.js", "navigation_connect.js", "group_chat_instant_open.js")
+    # Cache group snapshots before the connected navigation starts making local
+    # requests. Navigation remains the single owner of visible group chat state;
+    # the cache only supplies the last durable snapshot when a local fetch fails.
+    # The instant-open guard runs last so it can preserve first paint without
+    # owning chat state.
+    return _frontend_bundle("platform_next4.js", "platform_chat_focus_guard.js", "group_chat_markdown.js", "model_router.js", "group_chat_offline_cache.js", "navigation_connect.js", "group_chat_instant_open.js")
 
 
 @router.get("/platform/model-routing/status")
