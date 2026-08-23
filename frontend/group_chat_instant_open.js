@@ -4,6 +4,7 @@
   let pending=false;
   let generation=0;
   let observer=null;
+  let revealFrame=0;
 
   function scrollRoot(){
     const shell=document.querySelector('.chat-shell');
@@ -16,27 +17,23 @@
 
   function setLatest(root){
     if(!root)return;
-    const bottom=Math.max(0,root.scrollHeight-root.clientHeight);
-    const isDocument=root===document.scrollingElement||root===document.documentElement||root===document.body;
-    if(isDocument){
-      root.scrollTop=bottom;
-      window.scrollTo({top:bottom,left:0,behavior:'auto'});
-    }else root.scrollTop=bottom;
+    // Direct scrollTop assignment is synchronous and does not animate. Use the
+    // full scrollHeight deliberately: browsers clamp it to the maximum bottom.
+    root.scrollTop=root.scrollHeight;
   }
 
   function finishOpen(messages,token){
     if(!pending||token!==generation||!messages)return;
     pending=false;
     observer?.disconnect();observer=null;
+    if(revealFrame){cancelAnimationFrame(revealFrame);revealFrame=0}
 
     const root=scrollRoot();
     if(root){
       const previous=root.style.scrollBehavior;
       root.style.scrollBehavior='auto';
       messages.style.minHeight='';
-      // Set the real scroll container before revealing the retained thread.
-      // MutationObserver callbacks run before paint, so the first visible frame
-      // is already positioned at the latest message instead of travelling down.
+      // Position at the latest message while the thread is still hidden.
       setLatest(root);
       messages.style.visibility='';
       if(previous)root.style.scrollBehavior=previous;
@@ -56,21 +53,26 @@
     const token=++generation;
     pending=true;
     observer?.disconnect();
+    if(revealFrame){cancelAnimationFrame(revealFrame);revealFrame=0}
 
-    // This guard listens at window capture, before navigation_connect's
-    // document-level group click handler. Preserve the current page height and
-    // hide the message surface before that handler swaps in its tiny loader.
+    // This guard runs before navigation_connect's document-level group handler.
+    // Keep the existing surface height and hide it while the retained thread is
+    // swapped in so the page cannot collapse to the top during loading.
     const root=scrollRoot();
-    const currentTop=Number(root?.scrollTop||window.scrollY||0);
     const viewport=Number(root?.clientHeight||window.innerHeight||0);
-    messages.style.minHeight=`${Math.max(viewport,currentTop+viewport)}px`;
+    const retainedHeight=Math.max(Number(messages.scrollHeight||0),viewport);
+    messages.style.minHeight=`${retainedHeight}px`;
     messages.style.visibility='hidden';
 
     observer=new MutationObserver(()=>{
       if(!pending||token!==generation)return;
       if(messages.querySelector('.agentie-connected-group-opening'))return;
       if(!window.__agentieActiveGroupChat)return;
-      finishOpen(messages,token);
+      // navigation_connect schedules its own bottom positioning with
+      // requestAnimationFrame. Register our reveal after that callback so the
+      // first visible frame is already at the newest message.
+      if(revealFrame)cancelAnimationFrame(revealFrame);
+      revealFrame=requestAnimationFrame(()=>finishOpen(messages,token));
     });
     observer.observe(messages,{childList:true,subtree:true});
   }
