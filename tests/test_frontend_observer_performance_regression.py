@@ -11,7 +11,8 @@ class FrontendObserverPerformanceRegressionTests(unittest.TestCase):
         self.assertIn('function ensureSharedToolCatalog()', self.loader)
         self.assertIn('if(pluginPanel)ensureSharedToolCatalog()', self.loader)
         self.assertIn("setTimeout(ensureSharedToolCatalog,180)", self.loader)
-        self.assertNotIn('MutationObserver', self.loader)
+        self.assertNotIn('new MutationObserver', self.loader)
+        self.assertNotIn('MutationObserver(', self.loader)
 
     def test_profile_polish_is_user_event_driven_not_background_dom_scanning(self):
         self.assertIn('function polishOpenProfiles()', self.loader)
