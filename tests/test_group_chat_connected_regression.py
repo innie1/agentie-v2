@@ -33,6 +33,12 @@ class ConnectedGroupChatRegressionTests(unittest.TestCase):
         self.assertEqual(saved['owner_agent_id'],self.ada['id'])
         self.assertEqual(saved['owner_agent_name'],'Ada')
 
+    def test_group_list_preserves_stable_participant_ids_for_ui_identity(self):
+        thread=agent_chat_presence.create_group_chat('Ops',[self.ada['id'],self.ben['id']])
+        row=next(x for x in agent_chat_presence.list_connected_threads() if x['id']==thread['id'])
+        self.assertEqual(row['participant_ids'],[self.ada['id'],self.ben['id']])
+        self.assertEqual(row['participants'],['Ada','Ben'])
+
     def test_owner_must_be_participant_and_does_not_grant_delegation(self):
         other=agent_registry.create_agent('Cora','Operations owner')['agent'];thread=agent_chat_presence.create_group_chat('Ops',[self.ada['id'],self.ben['id']])
         with self.assertRaisesRegex(ValueError,'participant'):
