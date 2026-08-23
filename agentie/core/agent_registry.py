@@ -15,7 +15,7 @@ WORKSPACE = Path.cwd() / "workspace"
 AGENTS_FILE = WORKSPACE / "agents.json"
 # Legacy execution profiles remain an internal compatibility layer for the old
 # base-agent runtime. A user's persistent agent is defined by its configured job,
-# goal, responsibilities, skills, plugins and permissions instead.
+# goal, responsibilities, identity and memory rather than by a tool bundle.
 VALID_BASES = {"general", "research", "coding", "manager", "github"}
 VALID_AVATAR_KINDS = {"default", "generated", "uploaded"}
 AVATAR_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp"}
@@ -54,7 +54,7 @@ def _clean_list(values: list[str] | tuple[str, ...] | None, *, item_limit: int =
 
 
 def _generated_employee_profile(role: str, base: str = "general", purpose: str = "") -> dict[str, Any]:
-    """Generate a neutral starting profile without guessing a predefined profession."""
+    """Generate a neutral fallback profile without guessing a predefined profession."""
     job = _clean(role, 300) or "the work assigned by the user"
     focus = _clean(purpose, 1200)
     goal = f"Own and complete the work described by the user for: {job}"
@@ -65,7 +65,7 @@ def _generated_employee_profile(role: str, base: str = "general", purpose: str =
         "goal": _clean(goal, 1600),
         "responsibilities": [
             f"Own work that falls within: {job}",
-            "Use assigned skills, plugins, knowledge and tools only within granted permissions",
+            "Choose useful workspace capabilities when they help complete assigned work",
             "Report progress, blockers, meaningful risks and recommendations clearly",
         ],
         "company_identity": "",
@@ -153,18 +153,18 @@ def create_agent(
     generated = _generated_employee_profile(role, "general", purpose)
     now = datetime.now().astimezone().isoformat(timespec="seconds")
     agent_id = "agt_" + uuid.uuid4().hex[:10]
-    # All newly created persistent agents are permission-driven. Existing agents
-    # saved before this platform model remain legacy unless the user migrates them.
+    # Connected tools and enabled capabilities are workspace-shared. Permissions
+    # here cover agent behavior such as delegation, not per-agent tool grants.
     safe_permissions = {
         "delegate": False,
         "shared_company_memory": "read",
-        "capability_mode": "explicit",
+        "capability_mode": "shared",
         "mcp_servers": [],
         "blocked_skills": [],
         "blocked_mcp_servers": [],
     }
     safe_permissions.update(dict(permissions or {}))
-    safe_permissions["capability_mode"] = "explicit"
+    safe_permissions["capability_mode"] = "shared"
     item = {
         "id": agent_id,
         "name": name,
@@ -186,6 +186,8 @@ def create_agent(
         "pin_order": None,
         "memory_scope": f"agent:{agent_id}",
         "session_prefix": f"agent:{agent_id}:",
+        # Kept only for backward-compatible saved data and older APIs. Runtime
+        # capability selection no longer depends on this list.
         "skills": sorted(set(str(x).strip().lower() for x in (skills or []) if str(x).strip())),
         "permissions": safe_permissions,
         "approval_policy": dict(approval_policy or {}),
