@@ -59,6 +59,28 @@ class NavigationRewireConnectedRegressionTests(unittest.TestCase):
         self.assertIn("/platform/agent-chats/${encodeURIComponent(state.group.id)}/messages", src)
         self.assertIn("JSON.stringify({message:value})", src)
 
+    def test_group_polling_respects_manual_scroll_up(self):
+        src = self.source
+        self.assertIn("function scrollHost(){return document.querySelector('.chat-shell')}", src)
+        self.assertIn("function isNearBottom", src)
+        self.assertIn("followBottom:true", src)
+        self.assertIn("if(!state.group||state.restoringScroll)return", src)
+        self.assertIn("state.followBottom=isNearBottom(host,120)", src)
+        self.assertIn("else setHostScroll(host,oldTop)", src)
+        self.assertNotIn("document.documentElement.scrollHeight-window.scrollY-window.innerHeight", src)
+        self.assertNotIn("window.scrollTo({top:document.body.scrollHeight", src)
+
+    def test_group_identity_replaces_single_agent_topbar_while_active(self):
+        src = self.source
+        self.assertIn("function syncTopbar", src)
+        self.assertIn(".workspace-topbar .top-agent", src)
+        self.assertIn("agentie-connected-top-group", src)
+        self.assertIn("agentie-connected-top-participants", src)
+        self.assertIn("title.textContent=d.name||'Group chat'", src)
+        self.assertIn("for(const name of d.participants||[])", src)
+        self.assertIn("orb.style.setProperty('display','none','important')", src)
+        self.assertIn("syncTopbar(null)", src)
+
 
 if __name__ == "__main__":
     unittest.main()
