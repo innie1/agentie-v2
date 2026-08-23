@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import asyncio
 import re
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 from agentie.core.agent_matching import match_identity_score
@@ -29,6 +31,8 @@ _SKILL_HINTS={
     "visuals-motion":{"diagram","visual","flowchart","animation","design"},
 }
 _GENERIC_SUBJECTS={"work","task","tasks","thing","things","area","stuff","help"}
+_IDENTITY_MODEL_MARKER="[agentie:use-main-identity-model]"
+_FALLBACK_PERSONALITY="Proactive, reliable, clear about uncertainty, and willing to recommend a better approach when evidence supports it"
 
 
 def _clean(value: str, limit: int = 1200) -> str:return " ".join(str(value or "").strip().split())[:limit]
@@ -174,18 +178,47 @@ def _responsibilities_for(task:str)->list[str]:
         if item.casefold() not in {x.casefold() for x in out}:out.append(item)
     return out[:3]
 
+def _main_model_personality(description:str,job:str,goal:str)->str|None:
+    """Generate one role-specific working personality with Agentie's configured powerful provider."""
+    try:
+        from agents import Agent,ModelSettings,Runner
+        from agentie.models.provider import get_model,get_provider_info
+        provider=get_provider_info("powerful")
+        prompt=("Create a distinct but practical working personality for a new AI teammate. "
+                "Return ONLY one sentence of 10-24 words, with no quotes, heading, bullets, tool names, permissions, or model/provider references. "
+                "Describe how this teammate naturally approaches its work. Keep it professional and specific to the configured work, not a generic list of virtues.\n\n"
+                f"Role: {job}\nGoal: {goal}\nUser description: {description}")
+        def invoke()->str:
+            async def run()->str:
+                designer=Agent(name="Agentie Identity Designer",instructions="Design concise role-specific working personalities. Never invent a different job or mention tools, permissions, providers, or system internals.",model=get_model(provider),model_settings=ModelSettings(max_tokens=120),tools=[])
+                result=await Runner.run(designer,prompt)
+                return str(result.final_output or "")
+            return asyncio.run(run())
+        pool=ThreadPoolExecutor(max_workers=1,thread_name_prefix="agentie-identity")
+        try:raw=pool.submit(invoke).result(timeout=25)
+        finally:pool.shutdown(wait=False,cancel_futures=True)
+        value=_clean(raw.strip().strip('"“”\''),280)
+        if len(value)<12:return None
+        value=re.sub(r"^(?:personality\s*:\s*|[-*•]\s*)","",value,flags=re.I)
+        return _clean(value,280) or None
+    except Exception:
+        return None
+
 def draft_agent_spec(description: str, *, name: str = "", job: str = "") -> dict[str, Any]:
-    raw_description=str(description or "").strip()
+    raw_description=str(description or "").strip();use_main_identity=_IDENTITY_MODEL_MARKER in raw_description.casefold();raw_description=re.sub(re.escape(_IDENTITY_MODEL_MARKER),"",raw_description,flags=re.I).strip()
     description=_clean(raw_description,5000)
     if not description:raise ValueError("Describe what this agent should own or be responsible for.")
     task=_task_text(raw_description);job_text=_role_title(task,job);goal=_goal_for(task);responsibilities=_responsibilities_for(task)
-    working_style="Proactive, reliable, clear about uncertainty, and willing to recommend a better approach when evidence supports it"
-    instructions=(f"Job ownership: {job_text}.\nConfigured work: {task}.\nWork from the user's configured goal, responsibilities, knowledge, skills, plugins and approval boundaries. Do not assume a predefined profession or department beyond what the user configured. Use the least costly real capability that can complete the work, and never claim an action succeeded unless it actually did.")
+    working_style=_FALLBACK_PERSONALITY;personality_source="fallback"
+    if use_main_identity:
+        generated=_main_model_personality(description,job_text,goal)
+        if generated:working_style=generated;personality_source="main_api"
+    instructions=(f"Own the {job_text} role. Focus on: {task}. Follow the configured goal and responsibilities, use professional judgment, surface meaningful risks, and never claim an action succeeded unless it actually did.")
     plugins=recommend_plugins(description);manager=recommend_manager(description);routines=routine_suggestions(description);delegate=bool(_COORDINATE_RE.search(description))
-    return {"name":_clean(name,120),"job":job_text,"description":description,"goal":goal,"working_style":working_style,"responsibilities":responsibilities,"instructions":instructions,"skills":recommend_skills(description),"plugins":plugins,"approval_policy":dict(_DEFAULT_APPROVAL_POLICY),"memory_policy":{"private_context":True,"company_knowledge":"read","project_knowledge":"scoped"},"can_delegate":False,"can_delegate_recommended":delegate,"manager_id":None,"recommended_manager":manager,"recommended_collaborators":recommend_collaborators(description),"routine_suggestions":routines,"capability_gaps":capability_gaps(description),"connection_needed":[x["id"] for x in plugins if x.get("setup_required")],"runtime_profile":"general"}
+    return {"name":_clean(name,120),"job":job_text,"description":description,"goal":goal,"working_style":working_style,"personality_source":personality_source,"responsibilities":responsibilities,"instructions":instructions,"skills":recommend_skills(description),"plugins":plugins,"approval_policy":dict(_DEFAULT_APPROVAL_POLICY),"memory_policy":{"private_context":True,"company_knowledge":"read","project_knowledge":"scoped"},"can_delegate":False,"can_delegate_recommended":delegate,"manager_id":None,"recommended_manager":manager,"recommended_collaborators":recommend_collaborators(description),"routine_suggestions":routines,"capability_gaps":capability_gaps(description),"connection_needed":[x["id"] for x in plugins if x.get("setup_required")],"runtime_profile":"general"}
 
 def _explicit_ids(values)->list[str]:
-    """Strings are explicit selections. Draft recommendation objects are not grants unless selected=True."""
+    """Legacy compatibility: explicit selections are accepted but runtime tools are now workspace-shared."""
     out=[]
     for value in values or []:
         if isinstance(value,dict):
@@ -206,4 +239,4 @@ def normalize_create_spec(spec: dict[str, Any]) -> dict[str, Any]:
         item=_clean(value,400)
         if item and item.casefold() not in {x.casefold() for x in responsibilities}:responsibilities.append(item)
     approval=dict(_DEFAULT_APPROVAL_POLICY);approval.update({str(k):str(v) for k,v in dict(spec.get("approval_policy") or {}).items()});routines=[dict(x) for x in spec.get("routines") or [] if isinstance(x,dict)]
-    return {"name":name,"role":job,"purpose":_clean(spec.get("description") or job,1600),"goal":_clean(spec.get("goal") or f"Own and complete: {job}",1600),"personality":_clean(spec.get("working_style") or "Proactive, reliable, and clear about uncertainty",800),"responsibilities":responsibilities,"manual_instructions":str(spec.get("instructions") or "").strip()[:12000],"skills":_explicit_ids(spec.get("skills")),"plugins":_explicit_ids(spec.get("plugins")),"approval_policy":approval,"memory_policy":dict(spec.get("memory_policy") or {}),"manager_id":spec.get("manager_id") or None,"can_delegate":bool(spec.get("can_delegate")),"routines":routines,"runtime_profile":"general"}
+    return {"name":name,"role":job,"purpose":_clean(spec.get("description") or job,1600),"goal":_clean(spec.get("goal") or f"Own and complete: {job}",1600),"personality":_clean(spec.get("working_style") or _FALLBACK_PERSONALITY,800),"responsibilities":responsibilities,"manual_instructions":str(spec.get("instructions") or "").strip()[:12000],"skills":_explicit_ids(spec.get("skills")),"plugins":_explicit_ids(spec.get("plugins")),"approval_policy":approval,"memory_policy":dict(spec.get("memory_policy") or {}),"manager_id":spec.get("manager_id") or None,"can_delegate":bool(spec.get("can_delegate")),"routines":routines,"runtime_profile":"general"}
