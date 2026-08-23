@@ -4,6 +4,7 @@ import re
 from typing import Any
 
 from agentie.core import company_computer as computer
+from agentie.core.company_computer_guest_setup import ensure_guest_runtime
 
 _KEY_MAP = {
     "enter": "Return",
@@ -50,6 +51,7 @@ def _ensure_xdotool() -> None:
 
 
 def _xdotool(args: list[str], session_id: str | None = None, *, timeout: int = 30) -> dict[str, Any]:
+    ensure_guest_runtime()
     agent_id = _agent_id(session_id)
     computer.acquire_agent(agent_id)
     try:
