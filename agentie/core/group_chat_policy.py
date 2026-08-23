@@ -61,6 +61,33 @@ def clean_group_output(value: str, *, detailed: bool = False) -> str:
     return candidate.rstrip() + "…"
 
 
+def local_group_chat_response(agent: dict[str, Any] | None, task: str, *, context_id: str = "") -> str | None:
+    """Use Agentie's local deterministic/NPC path for genuine casual chat.
+
+    The earlier handoff safety fix correctly stopped generated orchestration
+    prompts from entering the NPC preference learner. Group chat policy has the
+    original raw user message available, so it can safely try that local path
+    *before* building an internal prompt. This keeps greetings/acknowledgements
+    such as "hi" provider-free while real questions/tasks still escalate.
+    """
+    if not agent:
+        return None
+    raw = " ".join(str(task or "").strip().split())
+    if not raw:
+        return None
+    normalized = raw.casefold().replace("what's", "what is").replace("whats", "what is")
+    normalized = re.sub(r"[^a-z0-9 ]+", " ", normalized)
+    normalized = re.sub(r"\s+", " ", normalized).strip()
+    # Add the common small-talk phrase that the generic NPC table does not
+    # currently contain, without hard-coding any profession or role behavior.
+    if normalized == "what is up":
+        return f"{str(agent.get('name') or 'Agent')} here. What are we working on?"
+    result = runner.try_npc_response(agent, raw, session_id=context_id or None)
+    if result is not None and result.get("message") is not None:
+        return clean_group_output(str(result.get("message") or ""), detailed=False)
+    return None
+
+
 def _group_prompt(agent: dict[str, Any] | None, task: str, *, chat: bool, detailed: bool) -> str:
     name = str((agent or {}).get("name") or "Agent")
     role = str((agent or {}).get("role") or "team member")
@@ -130,6 +157,19 @@ def install_group_chat_policy() -> None:
         chat = str(job.get("interaction_mode") or "task") == "chat"
         detailed = str(job.get("response_detail") or "concise") == "detailed"
         agent = agent_from_session(session_id)
+        if chat:
+            local = local_group_chat_response(
+                agent,
+                task,
+                context_id=f"group_chat:{job.get('id')}:{(agent or {}).get('id') or 'agent'}",
+            )
+            if local is not None:
+                runner.record_event(
+                    "npc_brain",
+                    str((agent or {}).get("name") or "group_agent"),
+                    metadata={"session_id": session_id, "provider_calls": 0, "surface": "group_chat"},
+                )
+                return local
         prompt = _group_prompt(agent, task, chat=chat, detailed=detailed)
         output = await _ORIGINAL_RUN_AGENT(prompt, agent_type, session_id)
         return clean_group_output(output, detailed=detailed)
