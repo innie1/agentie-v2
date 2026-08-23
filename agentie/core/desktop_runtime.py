@@ -18,8 +18,10 @@ from agentie.core.company_computer import (
     stop as stop_computer,
     suspend as suspend_computer,
 )
+from agentie.core.company_computer_idle import start_idle_coordinator
 
 WORKSPACE = Path.cwd() / "workspace"
+start_idle_coordinator()
 
 
 def _safe_path(name: str) -> Path:
@@ -238,4 +240,4 @@ def route_desktop_request(message: str) -> dict[str, Any] | None:
     except (ValueError, RuntimeError, ComputerError) as exc:
         info = computer_status()
         return {"message": str(exc), "card": desktop_card("error", mode="qemu", state=info.get("state"), error=str(exc), action=(info.get("acceleration") or {}).get("action"))}
-    return {"message": "Unknown desktop command.", "card": desktop_card("error", error="Unknown desktop command")}
+    return {"message": "Unknown desktop command.", "card": desktop_card("error", error="Unknown desktop command")
