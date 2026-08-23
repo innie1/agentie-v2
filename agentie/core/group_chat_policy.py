@@ -72,7 +72,7 @@ def _group_prompt(agent: dict[str, Any] | None, task: str, *, chat: bool, detail
         length_rule = "Give your view concisely: usually 2-5 sentences or at most 4 short bullets. Do not write a full report."
     return (
         f"You are {name}, the {role}, replying as one participant inside an Agentie group chat.\n"
-        f"Give YOUR role-specific view. Do not impersonate the other agents and do not synthesize a full-team report. {length_rule}\n"
+        f"Give YOUR role-specific view. Do not impersonate the other agents. Do not synthesize a full-team report. {length_rule}\n"
         "Answer the user's actual question directly. If a recommendation is appropriate, state your recommendation and the most important reason or risk.\n"
         "Do not output internal workflow headings or metadata such as Deliverable, Handoff Summary, Executive Handoff Summary, worker status, or handoff notes.\n"
         "Be strict about evidence: do not call a claim verified/factual unless it was actually verified in this run or is stable general knowledge. "
