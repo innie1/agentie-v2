@@ -15,6 +15,7 @@ class GroupChatComposerFocusRegressionTests(unittest.TestCase):
         self.assertIn('MutationObserver',text)
         self.assertIn("ta.focus({preventScroll:true})",text)
         self.assertIn('setSelectionRange',text)
+        self.assertIn('__agentieNavigationConnect',text)
 
     def test_focus_guard_preserves_draft_across_dom_replacement(self):
         text=Path('frontend/platform_chat_focus_guard.js').read_text(encoding='utf-8')
@@ -29,13 +30,15 @@ class GroupChatComposerFocusRegressionTests(unittest.TestCase):
         ):
             self.assertIn(marker,text)
 
-    def test_focus_guard_is_bundled_after_chat_ui(self):
+    def test_focus_guard_is_bundled_after_chat_ui_and_navigation_connects_last(self):
         source=Path('agentie/core/platform_next4_api.py').read_text(encoding='utf-8')
-        bundle='_frontend_bundle("platform_next4.js", "platform_chat_focus_guard.js", "group_chat_markdown.js", "model_router.js")'
+        bundle='_frontend_bundle("platform_next4.js", "platform_chat_focus_guard.js", "group_chat_markdown.js", "model_router.js", "navigation_connect.js")'
         self.assertIn(bundle,source)
         self.assertLess(bundle.index('platform_next4.js'),bundle.index('platform_chat_focus_guard.js'))
+        self.assertLess(bundle.index('model_router.js'),bundle.index('navigation_connect.js'))
         self.assertIn('group_chat_markdown.js',bundle)
         self.assertIn('@router.get("/platform-chat-focus-guard.js")',source)
+        self.assertIn('@router.get("/platform-navigation-connect.js")',source)
 
 
 if __name__=='__main__':
