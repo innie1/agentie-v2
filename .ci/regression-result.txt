@@ -1,4 +1,4 @@
-tested_sha=cf941f09d926f3b246b9eb603d73a4e4c923184d
+tested_sha=76394cc2a60e2fb3a061484671c12a05954e98fb
 exit_code=1
 --- regression tail ---
 test_default_mode_is_auto_and_mode_persists (test_model_router_regression.ModelRouterRegressionTests.test_default_mode_is_auto_and_mode_persists) ... ok
@@ -248,6 +248,6 @@ Traceback (most recent call last):
 AssertionError: 'Hypervisor' not found in 'Install or use a Windows QEMU build with WHPX support.'
 
 ----------------------------------------------------------------------
-Ran 674 tests in 23.305s
+Ran 678 tests in 22.707s
 
 FAILED (failures=4)
