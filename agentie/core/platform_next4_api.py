@@ -118,14 +118,17 @@ async def platform_create_menu_js():
     return _frontend_script("create_menu.js")
 
 
+@router.get("/platform-create-menu-loader.js")
+async def platform_create_menu_loader_js():
+    return _frontend_script("create_menu_loader.js")
+
+
 @router.get("/platform-next4.js")
 async def platform_next4_js():
-    # Cache group snapshots before the connected navigation starts making local
-    # requests. Navigation remains the single owner of visible group chat state;
-    # the cache only supplies the last durable snapshot when a local fetch fails.
-    # The instant-open guard stays immediately after navigation, while the create
-    # menu loads last so it can supersede legacy + handlers without owning chat.
-    return _frontend_bundle("platform_next4.js", "platform_chat_focus_guard.js", "group_chat_markdown.js", "model_router.js", "group_chat_offline_cache.js", "navigation_connect.js", "group_chat_instant_open.js", "create_menu.js")
+    # Keep startup light: only the tiny create-menu loader is part of the main
+    # platform bundle. The full creation conversation is fetched after + is
+    # clicked. Group navigation remains the owner of visible group-chat state.
+    return _frontend_bundle("platform_next4.js", "platform_chat_focus_guard.js", "group_chat_markdown.js", "model_router.js", "group_chat_offline_cache.js", "navigation_connect.js", "group_chat_instant_open.js", "create_menu_loader.js")
 
 
 @router.get("/platform/model-routing/status")
