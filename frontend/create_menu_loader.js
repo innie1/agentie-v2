@@ -20,11 +20,8 @@
     loadCreateMenu().then(()=>window.__agentieOpenCreateMenu?.(plus)).catch(()=>window.agentieNotice?.('⚠️','Create','Creation menu could not load. Please try again.',null,'create-menu-load'));
   },true);
 
-  // Connected tools live in one workspace catalog. A hidden sentinel prevents the
-  // older per-agent access editor from mounting while the rest of plugin_access.js
-  // (team cards, research UI, etc.) remains intact. This intentionally does NOT
-  // use a MutationObserver: the older plugin UI also watches this panel, and two
-  // observers that remove/recreate each other's nodes can lock the browser tab.
+  // Connected tools are shared once at workspace level. Keep the old per-agent
+  // access editor from mounting without continuously watching or rewriting the DOM.
   function ensureSharedToolCatalog(){
     const body=document.querySelector('#agentiePluginsPanel .plugins-body');if(!body)return;
     body.querySelectorAll('.agent-access-box:not(.agentie-shared-access-sentinel)').forEach(el=>el.remove());
@@ -39,7 +36,6 @@
   function agentForModal(modal){const name=modal?.querySelector('.employee-profile-name')?.textContent?.trim()||modal?.querySelector('.employee-profile-form h3')?.textContent?.replace(/^Edit\s+/i,'').replace(/\s+·\s+Details$/i,'').trim();const active=document.querySelector('#persistentAgentList .agent-row.active')?.dataset?.agentId;return resolveAgent(name)||resolveAgent(active)}
   async function runProfile(message,agent){const response=await fetch('/agent/run',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({message,agent_type:'general',session_id:`ui:employee-profile:${agent?.id||'agent'}`})});const data=await response.json().catch(()=>({}));if(!response.ok)throw new Error(data.detail||data.message||'Request failed');return data}
   function cardFrom(data){return data?.card||data?.result?.card||null}
-  function fieldInput(form,labelStart){const field=[...form.querySelectorAll('.employee-field')].find(el=>el.querySelector('label')?.textContent?.trim().toLowerCase().startsWith(labelStart.toLowerCase()));return field?.querySelector('input,textarea')||null}
   async function requestDelete(agent,modal){
     if(!agent)return;const button=modal?.querySelector('.agentie-profile-delete');if(button)button.disabled=true;
     try{const data=await runProfile(`Delete agent ${agent.id}`,agent);modal?.remove();if(typeof window.addAssistant==='function')window.addAssistant(data.message||`Delete ${agent.name}`,cardFrom(data));else window.agentieNotice?.('🗑️','Delete agent',data.message||`Delete ${agent.name}`,null,'agent-delete')}
@@ -47,27 +43,31 @@
   }
   function addDeleteButton(actions,agent,modal){if(!actions||actions.querySelector('.agentie-profile-delete'))return;const button=document.createElement('button');button.type='button';button.className='agentie-profile-delete';button.textContent='Delete agent';button.onclick=()=>requestDelete(agent,modal);actions.appendChild(button)}
   async function augmentDetailsForm(form,modal,agent){
-    if(!form||!agent||form.dataset.agentieUnified==='1')return;form.dataset.agentieUnified='1';const heading=form.querySelector('h3');if(heading&&heading.textContent!==`${agent.name} · Details`)heading.textContent=`${agent.name} · Details`;const intro=form.querySelector('p');const introText='Identity, role and durable working instructions. Workspace tools are shared automatically.';if(intro&&intro.textContent!==introText)intro.textContent=introText;
-    const actions=form.querySelector('.employee-profile-form-actions');if(!actions)return;const instructionField=document.createElement('div');instructionField.className='employee-field';instructionField.dataset.agentieUserInstructions='1';const label=document.createElement('label');label.textContent='Instructions';const textarea=document.createElement('textarea');textarea.placeholder='Optional durable instructions for how this agent should work…';instructionField.append(label,textarea);form.insertBefore(instructionField,actions);const status=document.createElement('div');status.className='agentie-details-status';form.insertBefore(status,actions);addDeleteButton(actions,agent,modal);
+    if(!form||!agent||form.dataset.agentieUnified==='1')return;form.dataset.agentieUnified='1';
+    const heading=form.querySelector('h3');if(heading&&heading.textContent!==`${agent.name} · Details`)heading.textContent=`${agent.name} · Details`;
+    const intro=form.querySelector('p');const introText='Identity, role and durable working instructions. Workspace tools are shared automatically.';if(intro&&intro.textContent!==introText)intro.textContent=introText;
+    const actions=form.querySelector('.employee-profile-form-actions');if(!actions)return;
+    const instructionField=document.createElement('div');instructionField.className='employee-field';instructionField.dataset.agentieUserInstructions='1';const label=document.createElement('label');label.textContent='Instructions';const textarea=document.createElement('textarea');textarea.placeholder='Optional durable instructions for how this agent should work…';instructionField.append(label,textarea);form.insertBefore(instructionField,actions);
+    const status=document.createElement('div');status.className='agentie-details-status';form.insertBefore(status,actions);addDeleteButton(actions,agent,modal);
     let originalManual='';try{const data=await runProfile(`Show ${agent.id} instructions`,agent);const card=cardFrom(data);originalManual=String(card?.manual_instructions||'').trim();textarea.value=originalManual}catch(_){textarea.value=''}
-    const save=[...actions.querySelectorAll('button')].find(btn=>btn.classList.contains('primary')||btn.textContent.trim()==='Save profile');if(!save)return;if(save.textContent!=='Save details')save.textContent='Save details';save.onclick=async()=>{
-      const name=fieldInput(form,'name'),role=fieldInput(form,'role / job'),personality=fieldInput(form,'personality'),goal=fieldInput(form,'goal'),identity=fieldInput(form,'company identity'),responsibilities=fieldInput(form,'responsibilities');const nextName=clean(name?.value),nextRole=clean(role?.value),nextPersonality=clean(personality?.value),nextGoal=clean(goal?.value),nextIdentity=clean(identity?.value),nextResponsibilities=String(responsibilities?.value||'').split(/\r?\n/).map(clean).filter(Boolean),nextManual=textarea.value.trim();if(!nextName||!nextRole){status.classList.add('error');status.textContent='Name and role are required.';return}
-      save.disabled=true;status.classList.remove('error');status.textContent='Saving…';let current=agent;
-      try{
-        if(nextName!==clean(current.name)){await runProfile(`Rename agent ${current.id} to ${nextName}`,current);current={...current,name:nextName}}
-        if(nextRole!==clean(current.role)){await runProfile(`Change agent ${current.id} role to ${nextRole}`,current);current={...current,role:nextRole}}
-        if(nextPersonality!==clean(current.personality)){await runProfile(nextPersonality?`Set agent ${current.id} personality to ${nextPersonality}`:`Clear agent ${current.id} personality`,current);current={...current,personality:nextPersonality}}
-        if(nextGoal!==clean(current.goal)){await runProfile(nextGoal?`Set agent ${current.id} goal to ${nextGoal}`:`Clear agent ${current.id} goal`,current);current={...current,goal:nextGoal}}
-        if(nextIdentity!==clean(current.company_identity)){await runProfile(nextIdentity?`Set agent ${current.id} company identity to ${nextIdentity}`:`Clear agent ${current.id} company identity`,current);current={...current,company_identity:nextIdentity}}
-        const oldResponsibilities=(current.responsibilities||[]).map(clean).filter(Boolean);if(JSON.stringify(nextResponsibilities)!==JSON.stringify(oldResponsibilities)){await runProfile(nextResponsibilities.length?`Set agent ${current.id} responsibilities to ${nextResponsibilities.join(' | ')}`:`Clear agent ${current.id} responsibilities`,current);current={...current,responsibilities:nextResponsibilities}}
-        if(nextManual!==originalManual){if(nextManual){await runProfile(`Set agent ${current.id} instructions to ${nextManual}`,current);originalManual=nextManual}else if(originalManual){status.classList.add('error');status.textContent='To replace existing instructions, enter the new instruction text.';save.disabled=false;return}}
-        if(typeof window.loadPersistentAgents==='function')await window.loadPersistentAgents();const fresh=resolveAgent(current.id)||current;status.textContent='Saved.';setTimeout(()=>{modal.remove();window.openAgentProfile?.(fresh)},120)
-      }catch(error){status.classList.add('error');status.textContent=error.message||'Could not save details.';save.disabled=false}
-    }
+    const save=[...actions.querySelectorAll('button')].find(btn=>btn.classList.contains('primary')||btn.textContent.trim()==='Save profile');if(!save)return;const originalSave=save.onclick;if(save.textContent!=='Save details')save.textContent='Save details';
+    save.onclick=async event=>{const nextManual=textarea.value.trim();if(nextManual!==originalManual){save.disabled=true;status.classList.remove('error');status.textContent='Saving instructions…';try{if(nextManual){await runProfile(`Set agent ${agent.id} instructions to ${nextManual}`,agent);originalManual=nextManual}else if(originalManual){status.classList.add('error');status.textContent='To replace existing instructions, enter the new instruction text.';save.disabled=false;return}}catch(error){status.classList.add('error');status.textContent=error.message||'Could not save instructions.';save.disabled=false;return}save.disabled=false}if(typeof originalSave==='function')return originalSave.call(save,event)};
   }
   function polishAgentProfile(modal){
-    if(!modal)return;const agent=agentForModal(modal);if(!agent)return;const card=modal.querySelector('.employee-profile-card:not(.employee-profile-form)');if(card&&card.dataset.agentiePolished!=='1'){card.dataset.agentiePolished='1';const actions=card.querySelector('.employee-profile-actions');if(actions){const edit=actions.querySelector('button.primary');if(edit&&edit.textContent.trim()!=='Edit details')edit.textContent='Edit details';[...actions.querySelectorAll('button')].filter(btn=>btn.textContent.trim()==='Instructions').forEach(btn=>btn.remove());addDeleteButton(actions,agent,modal)}}const form=modal.querySelector('.employee-profile-form');if(form)augmentDetailsForm(form,modal,agent)
+    if(!modal)return;const agent=agentForModal(modal);if(!agent)return;
+    const card=modal.querySelector('.employee-profile-card:not(.employee-profile-form)');if(card&&card.dataset.agentiePolished!=='1'){card.dataset.agentiePolished='1';const actions=card.querySelector('.employee-profile-actions');if(actions){const edit=actions.querySelector('button.primary');if(edit&&edit.textContent.trim()!=='Edit details')edit.textContent='Edit details';[...actions.querySelectorAll('button')].filter(btn=>btn.textContent.trim()==='Instructions').forEach(btn=>btn.remove());addDeleteButton(actions,agent,modal)}}
+    const form=modal.querySelector('.employee-profile-form');if(form)augmentDetailsForm(form,modal,agent)
   }
-  function polishAddedNode(node){if(!(node instanceof Element))return;if(node.matches('.employee-profile-modal'))polishAgentProfile(node);node.querySelectorAll?.('.employee-profile-modal').forEach(polishAgentProfile)}
-  const profileObserver=new MutationObserver(records=>{for(const record of records){for(const node of record.addedNodes)polishAddedNode(node)}});profileObserver.observe(document.body,{childList:true,subtree:true});document.querySelectorAll('.employee-profile-modal').forEach(polishAgentProfile);
+  function polishOpenProfiles(){document.querySelectorAll('.employee-profile-modal').forEach(polishAgentProfile)}
+  let polishTimerA=null,polishTimerB=null;
+  function scheduleProfilePolish(){
+    if(polishTimerA)clearTimeout(polishTimerA);if(polishTimerB)clearTimeout(polishTimerB);
+    polishTimerA=setTimeout(()=>{polishTimerA=null;polishOpenProfiles()},0);
+    polishTimerB=setTimeout(()=>{polishTimerB=null;polishOpenProfiles()},160);
+  }
+  // Profile enhancement is user-event driven. There is deliberately no body-wide
+  // MutationObserver because Agentie's chat/sidebar polling mutates the DOM often.
+  document.addEventListener('click',scheduleProfilePolish,false);
+  window.__agentiePolishOpenProfiles=polishOpenProfiles;
+  scheduleProfilePolish();
 })();
