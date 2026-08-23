@@ -8,8 +8,9 @@ class CompanyComputerDesktopControlRegressionTests(unittest.TestCase):
     def test_click_uses_guest_xdotool_and_session_owner(self):
         check = {"exited": True, "exitcode": 0}
         status = {"computer_id": "company-default", "state": "IDLE", "persistent": True}
-        with patch.object(desktop.computer, "acquire_agent") as acquire, patch.object(desktop.computer, "release_control") as release, patch.object(desktop.computer, "guest_exec", side_effect=[check, check]) as guest, patch.object(desktop.computer, "touch_activity"), patch.object(desktop.computer, "status", return_value=status):
+        with patch.object(desktop, "ensure_guest_runtime", return_value=status) as prepare, patch.object(desktop.computer, "acquire_agent") as acquire, patch.object(desktop.computer, "release_control") as release, patch.object(desktop.computer, "guest_exec", side_effect=[check, check]) as guest, patch.object(desktop.computer, "touch_activity"), patch.object(desktop.computer, "status", return_value=status):
             result = desktop.desktop_click(420, 240, "agent:agt_sales:main")
+        prepare.assert_called_once()
         acquire.assert_called_once_with("agt_sales")
         release.assert_called_once_with("agt_sales")
         argv = guest.call_args_list[1].args[0]
@@ -19,7 +20,7 @@ class CompanyComputerDesktopControlRegressionTests(unittest.TestCase):
 
     def test_typing_is_passed_as_one_argument_without_shell_evaluation(self):
         check = {"exited": True, "exitcode": 0}
-        with patch.object(desktop.computer, "acquire_agent"), patch.object(desktop.computer, "release_control"), patch.object(desktop.computer, "guest_exec", side_effect=[check, check]) as guest, patch.object(desktop.computer, "touch_activity"), patch.object(desktop.computer, "status", return_value={}):
+        with patch.object(desktop, "ensure_guest_runtime", return_value={}), patch.object(desktop.computer, "acquire_agent"), patch.object(desktop.computer, "release_control"), patch.object(desktop.computer, "guest_exec", side_effect=[check, check]) as guest, patch.object(desktop.computer, "touch_activity"), patch.object(desktop.computer, "status", return_value={}):
             desktop.desktop_type("hello; rm -rf /", "agent:agt_sales:main")
         argv = guest.call_args_list[1].args[0]
         self.assertEqual(argv[-1], "hello; rm -rf /")
@@ -52,6 +53,7 @@ class CompanyComputerDesktopControlRegressionTests(unittest.TestCase):
         self.assertNotIn("kasmvnc", source)
         self.assertNotIn("xfce", source)
         self.assertIn("xdotool", source)
+        self.assertIn("ensure_guest_runtime", source)
 
 
 if __name__ == "__main__":
