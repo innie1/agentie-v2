@@ -32,10 +32,28 @@ def _agent_id(session_id: str | None) -> str:
     return computer._session_agent_id(session_id)
 
 
+def _ensure_xdotool() -> None:
+    """Prepare Agentie's internal desktop automation component in old guests too."""
+    check = computer.guest_exec(["/usr/bin/test", "-x", "/usr/bin/xdotool"], timeout=15)
+    if int(check.get("exitcode") or 0) == 0:
+        return
+    install = computer.guest_exec(
+        [
+            "/bin/bash",
+            "-lc",
+            "DEBIAN_FRONTEND=noninteractive apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends xdotool",
+        ],
+        timeout=300,
+    )
+    if int(install.get("exitcode") or 0) != 0:
+        raise computer.ComputerError("Could not prepare the Company Computer desktop automation component.")
+
+
 def _xdotool(args: list[str], session_id: str | None = None, *, timeout: int = 30) -> dict[str, Any]:
     agent_id = _agent_id(session_id)
     computer.acquire_agent(agent_id)
     try:
+        _ensure_xdotool()
         result = computer.guest_exec(
             [
                 "/usr/sbin/runuser",
