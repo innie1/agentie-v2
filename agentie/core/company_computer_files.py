@@ -6,6 +6,7 @@ from pathlib import Path, PurePosixPath
 from typing import Any
 
 from agentie.core import company_computer as computer
+from agentie.core import company_computer_guest_agent as _guest_agent  # registers QGA API on computer
 
 WORKSPACE = Path.cwd() / "workspace"
 GUEST_HOME = PurePosixPath("/home/agentie")
@@ -40,8 +41,6 @@ def _safe_guest_path(path: str, *, default_dir: PurePosixPath) -> PurePosixPath:
     candidate = PurePosixPath(raw)
     if not candidate.is_absolute():
         candidate = default_dir / candidate
-    # Normalize without trusting '..'. PurePosixPath does not resolve against a
-    # host filesystem, so reject traversal components explicitly.
     if ".." in candidate.parts:
         raise ValueError("Guest path traversal is not allowed.")
     if candidate != GUEST_HOME and GUEST_HOME not in candidate.parents:
@@ -78,17 +77,11 @@ def _ensure_guest_dir(path: PurePosixPath) -> None:
     computer.guest_exec(["/bin/chown", "-R", "agentie:agentie", str(path)], timeout=20)
 
 
-def upload_workspace_file(
-    name_or_path: str,
-    guest_path: str | None = None,
-) -> dict[str, Any]:
+def upload_workspace_file(name_or_path: str, guest_path: str | None = None) -> dict[str, Any]:
     """Copy a real Agentie workspace file into the persistent QEMU guest."""
     computer.start()
     source = _safe_host_file(name_or_path)
-    destination = _safe_guest_path(
-        guest_path or source.name,
-        default_dir=GUEST_INBOX,
-    )
+    destination = _safe_guest_path(guest_path or source.name, default_dir=GUEST_INBOX)
     _ensure_guest_dir(destination.parent)
     handle = _guest_file_open(destination, "wb")
     written = 0
@@ -101,10 +94,7 @@ def upload_workspace_file(
                 response = computer._qga_request(
                     {
                         "execute": "guest-file-write",
-                        "arguments": {
-                            "handle": handle,
-                            "buf-b64": base64.b64encode(chunk).decode("ascii"),
-                        },
+                        "arguments": {"handle": handle, "buf-b64": base64.b64encode(chunk).decode("ascii")},
                     },
                     timeout=20,
                 )
@@ -118,19 +108,10 @@ def upload_workspace_file(
         _guest_file_close(handle)
     computer.guest_exec(["/bin/chown", "agentie:agentie", str(destination)], timeout=20)
     computer.touch_activity()
-    return {
-        "name": source.name,
-        "host_path": str(source),
-        "guest_path": str(destination),
-        "size_bytes": written,
-        "persistent": True,
-    }
+    return {"name": source.name, "host_path": str(source), "guest_path": str(destination), "size_bytes": written, "persistent": True}
 
 
-def download_guest_file(
-    guest_path: str,
-    workspace_name: str | None = None,
-) -> dict[str, Any]:
+def download_guest_file(guest_path: str, workspace_name: str | None = None) -> dict[str, Any]:
     """Copy a real persistent guest file into Agentie's host workspace."""
     computer.start()
     source = _safe_guest_path(guest_path, default_dir=GUEST_EXPORTS)
@@ -149,10 +130,7 @@ def download_guest_file(
         with temp.open("wb") as output:
             while True:
                 response = computer._qga_request(
-                    {
-                        "execute": "guest-file-read",
-                        "arguments": {"handle": handle, "count": CHUNK_BYTES},
-                    },
+                    {"execute": "guest-file-read", "arguments": {"handle": handle, "count": CHUNK_BYTES}},
                     timeout=20,
                 )
                 if response.get("error"):
@@ -174,10 +152,4 @@ def download_guest_file(
         finally:
             temp.unlink(missing_ok=True)
     computer.touch_activity()
-    return {
-        "name": destination.name,
-        "host_path": str(destination),
-        "guest_path": str(source),
-        "size_bytes": total,
-        "persistent": True,
-    }
+    return {"name": destination.name, "host_path": str(destination), "guest_path": str(source), "size_bytes": total, "persistent": True}
