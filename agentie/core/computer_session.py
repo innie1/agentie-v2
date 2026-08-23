@@ -7,42 +7,31 @@ from agentie.core.browser_monitor import LIVE_FRAME_FILE, _set_live_state, reque
 
 
 async def shutdown_computer() -> dict[str, Any]:
-    """Stop the persistent Agentie virtual-computer browser session.
+    """Power down the shared persistent Agentie Company Computer.
 
-    This powers down Agentie's own computer session, not the host OS. A later
-    browser/desktop request lazily starts a fresh browser session again.
+    The QCOW2 disk remains intact, including browser profiles, cookies, downloads,
+    installed applications and user files. This never powers down the host OS.
     """
     request_browser_stop()
 
-    # Import lazily to avoid a module cycle at import time.
+    # Do not explicitly close the guest Chromium context through CDP: the VM owns
+    # that browser and its persistent profile. Disconnect Agentie's Playwright
+    # client after the guest has received its normal power-down request.
+    from agentie.core.company_computer import stop as stop_company_computer
     from agentie.core import browser_automation as browser
 
+    result = stop_company_computer()
     async with browser._LOCK:
-        try:
-            if browser._PAGE is not None and not browser._PAGE.is_closed():
-                await browser._PAGE.close()
-        except Exception:
-            pass
-        try:
-            if browser._CONTEXT is not None:
-                await browser._CONTEXT.close()
-        except Exception:
-            pass
-        try:
-            if browser._BROWSER is not None and browser._BROWSER.is_connected():
-                await browser._BROWSER.close()
-        except Exception:
-            pass
         try:
             if browser._PLAYWRIGHT is not None:
                 await browser._PLAYWRIGHT.stop()
         except Exception:
             pass
-
         browser._PAGE = None
         browser._CONTEXT = None
         browser._BROWSER = None
         browser._PLAYWRIGHT = None
+        browser._USING_COMPANY_COMPUTER = False
 
     try:
         Path(LIVE_FRAME_FILE).unlink(missing_ok=True)
@@ -50,6 +39,12 @@ async def shutdown_computer() -> dict[str, Any]:
         pass
     _set_live_state(active=False, status="stopped", url="", detail="Agentie Computer stopped")
     return {
-        "message": "Agentie Computer stopped.",
-        "card": {"type": "desktop_view", "app": "stopped"},
+        "message": "Agentie Computer stopped. Persistent files and browser data were kept.",
+        "card": {
+            "type": "desktop_view",
+            "app": "stopped",
+            "mode": "qemu",
+            "state": result.get("state", "STOPPED"),
+            "persistent": True,
+        },
     }
