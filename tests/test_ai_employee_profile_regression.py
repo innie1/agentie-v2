@@ -160,11 +160,12 @@ class AIEmployeeProfileRegressionTests(unittest.TestCase):
         profile_source = Path("frontend/plugins.js").read_text(encoding="utf-8")
         loader=Path("frontend/create_menu_loader.js").read_text(encoding="utf-8")
         profile = profile_source.split("// AI employee identity/profile v2.", 1)[1]
+        scope=".employee-profile-card:not(.employee-profile-form)"
         self.assertIn(".top-agent-orb", profile)
         self.assertIn("Generate local avatar", profile)
         self.assertIn("/files/upload", profile)
         self.assertIn("employee-profile-stats", profile)
-        self.assertIn(".employee-profile-personality,.employee-profile-card:not(.employee-profile-form) .employee-profile-stats",loader)
+        self.assertIn(f"{scope} .employee-profile-personality,{scope} .employee-profile-stats",loader)
         self.assertIn("edit.textContent='Edit details'",loader)
         self.assertIn("label.textContent='Instructions'",loader)
         self.assertIn("button.textContent='Delete agent'",loader)
