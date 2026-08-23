@@ -31,7 +31,10 @@ class GroupChatComposerFocusRegressionTests(unittest.TestCase):
 
     def test_focus_guard_is_bundled_after_chat_ui(self):
         source=Path('agentie/core/platform_next4_api.py').read_text(encoding='utf-8')
-        self.assertIn('_frontend_bundle("platform_next4.js", "platform_chat_focus_guard.js", "model_router.js")',source)
+        bundle='_frontend_bundle("platform_next4.js", "platform_chat_focus_guard.js", "group_chat_markdown.js", "model_router.js")'
+        self.assertIn(bundle,source)
+        self.assertLess(bundle.index('platform_next4.js'),bundle.index('platform_chat_focus_guard.js'))
+        self.assertIn('group_chat_markdown.js',bundle)
         self.assertIn('@router.get("/platform-chat-focus-guard.js")',source)
 
 
