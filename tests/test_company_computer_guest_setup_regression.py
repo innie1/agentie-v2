@@ -23,6 +23,7 @@ class CompanyComputerGuestSetupRegressionTests(unittest.TestCase):
             "xserver-xorg-core",
             "xserver-xorg-video-all",
             "openbox",
+            "dbus",
             "dbus-x11",
             "pcmanfm",
             "xterm",
@@ -37,16 +38,23 @@ class CompanyComputerGuestSetupRegressionTests(unittest.TestCase):
         self.assertIn("gpasswd -d agentie sudo", script)
         self.assertIn("/etc/sudoers.d", script)
         self.assertNotIn("systemctl restart qemu-guest-agent", script)
-        self.assertIn("touch /var/lib/agentie/runtime-v4", script)
+        self.assertIn("touch /var/lib/agentie/runtime-v5", script)
         self.assertNotIn("qemu-img", script)
         self.assertNotIn("rm -f /home/agentie/.config/chromium-agentie", script)
+
+    def test_desktop_session_keeps_openbox_as_long_running_process(self):
+        script = setup._repair_script()
+        self.assertIn("/usr/bin/dbus-run-session", script)
+        self.assertIn("exec /usr/bin/openbox --sm-disable", script)
+        self.assertNotIn("openbox-session", script)
+        self.assertNotIn("dbus-launch --exit-with-session", script)
+        self.assertIn("Restart=on-failure", script)
 
     def test_desktop_session_keeps_persistent_chromium_profile(self):
         script = setup._repair_script()
         self.assertIn("chromium --user-data-dir=/home/agentie/.config/chromium-agentie", script)
         self.assertIn("--restore-last-session", script)
         self.assertIn("pcmanfm --desktop", script)
-        self.assertIn("openbox-session", script)
 
     def test_repair_surfaces_xorg_and_desktop_diagnostics(self):
         script = setup._repair_script()
@@ -56,6 +64,8 @@ class CompanyComputerGuestSetupRegressionTests(unittest.TestCase):
         self.assertIn("journalctl -u agentie-desktop.service", script)
         self.assertIn("/var/log/Xorg.0.log", script)
         self.assertIn("/tmp/openbox.log", script)
+        self.assertIn("/tmp/pcmanfm.log", script)
+        self.assertIn("/tmp/chromium.log", script)
 
     def test_health_checks_both_services_and_x_socket(self):
         command = " ".join(setup._desktop_health_command())
@@ -80,7 +90,7 @@ class CompanyComputerGuestSetupRegressionTests(unittest.TestCase):
         self.assertGreaterEqual(guest.call_count, 2)
         repair_argv = guest.call_args_list[0].args[0]
         self.assertEqual(repair_argv[:2], ["/bin/bash", "-lc"])
-        self.assertIn("runtime-v4", repair_argv[-1])
+        self.assertIn("runtime-v5", repair_argv[-1])
         self.assertNotIn("qemu-img", repair_argv[-1])
         touch.assert_called_once()
         self.assertEqual(result["computer_id"], "company-default")
