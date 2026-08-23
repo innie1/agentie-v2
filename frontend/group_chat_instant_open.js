@@ -84,3 +84,40 @@
     prepareOpen();
   },true);
 })();
+
+(()=>{
+  if(window.__agentieGroupAvatarColorGuard)return;window.__agentieGroupAvatarColorGuard=true;
+  const COLORS=['#ff6b6b','#ffd166','#06d6a0','#4cc9f0','#5e60ce','#c77dff','#f72585','#fb8500'];
+  const initials=name=>String(name||'A').split(/\s+/).slice(0,2).map(x=>x[0]).join('').toUpperCase();
+  const colorFor=value=>{let n=0;for(const ch of String(value||''))n=(n*31+ch.charCodeAt(0))>>>0;return COLORS[n%COLORS.length]};
+
+  const style=document.createElement('style');style.textContent=`
+    #messages .assistant-row.agentie-connected-group-agent-row{align-items:flex-start;gap:10px}
+    #messages .assistant-row.agentie-connected-group-agent-row::before{display:none!important;content:none!important}
+    .agentie-connected-group-message-orb{width:36px;height:36px;border-radius:50%;display:grid;place-items:center;flex:none;color:#111;font-size:9px;font-weight:800;box-shadow:inset 0 -5px 10px rgba(0,0,0,.12)}
+  `;document.head.appendChild(style);
+
+  function resolveAgent(name){
+    const key=String(name||'').trim().toLowerCase();
+    return (window.__agentieAgents||[]).find(a=>String(a.name||'').trim().toLowerCase()===key)||null;
+  }
+
+  function apply(root=document){
+    root.querySelectorAll?.('#messages .assistant-row .agentie-connected-group-author').forEach(author=>{
+      const row=author.closest('.assistant-row');
+      if(!row||row.querySelector('.agentie-connected-group-message-orb'))return;
+      const name=String(author.textContent||'Agent').trim();
+      const agent=resolveAgent(name);
+      const orb=document.createElement('span');
+      orb.className='agentie-connected-group-message-orb';
+      orb.dataset.agentId=String(agent?.id||'');
+      orb.style.background=colorFor(agent?.id||name);
+      orb.textContent=initials(agent?.name||name).slice(0,2);
+      row.classList.add('agentie-connected-group-agent-row');
+      row.prepend(orb);
+    });
+  }
+
+  new MutationObserver(records=>{for(const record of records){for(const node of record.addedNodes){if(node.nodeType===1)apply(node)}}}).observe(document.body,{childList:true,subtree:true});
+  apply();
+})();
