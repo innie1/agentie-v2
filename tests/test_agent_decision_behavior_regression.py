@@ -26,15 +26,14 @@ class AgentDecisionBehaviorRegressionTests(unittest.TestCase):
         self.agent_patch.stop()
         self.temp.cleanup()
 
-    def test_generated_employee_prompt_has_explicit_judgment_contract(self):
-        text = agent_prompt.build_agent_instructions(self.ceo)
-        self.assertIn("FACTS", text)
-        self.assertIn("OPINIONS", text)
-        self.assertIn("RECOMMENDATIONS", text)
-        self.assertIn("RISKS/UNCERTAINTY", text)
-        self.assertIn("A recommendation is not authorization", text)
-        self.assertIn("expected goal impact", text)
-        self.assertIn("missing capabilities", text)
+    def test_judgment_and_approval_contract_is_global_not_duplicated_in_every_agent_prompt(self):
+        prompt = agent_prompt.build_agent_instructions(self.ceo)
+        assistant = Path("agentie/agents/assistant.py").read_text(encoding="utf-8")
+        self.assertIn("professional judgment",prompt)
+        self.assertNotIn("FACTS are supported",prompt)
+        self.assertIn("distinguish supported facts from opinions, recommendations, and risks/uncertainty",assistant)
+        self.assertIn("Advice is not authorization",assistant)
+        self.assertIn("Consequential",assistant)
 
     def test_opinion_question_is_enriched_by_npc_instead_of_answered_as_fake_local_fact(self):
         result = try_npc_response(self.ceo, "What do you think about expanding the laundry business to offices first?")
@@ -66,7 +65,7 @@ class AgentDecisionBehaviorRegressionTests(unittest.TestCase):
         self.assertIn("do not execute it", prompt)
         self.assertIn("permission/approval gate", prompt)
 
-    def test_local_checklists_follow_explicit_capability_and_delegate_grants(self):
+    def test_local_checklists_follow_configured_role_helpers_without_granting_tools(self):
         research = try_npc_response(self.mira, "How should we research this?")
         planning = try_npc_response(self.ceo, "How should we plan this?")
         self.assertEqual(research.get("routed_by"), "npc_brain")
@@ -103,6 +102,7 @@ class AgentDecisionBehaviorRegressionTests(unittest.TestCase):
         self.assertIn("Advice is not authorization", text)
         self.assertIn("distinguish supported facts from opinions, recommendations, and risks/uncertainty", text)
         self.assertIn("do not turn ordinary advice or conversation into a background job unnecessarily", text)
+        self.assertIn("workspace, not to one individual agent",text)
 
 
 if __name__ == "__main__":
