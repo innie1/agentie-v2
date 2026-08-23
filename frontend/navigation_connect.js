@@ -22,9 +22,10 @@
     .agentie-connected-group-dot:nth-child(1){left:0;top:5px}.agentie-connected-group-dot:nth-child(2){left:11px;top:0}.agentie-connected-group-dot:nth-child(3){left:17px;top:9px}
     .agentie-connected-group-copy strong,.agentie-connected-group-copy small{display:block}.agentie-connected-group-copy strong{font-size:14px}.agentie-connected-group-copy small{font-size:10px;color:var(--muted);margin-top:2px}
     .agentie-connected-group-author{font-size:10px;font-weight:700;color:var(--muted);margin:0 0 3px 2px}.agentie-connected-group-error{font-size:11px;color:#ef4444;margin:10px 0}.agentie-connected-group-opening{display:flex;align-items:center;gap:8px;color:var(--muted);font-size:12px;margin:18px 0}
+    .agentie-connected-top-group{display:flex;align-items:center;gap:9px;min-width:0}.agentie-connected-top-group .agentie-connected-group-stack{width:39px;height:32px}.agentie-connected-top-group .agentie-connected-group-dot{width:23px;height:23px}.agentie-connected-top-group-copy{min-width:0}.agentie-connected-top-group-copy strong{display:block;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.agentie-connected-top-participants{display:flex;gap:4px;margin-top:2px;max-width:min(520px,55vw);overflow:hidden}.agentie-connected-top-participants span{display:inline-block;padding:1px 5px;border-radius:999px;background:var(--soft);color:var(--muted);font-size:8px;white-space:nowrap}
   `;document.head.appendChild(css);
 
-  const state={group:null,groups:[],poll:null,loading:false,openToken:0,lastPointerGroup:'',lastPointerAt:0};
+  const state={group:null,groups:[],poll:null,loading:false,openToken:0,lastPointerGroup:'',lastPointerAt:0,followBottom:true,restoringScroll:false};
   const COLORS=['#ff6b6b','#ffd166','#06d6a0','#4cc9f0','#5e60ce','#c77dff','#f72585','#fb8500'];
   const initials=name=>String(name||'A').split(/\s+/).slice(0,2).map(x=>x[0]).join('').toUpperCase();
   const colorFor=value=>{let n=0;for(const ch of String(value||''))n=(n*31+ch.charCodeAt(0))>>>0;return COLORS[n%COLORS.length]};
@@ -79,31 +80,45 @@
 
   function stackFor(d){const stack=document.createElement('div');stack.className='agentie-connected-group-stack';(d.participants||[]).slice(0,3).forEach((name,i)=>{const dot=document.createElement('span');dot.className='agentie-connected-group-dot';dot.style.background=colorFor((d.participant_ids||[])[i]||name);dot.textContent=initials(name).slice(0,1);stack.appendChild(dot)});return stack}
   function markActiveRows(){document.querySelectorAll('#persistentAgentList .sidebar-group-row').forEach(row=>row.classList.toggle('active',!!state.group&&row.dataset.groupId===state.group.id))}
-  function renderThread(d){
-    if(!state.group||state.group.id!==d.id)return;state.group=d;window.__agentieActiveGroupChat=d;
-    const box=document.getElementById('messages');if(!box)return;const nearBottom=(document.documentElement.scrollHeight-window.scrollY-window.innerHeight)<180;box.replaceChildren();
+  function scrollHost(){return document.querySelector('.chat-shell')}
+  function isNearBottom(host,threshold=120){return !host||host.scrollHeight-host.scrollTop-host.clientHeight<=threshold}
+  function setHostScroll(host,value){if(!host)return;state.restoringScroll=true;host.scrollTop=value;requestAnimationFrame(()=>{state.restoringScroll=false})}
+
+  function syncTopbar(d=state.group){
+    const top=document.querySelector('.workspace-topbar .top-agent');if(!top)return;
+    const orb=top.querySelector(':scope > .top-agent-orb'),copy=top.querySelector(':scope > .top-agent-copy');
+    let group=top.querySelector(':scope > .agentie-connected-top-group');
+    if(!d){if(group)group.remove();orb?.style.removeProperty('display');copy?.style.removeProperty('display');return}
+    if(orb)orb.style.setProperty('display','none','important');if(copy)copy.style.setProperty('display','none','important');
+    if(!group){group=document.createElement('div');group.className='agentie-connected-top-group';top.appendChild(group)}
+    group.replaceChildren();group.appendChild(stackFor(d));const info=document.createElement('div');info.className='agentie-connected-top-group-copy';const title=document.createElement('strong');title.textContent=d.name||'Group chat';const tags=document.createElement('div');tags.className='agentie-connected-top-participants';for(const name of d.participants||[]){const tag=document.createElement('span');tag.textContent=name;tags.appendChild(tag)}info.append(title,tags);group.appendChild(info)
+  }
+
+  function renderThread(d,{forceBottom=false}={}){
+    if(!state.group||state.group.id!==d.id)return;state.group=d;window.__agentieActiveGroupChat=d;syncTopbar(d);
+    const box=document.getElementById('messages');if(!box)return;const host=scrollHost(),oldTop=host?.scrollTop||0,shouldFollow=forceBottom||state.followBottom||isNearBottom(host);box.replaceChildren();
     const head=document.createElement('div');head.className='agentie-connected-group-head';head.appendChild(stackFor(d));const copy=document.createElement('div');copy.className='agentie-connected-group-copy';const strong=document.createElement('strong');strong.textContent=d.name||'Group chat';const small=document.createElement('small');small.textContent=(d.participants||[]).join(' · ');copy.append(strong,small);head.appendChild(copy);box.appendChild(head);
     for(const m of d.messages||[]){const isUser=String(m.sender_type||'')==='user';const row=document.createElement('div');row.className=isUser?'user-row':'assistant-row';const wrap=document.createElement('div');if(!isUser){const author=document.createElement('div');author.className='agentie-connected-group-author';author.textContent=m.sender_name||'Agent';wrap.appendChild(author)}const bubble=document.createElement('div');bubble.className='bubble '+(isUser?'user':'assistant');bubble.textContent=isUser?String(m.message||''):clean(m.message||'');wrap.appendChild(bubble);row.appendChild(wrap);box.appendChild(row)}
-    markActiveRows();if(nearBottom)window.scrollTo({top:document.body.scrollHeight,behavior:'auto'});
+    markActiveRows();requestAnimationFrame(()=>{if(!host)return;if(shouldFollow){state.followBottom=true;setHostScroll(host,host.scrollHeight)}else setHostScroll(host,oldTop)})
   }
   function showOpeningGroup(id){
-    const box=document.getElementById('messages');if(!box)return;const known=state.groups.find(x=>String(x.id)===String(id));box.replaceChildren();
+    const box=document.getElementById('messages');if(!box)return;const known=state.groups.find(x=>String(x.id)===String(id));box.replaceChildren();if(known)syncTopbar(known);
     if(known){const head=document.createElement('div');head.className='agentie-connected-group-head';head.appendChild(stackFor(known));const copy=document.createElement('div');copy.className='agentie-connected-group-copy';const strong=document.createElement('strong');strong.textContent=known.name||'Group chat';const small=document.createElement('small');small.textContent=(known.participants||[]).join(' · ');copy.append(strong,small);head.appendChild(copy);box.appendChild(head)}
     const opening=document.createElement('div');opening.className='agentie-connected-group-opening';opening.textContent='Opening group chat…';box.appendChild(opening);
   }
   function showGroupError(message){const box=document.getElementById('messages');if(!box)return;box.querySelector('.agentie-connected-group-opening')?.remove();const row=document.createElement('div');row.className='agentie-connected-group-error';row.textContent=`Could not open group chat: ${message}`;box.appendChild(row)}
   async function refreshGroup(){if(!state.group||state.loading)return;state.loading=true;try{const d=await api(`/platform/agent-chats/${encodeURIComponent(state.group.id)}`,{cache:'no-store'});renderThread(d)}catch(e){showGroupError(e.message)}finally{state.loading=false}}
-  function leaveGroup(){if(state.poll){clearInterval(state.poll);state.poll=null}state.openToken++;state.group=null;window.__agentieActiveGroupChat=null;const input=document.getElementById('messageInput');if(input)input.placeholder='Message Agentie...';markActiveRows()}
+  function leaveGroup(){if(state.poll){clearInterval(state.poll);state.poll=null}state.openToken++;state.group=null;state.followBottom=true;window.__agentieActiveGroupChat=null;syncTopbar(null);const input=document.getElementById('messageInput');if(input)input.placeholder='Message Agentie...';markActiveRows()}
   async function openGroup(id){
-    if(!id)return;const token=++state.openToken;showOpeningGroup(id);
+    if(!id)return;const token=++state.openToken;state.followBottom=true;try{window.selectPersistentAgent?.(null)}catch(_){ }showOpeningGroup(id);
     try{
       const d=await api(`/platform/agent-chats/${encodeURIComponent(id)}`,{cache:'no-store'});if(token!==state.openToken)return;
-      if(state.poll)clearInterval(state.poll);state.group=d;window.__agentieActiveGroupChat=d;renderThread(d);const input=document.getElementById('messageInput');if(input){input.placeholder=`Message ${d.name}...`;input.focus()}state.poll=setInterval(refreshGroup,2200)
+      if(state.poll)clearInterval(state.poll);state.group=d;window.__agentieActiveGroupChat=d;syncTopbar(d);renderThread(d,{forceBottom:true});const input=document.getElementById('messageInput');if(input){input.placeholder=`Message ${d.name}...`;input.focus()}state.poll=setInterval(refreshGroup,2200)
     }catch(e){if(token===state.openToken)showGroupError(e.message)}
   }
   async function sendGroup(){
-    if(!state.group)return false;const input=document.getElementById('messageInput'),send=document.getElementById('sendButton'),value=String(input?.value||'').trim();if(!value)return true;if(input)input.value='';if(send)send.disabled=true;
-    try{await api(`/platform/agent-chats/${encodeURIComponent(state.group.id)}/messages`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({message:value})});await refreshGroup()}catch(e){showGroupError(e.message)}finally{if(send)send.disabled=false;if(input)input.focus()}return true
+    if(!state.group)return false;const input=document.getElementById('messageInput'),send=document.getElementById('sendButton'),value=String(input?.value||'').trim();if(!value)return true;if(input)input.value='';if(send)send.disabled=true;state.followBottom=true;
+    try{const d=await api(`/platform/agent-chats/${encodeURIComponent(state.group.id)}/messages`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({message:value})});if(d?.id){state.group=d;renderThread(d,{forceBottom:true})}else await refreshGroup()}catch(e){showGroupError(e.message)}finally{if(send)send.disabled=false;if(input)input.focus()}return true
   }
   window.__agentieOpenGroupChat=openGroup;window.__agentieSendActiveGroupMessage=sendGroup;
 
@@ -130,8 +145,9 @@
     if(send&&!send.dataset.agentieGroupConnected){send.dataset.agentieGroupConnected='1';send.addEventListener('click',e=>{if(!state.group)return;e.preventDefault();e.stopImmediatePropagation();sendGroup()},true)}
     if(input&&!input.dataset.agentieGroupConnected){input.dataset.agentieGroupConnected='1';input.addEventListener('keydown',e=>{if(!state.group)return;if(e.key==='Enter'&&!e.shiftKey&&!e.isComposing){e.preventDefault();e.stopImmediatePropagation();sendGroup()}},true)}
   }
+  function wireScroll(){const host=scrollHost();if(!host||host.dataset.agentieGroupScroll==='1')return;host.dataset.agentieGroupScroll='1';host.addEventListener('scroll',()=>{if(!state.group||state.restoringScroll)return;state.followBottom=isNearBottom(host,120)},{passive:true})}
 
-  function install(){installProfile();installPluginTools();wireComposer()}
+  function install(){installProfile();installPluginTools();wireComposer();wireScroll();if(state.group)syncTopbar(state.group)}
   let queued=false;new MutationObserver(()=>{if(queued)return;queued=true;requestAnimationFrame(()=>{queued=false;install()})}).observe(document.body,{childList:true,subtree:true});
   setTimeout(()=>{install();loadGroups()},280);setInterval(()=>{install();loadGroups()},2200);
 })();
