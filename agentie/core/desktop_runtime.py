@@ -20,6 +20,7 @@ from agentie.core.company_computer import (
 )
 from agentie.core.company_computer_commands import route_company_computer_command
 from agentie.core.company_computer_desktop import route_desktop_control
+from agentie.core.company_computer_guest_setup import ensure_guest_runtime
 from agentie.core.company_computer_idle import start_idle_coordinator
 
 WORKSPACE = Path.cwd() / "workspace"
@@ -222,9 +223,11 @@ def route_desktop_request(message: str, session_id: str | None = None) -> dict[s
     try:
         if low in {"start", "start real desktop", "home", "desktop", "show home"}:
             start_computer()
+            ensure_guest_runtime()
             info = acquire_user()
             return {"message": "Agentie Computer ready for you.", "card": _real_desktop_card(info)}
         if low in {"take user control", "user control", "take control"}:
+            ensure_guest_runtime()
             info = acquire_user()
             return {"message": "User Control enabled on the same Agentie Computer.", "card": _real_desktop_card(info)}
         if low in {"continue agent", "return to agent"}:
@@ -242,6 +245,7 @@ def route_desktop_request(message: str, session_id: str | None = None) -> dict[s
             return {"message": "Agentie Computer suspended.", "card": _real_desktop_card(info, "suspended")}
         if low in {"resume", "wake"}:
             resume_computer()
+            ensure_guest_runtime()
             info = acquire_user()
             return {"message": "Agentie Computer resumed for you.", "card": _real_desktop_card(info)}
         if low in {"files", "open files", "show files"}:
@@ -258,6 +262,7 @@ def route_desktop_request(message: str, session_id: str | None = None) -> dict[s
             return {"message": "Plugins.", "card": desktop_card("plugins", items=_read_json("mcp_servers.json", []))}
         if low == "terminal":
             start_computer()
+            ensure_guest_runtime()
             info = acquire_user()
             return {"message": "The real Linux Terminal is available inside Agentie Computer.", "card": _real_desktop_card(info)}
         if low.startswith("terminal "):
