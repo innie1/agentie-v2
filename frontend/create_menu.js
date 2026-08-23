@@ -92,7 +92,9 @@
       finishOnboardingVisuals();flow=null;
       if(typeof window.loadPersistentAgents==='function')await window.loadPersistentAgents();const agent=(window.__agentieAgents||[]).find(item=>String(item.id)===String(created.agent?.id))||created.agent;
       try{window.selectPersistentAgent?.(agent)}catch(_){ }
-      if(typeof window.addAssistant==='function')window.addAssistant(`Hi, I'm ${agent?.name||name}. What should we work on first?`,null);
+      const welcome=box()?.querySelector('.assistant-row .bubble.assistant');
+      if(welcome&&welcome.textContent.trim().startsWith('Chatting with '))welcome.textContent='Want to put me on a task?';
+      else if(!welcome&&typeof window.addAssistant==='function')window.addAssistant('Want to put me on a task?',null);
       composerInput()?.focus();
     }catch(error){flow=flow||{step:'name',messages:box(),description:''};flow.step='name';status.classList.add('error');status.textContent=error?.message||String(error);setComposerPlaceholder('Type my name…');composerInput()?.focus()}
   }
