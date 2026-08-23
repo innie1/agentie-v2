@@ -23,25 +23,19 @@ class CompanyComputerWHPXRegressionTests(unittest.TestCase):
             "acceleration": {"accelerator": accelerator},
         }
 
-    def test_windows_whpx_uses_current_pc_baseline_without_cpu_host(self):
+    def test_windows_whpx_uses_stable_q35_virtio_profile_without_cpu_host(self):
         args = cc._qemu_args(self._config())
         joined = " ".join(args)
-        self.assertIn("-accel whpx", joined)
-        self.assertNotIn("kernel-irqchip=off", joined)
+        self.assertIn("-accel whpx,kernel-irqchip=off", joined)
         self.assertNotIn("-cpu host", joined)
-        self.assertIn("-machine pc", joined)
-        self.assertNotIn("-machine q35", joined)
+        self.assertIn("-machine q35", joined)
+        self.assertIn("-device virtio-vga", joined)
+        self.assertNotIn("-vga std", joined)
 
     def test_windows_whpx_forces_single_vcpu(self):
         args = cc._qemu_args(self._config())
         smp_index = args.index("-smp")
         self.assertEqual(args[smp_index + 1], "1")
-
-    def test_windows_whpx_uses_standard_vga_for_cloud_kernel_compatibility(self):
-        args = cc._qemu_args(self._config())
-        joined = " ".join(args)
-        self.assertIn("-vga std", joined)
-        self.assertNotIn("-device virtio-vga", joined)
 
     def test_non_whpx_x86_keeps_cpu_host_vcpus_q35_and_virtio_vga(self):
         args = cc._qemu_args(self._config(accelerator="kvm"))
@@ -49,7 +43,6 @@ class CompanyComputerWHPXRegressionTests(unittest.TestCase):
         self.assertIn("-cpu host", joined)
         self.assertIn("-machine q35", joined)
         self.assertIn("-device virtio-vga", joined)
-        self.assertNotIn("-vga std", joined)
         smp_index = args.index("-smp")
         self.assertEqual(args[smp_index + 1], "2")
         accel_index = args.index("-accel")
@@ -69,10 +62,9 @@ class CompanyComputerWHPXRegressionTests(unittest.TestCase):
                 args = cc._qemu_args(self._config())
             text = log.read_text(encoding="utf-8")
         self.assertIn("=== Agentie QEMU launch ===", text)
-        self.assertIn("-machine pc", text)
-        self.assertIn("-vga std", text)
-        self.assertIn("-accel whpx", text)
-        self.assertNotIn("kernel-irqchip=off", text)
+        self.assertIn("-machine q35", text)
+        self.assertIn("-device virtio-vga", text)
+        self.assertIn("-accel whpx,kernel-irqchip=off", text)
         self.assertNotIn("-cpu host", text)
         self.assertEqual(args[args.index("-smp") + 1], "1")
 
