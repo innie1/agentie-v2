@@ -13,7 +13,7 @@ class InlineComputerCardRegressionTests(unittest.TestCase):
 
     def test_use_computer_fallback_is_detected_before_response(self):
         self.assertIn("use\\s+computer\\s+for", self.text)
-        self.assertIn("setTimeout(()=>{place();setState('starting','');showOverlay('Starting','')", self.text)
+        self.assertIn("showOverlay('Starting Computer'", self.text)
 
     def test_computer_is_anchored_after_latest_user_message(self):
         self.assertIn("messages.querySelectorAll('.user-row')", self.text)
@@ -27,8 +27,23 @@ class InlineComputerCardRegressionTests(unittest.TestCase):
     def test_computer_title_uses_active_agent_name(self):
         self.assertIn("function computerOwnerName()", self.text)
         self.assertIn("title.textContent=`${computerOwnerName()} Computer`", self.text)
-        self.assertIn("Starting computer", self.text)
-        self.assertNotIn("Waiting for Agentie computer route", self.text)
+        self.assertIn("Starting Computer", self.text)
+
+    def test_qemu_display_and_human_takeover_are_native(self):
+        self.assertIn("card.mode==='qemu'", self.text)
+        self.assertIn("card.display_url", self.text)
+        self.assertIn("computer_takeover", self.text)
+        self.assertIn("Take Control", self.text)
+        self.assertIn("Continue Agent", self.text)
+        self.assertIn("Desktop control: take user control", self.text)
+        self.assertIn("Desktop control: continue agent", self.text)
+
+    def test_old_computer_terminology_is_removed(self):
+        low=self.text.lower()
+        self.assertNotIn("kasmvnc",low)
+        self.assertNotIn("mode==='wsl'",low)
+        self.assertNotIn("wsl desktop",low)
+        self.assertNotIn("xfce",low)
 
 
 if __name__ == "__main__":
