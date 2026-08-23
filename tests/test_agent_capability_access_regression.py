@@ -16,35 +16,43 @@ class AgentCapabilityAccessRegressionTests(unittest.TestCase):
     def tearDown(self):
         agent_registry.AGENTS_FILE=self.old_agents;mcp_client.REGISTRY=self.old_mcp;agent_access.GLOBAL_ACCESS_FILE=self.old_global;self.temp.cleanup()
 
-    def test_new_agent_job_title_does_not_inherit_hidden_capabilities(self):
-        agent=agent_registry.get_agent('Alex');self.assertFalse(skill_allowed(agent,'code-execution'))
+    def test_new_agents_use_shared_workspace_capability_mode(self):
+        agent=agent_registry.get_agent('Alex');self.assertEqual(agent['permissions']['capability_mode'],'shared')
+        self.assertTrue(skill_allowed(agent,'code-execution'))
         snap=access_snapshot(agent['id']);item=next(x for x in snap['skills'] if x['id']=='code-execution')
-        self.assertEqual(snap['capability_mode'],'explicit');self.assertFalse(item['inherited']);self.assertFalse(item['effective'])
+        self.assertEqual(snap['capability_mode'],'shared');self.assertTrue(item['inherited']);self.assertEqual(item['mode'],'shared');self.assertTrue(item['effective'])
 
-    def test_skill_can_be_blocked_and_explicitly_allowed(self):
-        set_skill_access(self.agent['id'],'code-execution','block');self.assertFalse(skill_allowed(agent_registry.get_agent('Alex'),'code-execution'))
-        set_skill_access(self.agent['id'],'code-execution','allow');self.assertTrue(skill_allowed(agent_registry.get_agent('Alex'),'code-execution'))
+    def test_per_agent_tool_grants_are_removed(self):
+        with self.assertRaisesRegex(ValueError,'Per-agent tool access has been removed'):
+            set_skill_access(self.agent['id'],'code-execution','block')
+        with self.assertRaisesRegex(ValueError,'Per-agent tool access has been removed'):
+            set_mcp_access(self.agent['id'],'filesystem',False)
+        self.assertTrue(skill_allowed(agent_registry.get_agent('Alex'),'code-execution'))
+        self.assertTrue(mcp_allowed(agent_registry.get_agent('Alex'),'filesystem'))
 
-    def test_global_mcp_grant_applies_to_existing_and_future_agents(self):
-        self.assertFalse(mcp_allowed(agent_registry.get_agent('Alex'),'filesystem'))
-        set_global_mcp_access('filesystem',True);self.assertTrue(mcp_allowed(agent_registry.get_agent('Alex'),'filesystem'))
-        mira=agent_registry.create_agent('Mira','critic','research')['agent'];self.assertTrue(mcp_allowed(mira,'filesystem'))
+    def test_workspace_skill_toggle_applies_to_existing_and_future_agents(self):
+        set_global_skill_access('code-execution',False);self.assertFalse(skill_allowed(agent_registry.get_agent('Alex'),'code-execution'))
+        mira=agent_registry.create_agent('Mira','Anything')['agent'];self.assertFalse(skill_allowed(mira,'code-execution'))
+        set_global_skill_access('code-execution',True);self.assertTrue(skill_allowed(agent_registry.get_agent('Alex'),'code-execution'));self.assertTrue(skill_allowed(mira,'code-execution'))
 
-    def test_agent_block_overrides_global_mcp_grant(self):
-        set_global_mcp_access('filesystem',True);set_mcp_access(self.agent['id'],'filesystem',False)
-        self.assertFalse(mcp_allowed(agent_registry.get_agent('Alex'),'filesystem'))
-        self.assertEqual(next(x for x in access_snapshot(self.agent['id'])['mcp_servers'] if x['name']=='filesystem')['mode'],'block')
+    def test_connected_mcp_is_shared_and_workspace_toggle_applies_to_all_agents(self):
+        self.assertTrue(mcp_allowed(agent_registry.get_agent('Alex'),'filesystem'))
+        set_global_mcp_access('filesystem',False);self.assertFalse(mcp_allowed(agent_registry.get_agent('Alex'),'filesystem'))
+        mira=agent_registry.create_agent('Mira','critic','research')['agent'];self.assertFalse(mcp_allowed(mira,'filesystem'))
+        set_global_mcp_access('filesystem',True);self.assertTrue(mcp_allowed(agent_registry.get_agent('Alex'),'filesystem'));self.assertTrue(mcp_allowed(mira,'filesystem'))
 
-    def test_global_skill_grant_can_be_overridden_by_agent_block(self):
-        set_global_skill_access('last30days',True);self.assertTrue(skill_allowed(agent_registry.get_agent('Alex'),'last30days'))
-        set_skill_access(self.agent['id'],'last30days','block');self.assertFalse(skill_allowed(agent_registry.get_agent('Alex'),'last30days'))
+    def test_tool_selection_no_longer_creates_agent_level_approval_gate(self):
+        self.assertIsNone(agent_access.guard_agent_capability(f"agent:{self.agent['id']}:main",'Use filesystem to inspect the project'))
+        source=Path('agentie/core/agent_access.py').read_text(encoding='utf-8')
+        self.assertIn('Approval is attached to consequential actions',source)
+        self.assertIn('return None',source.split('def guard_agent_capability',1)[1])
 
-    def test_runtime_and_ui_are_wired_to_real_access(self):
-        main=Path('main.py').read_text(encoding='utf-8');ui=Path('frontend/plugin_access.js').read_text(encoding='utf-8')
-        self.assertIn('guard_agent_capability(session_key,request.message)',main)
-        self.assertIn('/plugins/agent-access/{agent_id}',main)
-        self.assertIn('Always allow for all agents',ui)
-        self.assertIn('data-global-skill',ui);self.assertIn('data-global-mcp',ui);self.assertIn('Block',ui)
+    def test_plugins_ui_blocks_old_per_agent_editor_and_explains_shared_tools(self):
+        loader=Path('frontend/create_menu_loader.js').read_text(encoding='utf-8')
+        self.assertIn('Shared workspace tools',loader)
+        self.assertIn('agentie-shared-access-sentinel',loader)
+        self.assertIn(".agent-access-box:not(.agentie-shared-access-sentinel)",loader)
+        self.assertIn('Connected tools and enabled capabilities are available to every agent automatically',loader)
 
 
 if __name__=='__main__':unittest.main()
