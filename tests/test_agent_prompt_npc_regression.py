@@ -15,7 +15,7 @@ class AgentPromptNPCRegressionTests(unittest.TestCase):
         self.old_prompts=agent_prompt.PROMPTS_FILE;self.old_pw=agent_prompt.WORKSPACE
         agent_registry.WORKSPACE=root;agent_registry.AGENTS_FILE=root/'agents.json'
         agent_prompt.WORKSPACE=root;agent_prompt.PROMPTS_FILE=root/'agent_instruction_profiles.json'
-        self.agent=agent_registry.create_agent('Alex','CTO',purpose='Lead product engineering',permissions={'delegate':True})["agent"]
+        self.agent=agent_registry.create_agent('Alex','CTO',purpose='Lead product engineering',goal='Deliver reliable engineering outcomes',permissions={'delegate':True})["agent"]
     def tearDown(self):
         agent_registry.AGENTS_FILE=self.old_agents;agent_registry.WORKSPACE=self.old_aw
         agent_prompt.PROMPTS_FILE=self.old_prompts;agent_prompt.WORKSPACE=self.old_pw
@@ -24,9 +24,9 @@ class AgentPromptNPCRegressionTests(unittest.TestCase):
     def test_agent_prompt_contains_identity_role_and_explicit_delegation_without_raw_purpose(self):
         text=agent_prompt.build_agent_instructions(self.agent)
         self.assertIn('You are Alex',text);self.assertIn('Role: CTO',text)
-        self.assertNotIn('Primary purpose:',text);self.assertNotIn('Lead product engineering',text)
+        self.assertIn('Deliver reliable engineering outcomes',text);self.assertNotIn('Primary purpose:',text);self.assertNotIn('Lead product engineering',text)
         self.assertIn('may delegate bounded work',text.lower())
-        same_title=agent_registry.create_agent('Other CTO','CTO',purpose='Lead another product')["agent"]
+        same_title=agent_registry.create_agent('Other CTO','CTO',purpose='Lead another product',goal='Deliver another product reliably')["agent"]
         other_text=agent_prompt.build_agent_instructions(same_title)
         self.assertNotIn('may delegate bounded work',other_text.lower())
 
