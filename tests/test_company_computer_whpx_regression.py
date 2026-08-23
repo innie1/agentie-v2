@@ -37,9 +37,18 @@ class CompanyComputerWHPXRegressionTests(unittest.TestCase):
         accel_index = args.index("-accel")
         self.assertEqual(args[accel_index + 1], "whpx,kernel-irqchip=off")
 
-    def test_non_whpx_x86_keeps_cpu_host_and_configured_vcpus(self):
+    def test_windows_whpx_uses_standard_vga_for_cloud_kernel_compatibility(self):
+        args = cc._qemu_args(self._config())
+        joined = " ".join(args)
+        self.assertIn("-vga std", joined)
+        self.assertNotIn("-device virtio-vga", joined)
+
+    def test_non_whpx_x86_keeps_cpu_host_vcpus_and_virtio_vga(self):
         args = cc._qemu_args(self._config(accelerator="kvm"))
-        self.assertIn("-cpu host", " ".join(args))
+        joined = " ".join(args)
+        self.assertIn("-cpu host", joined)
+        self.assertIn("-device virtio-vga", joined)
+        self.assertNotIn("-vga std", joined)
         smp_index = args.index("-smp")
         self.assertEqual(args[smp_index + 1], "2")
         accel_index = args.index("-accel")
