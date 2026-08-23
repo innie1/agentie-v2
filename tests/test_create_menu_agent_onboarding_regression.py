@@ -62,6 +62,12 @@ class CreateMenuAgentOnboardingRegressionTests(unittest.TestCase):
         self.assertNotIn('Recommended plugins / MCPs', self.ui)
         self.assertIn('Do not assume a predefined profession or department', self.builder)
 
+    def test_new_agent_opens_with_natural_welcome_not_job_description(self):
+        self.assertIn("welcome.textContent.trim().startsWith('Chatting with ')", self.ui)
+        self.assertIn("welcome.textContent='Want to put me on a task?'", self.ui)
+        self.assertIn("window.addAssistant('Want to put me on a task?',null)", self.ui)
+        self.assertNotIn("What should we work on first?", self.ui)
+
     def test_creation_ui_is_lazy_loaded_to_protect_startup(self):
         bundle='_frontend_bundle("platform_next4.js", "platform_chat_focus_guard.js", "group_chat_markdown.js", "model_router.js", "group_chat_offline_cache.js", "navigation_connect.js", "group_chat_instant_open.js", "create_menu_loader.js")'
         self.assertIn(bundle, self.api)
