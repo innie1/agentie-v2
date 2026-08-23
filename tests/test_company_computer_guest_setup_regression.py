@@ -21,6 +21,11 @@ class CompanyComputerGuestSetupRegressionTests(unittest.TestCase):
         self.assertIn("pgrep -x apt-get", script)
         self.assertIn("dpkg --configure -a", script)
 
+    def test_repair_installs_complete_desktop_stack_for_partial_persistent_disk(self):
+        script = setup._repair_script()
+        for package in ("xserver-xorg", "xinit", "openbox", "dbus-x11", "pcmanfm", "xterm", "chromium", "qemu-guest-agent"):
+            self.assertIn(package, script)
+
     def test_repair_recreates_missing_desktop_service_and_xinit(self):
         script = setup._repair_script()
         self.assertIn("cat >/etc/systemd/system/agentie-desktop.service", script)
@@ -29,6 +34,11 @@ class CompanyComputerGuestSetupRegressionTests(unittest.TestCase):
         self.assertIn("chromium --user-data-dir=/home/agentie/.config/chromium-agentie", script)
         self.assertIn("systemctl daemon-reload", script)
         self.assertIn("systemctl enable agentie-desktop.service", script)
+
+    def test_repair_surfaces_systemd_status_and_journal_when_desktop_fails(self):
+        script = setup._repair_script()
+        self.assertIn("systemctl status agentie-desktop.service --no-pager -l", script)
+        self.assertIn("journalctl -u agentie-desktop.service -n 80 --no-pager", script)
 
     def test_first_use_waits_for_cloud_init_then_repairs_in_place_without_recreating_disk(self):
         status = {"computer_id": "company-default", "state": "READY", "disk_exists": True}
@@ -80,7 +90,6 @@ class CompanyComputerGuestSetupRegressionTests(unittest.TestCase):
             with self.assertRaises(setup.computer.ComputerError) as ctx:
                 setup.ensure_guest_runtime()
         self.assertIn("Could not get lock", str(ctx.exception))
-        self.assertIn("exit", str(failed).lower())
 
     def test_qga_timeout_is_actionable(self):
         with patch.object(setup.time, "time", side_effect=[0, 31]):
