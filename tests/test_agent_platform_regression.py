@@ -37,7 +37,7 @@ class AgentPlatformRegressionTests(unittest.TestCase):
         agent = agent_registry.create_agent("Gemma", "Chief of Staff", "manager")["agent"]
         self.assertEqual(agent["base"], "general")
         self.assertEqual(agent["runtime_profile"], "general")
-        self.assertEqual(agent["permissions"]["capability_mode"], "explicit")
+        self.assertEqual(agent["permissions"]["capability_mode"], "shared")
         self.assertFalse(agent["permissions"]["delegate"])
 
     def test_builder_keeps_job_ownership_separate_from_runtime_and_permissions(self):
@@ -157,11 +157,14 @@ class AgentPlatformRegressionTests(unittest.TestCase):
         self.assertIn("owner_agent_name", cards)
         self.assertIn("Approval boundaries", cards)
 
-    def test_persistent_runtime_tools_are_permission_driven_not_job_title_driven(self):
+    def test_persistent_runtime_uses_shared_capability_checks_not_job_title_tool_bundles(self):
         source = Path("agentie/tools/persistent_tools.py").read_text(encoding="utf-8")
+        access = Path("agentie/core/agent_access.py").read_text(encoding="utf-8")
         self.assertIn("skill_allowed(agent", source)
         self.assertIn("mcp_allowed(agent", source)
         self.assertIn("use_plugin", source)
+        self.assertIn('return global_skill_allowed(skill_id)',access)
+        self.assertIn('return global_mcp_allowed(name)',access)
         self.assertNotIn('agent.get("base")', source)
         self.assertNotIn('agent.get("role")', source)
 
