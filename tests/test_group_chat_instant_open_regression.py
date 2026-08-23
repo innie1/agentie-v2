@@ -13,17 +13,26 @@ class GroupChatInstantOpenRegressionTests(unittest.TestCase):
         for marker in (
             "__agentieGroupInstantOpenGuard",
             "#persistentAgentList .sidebar-group-row",
-            "document.querySelector('.chat-shell')",
             "messages.style.visibility='hidden'",
             "messages.style.minHeight=",
             "MutationObserver",
             "agentie-connected-group-opening",
-            "root.scrollTop=root.scrollHeight",
+            "setLatest(root)",
             "messages.style.visibility=''",
             "focus({preventScroll:true})",
         ):
             self.assertIn(marker, src)
-        self.assertLess(src.index("root.scrollTop=root.scrollHeight"), src.index("messages.style.visibility=''"))
+        self.assertLess(src.index("setLatest(root)"), src.index("messages.style.visibility=''"))
+
+    def test_open_guard_runs_before_document_group_handler_and_uses_real_scroll_root(self):
+        src = self.guard
+        self.assertIn("window.addEventListener('pointerdown'", src)
+        self.assertNotIn("document.addEventListener('pointerdown',event", src)
+        self.assertIn("document.scrollingElement||document.documentElement||document.body", src)
+        self.assertIn("getComputedStyle(shell)", src)
+        self.assertIn("shell.scrollHeight>shell.clientHeight+1", src)
+        self.assertIn("window.scrollTo({top:bottom,left:0,behavior:'auto'})", src)
+        self.assertNotIn("behavior:'smooth'", src)
 
     def test_guard_does_not_own_or_duplicate_group_backend_runtime(self):
         src = self.guard
