@@ -34,10 +34,10 @@ class SkillMarketplaceRegressionTests(unittest.TestCase):
         result=skill_marketplace.search_marketplace('invoice review',agent_id=self.agent['id']);names=[x['name'] for x in result['items']]
         self.assertIn('Invoice Review',names);invoice=next(x for x in result['items'] if x['name']=='Invoice Review');self.assertEqual(invoice['source'],'agentie_curated');self.assertTrue(invoice['recommended']);self.assertIn('finance',invoice['tags'])
 
-    def test_install_is_draft_then_explicit_assign_grants_skill(self):
+    def test_install_is_draft_then_association_adds_workflow_without_tool_grant(self):
         skill=skill_marketplace.install_marketplace_item('market:invoice-review');self.assertEqual(skill['status'],'draft')
         result=skill_marketplace.assign_marketplace_item('market:invoice-review',self.agent['id']);updated=agent_registry.get_agent(self.agent['id'])
-        self.assertEqual(result['agent']['id'],self.agent['id']);self.assertIn(skill['id'],updated['skills']);self.assertEqual(updated['permissions']['capability_mode'],'explicit')
+        self.assertEqual(result['agent']['id'],self.agent['id']);self.assertIn(skill['id'],updated['skills']);self.assertEqual(updated['permissions']['capability_mode'],'shared')
 
     def test_existing_starter_templates_are_part_of_same_catalog(self):
         result=skill_marketplace.search_marketplace('competitor research');item=next(x for x in result['items'] if x['name']=='Competitor Research')
