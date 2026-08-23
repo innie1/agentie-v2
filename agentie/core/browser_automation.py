@@ -8,6 +8,7 @@ from playwright.async_api import Browser, BrowserContext, Page, Playwright, asyn
 
 from agentie.core.browser_monitor import _publish_frame, _set_live_state, _stop_requested, _url, _validate_url, get_live_state
 from agentie.core.company_computer import ComputerError, acquire_for_session, request_user_takeover_for_session, status as computer_status, touch_activity
+from agentie.core.company_computer_guest_setup import ensure_guest_runtime
 from agentie.tools.approval_tools import approval_is_granted, consume_approval, create_approval
 
 _PLAYWRIGHT: Playwright | None = None
@@ -85,6 +86,7 @@ def _type_parts(step: str) -> tuple[str, str] | None:
 
 async def _connect_visible_chrome(session_id: str | None = None) -> bool:
     global _PLAYWRIGHT, _BROWSER, _CONTEXT, _PAGE, _USING_COMPANY_COMPUTER
+    await asyncio.to_thread(ensure_guest_runtime)
     await asyncio.to_thread(acquire_for_session, session_id)
     deadline = asyncio.get_running_loop().time() + 120; info = computer_status()
     while asyncio.get_running_loop().time() < deadline:
@@ -92,7 +94,7 @@ async def _connect_visible_chrome(session_id: str | None = None) -> bool:
         if info.get("browser_ready") and info.get("cdp_url"): break
         await asyncio.sleep(.5)
     cdp_url = str(info.get("cdp_url") or "").strip()
-    if not info.get("browser_ready") or not cdp_url: raise ComputerError("Agentie Computer is running, but Chromium is not ready. On first use the guest may still be installing its lightweight desktop and browser.")
+    if not info.get("browser_ready") or not cdp_url: raise ComputerError("Agentie Computer is running, but Chromium is not ready. The persistent guest desktop/browser preparation did not complete successfully.")
     if _PLAYWRIGHT is None: _PLAYWRIGHT = await async_playwright().start()
     _BROWSER = await _PLAYWRIGHT.chromium.connect_over_cdp(cdp_url, timeout=10000); contexts = _BROWSER.contexts; _CONTEXT = contexts[0] if contexts else None
     if _CONTEXT is None: return False
