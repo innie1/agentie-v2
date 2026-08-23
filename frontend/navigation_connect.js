@@ -21,10 +21,10 @@
     .agentie-connected-group-dot{position:absolute;width:25px;height:25px;border-radius:50%;border:2px solid var(--panel);display:grid;place-items:center;font-size:7px;font-weight:800;color:#111;box-shadow:0 1px 4px rgba(0,0,0,.16)}
     .agentie-connected-group-dot:nth-child(1){left:0;top:5px}.agentie-connected-group-dot:nth-child(2){left:11px;top:0}.agentie-connected-group-dot:nth-child(3){left:17px;top:9px}
     .agentie-connected-group-copy strong,.agentie-connected-group-copy small{display:block}.agentie-connected-group-copy strong{font-size:14px}.agentie-connected-group-copy small{font-size:10px;color:var(--muted);margin-top:2px}
-    .agentie-connected-group-author{font-size:10px;font-weight:700;color:var(--muted);margin:0 0 3px 2px}.agentie-connected-group-error{font-size:11px;color:#ef4444;margin:10px 0}
+    .agentie-connected-group-author{font-size:10px;font-weight:700;color:var(--muted);margin:0 0 3px 2px}.agentie-connected-group-error{font-size:11px;color:#ef4444;margin:10px 0}.agentie-connected-group-opening{display:flex;align-items:center;gap:8px;color:var(--muted);font-size:12px;margin:18px 0}
   `;document.head.appendChild(css);
 
-  const state={group:null,groups:[],poll:null,loading:false};
+  const state={group:null,groups:[],poll:null,loading:false,openToken:0,lastPointerGroup:'',lastPointerAt:0};
   const COLORS=['#ff6b6b','#ffd166','#06d6a0','#4cc9f0','#5e60ce','#c77dff','#f72585','#fb8500'];
   const initials=name=>String(name||'A').split(/\s+/).slice(0,2).map(x=>x[0]).join('').toUpperCase();
   const colorFor=value=>{let n=0;for(const ch of String(value||''))n=(n*31+ch.charCodeAt(0))>>>0;return COLORS[n%COLORS.length]};
@@ -51,7 +51,7 @@
 
   function installProfile(){
     const sidebar=document.querySelector('.sidebar'),plugin=document.getElementById('agentiePluginsButton');if(!sidebar||!plugin)return;
-    const old=sidebar.querySelector('.agentie-profile-wrap:not(.agentie-connected-profile)');if(old)old.remove();
+    const old=[...sidebar.querySelectorAll('.agentie-profile-wrap')].find(el=>!el.classList.contains('agentie-connected-profile'));if(old)old.remove();
     let wrap=sidebar.querySelector('.agentie-connected-profile');
     if(!wrap){
       wrap=document.createElement('div');wrap.className='agentie-profile-wrap agentie-connected-profile';
@@ -86,12 +86,20 @@
     for(const m of d.messages||[]){const isUser=String(m.sender_type||'')==='user';const row=document.createElement('div');row.className=isUser?'user-row':'assistant-row';const wrap=document.createElement('div');if(!isUser){const author=document.createElement('div');author.className='agentie-connected-group-author';author.textContent=m.sender_name||'Agent';wrap.appendChild(author)}const bubble=document.createElement('div');bubble.className='bubble '+(isUser?'user':'assistant');bubble.textContent=isUser?String(m.message||''):clean(m.message||'');wrap.appendChild(bubble);row.appendChild(wrap);box.appendChild(row)}
     markActiveRows();if(nearBottom)window.scrollTo({top:document.body.scrollHeight,behavior:'auto'});
   }
-  function showGroupError(message){const box=document.getElementById('messages');if(!box)return;const row=document.createElement('div');row.className='agentie-connected-group-error';row.textContent=message;box.appendChild(row)}
+  function showOpeningGroup(id){
+    const box=document.getElementById('messages');if(!box)return;const known=state.groups.find(x=>String(x.id)===String(id));box.replaceChildren();
+    if(known){const head=document.createElement('div');head.className='agentie-connected-group-head';head.appendChild(stackFor(known));const copy=document.createElement('div');copy.className='agentie-connected-group-copy';const strong=document.createElement('strong');strong.textContent=known.name||'Group chat';const small=document.createElement('small');small.textContent=(known.participants||[]).join(' · ');copy.append(strong,small);head.appendChild(copy);box.appendChild(head)}
+    const opening=document.createElement('div');opening.className='agentie-connected-group-opening';opening.textContent='Opening group chat…';box.appendChild(opening);
+  }
+  function showGroupError(message){const box=document.getElementById('messages');if(!box)return;box.querySelector('.agentie-connected-group-opening')?.remove();const row=document.createElement('div');row.className='agentie-connected-group-error';row.textContent=`Could not open group chat: ${message}`;box.appendChild(row)}
   async function refreshGroup(){if(!state.group||state.loading)return;state.loading=true;try{const d=await api(`/platform/agent-chats/${encodeURIComponent(state.group.id)}`,{cache:'no-store'});renderThread(d)}catch(e){showGroupError(e.message)}finally{state.loading=false}}
-  function leaveGroup(){if(state.poll){clearInterval(state.poll);state.poll=null}state.group=null;window.__agentieActiveGroupChat=null;const input=document.getElementById('messageInput');if(input)input.placeholder='Message Agentie...';markActiveRows()}
+  function leaveGroup(){if(state.poll){clearInterval(state.poll);state.poll=null}state.openToken++;state.group=null;window.__agentieActiveGroupChat=null;const input=document.getElementById('messageInput');if(input)input.placeholder='Message Agentie...';markActiveRows()}
   async function openGroup(id){
-    if(!id)return;try{window.selectPersistentAgent?.(null)}catch(_){ }
-    try{const d=await api(`/platform/agent-chats/${encodeURIComponent(id)}`,{cache:'no-store'});if(state.poll)clearInterval(state.poll);state.group=d;window.__agentieActiveGroupChat=d;renderThread(d);const input=document.getElementById('messageInput');if(input){input.placeholder=`Message ${d.name}...`;input.focus()}state.poll=setInterval(refreshGroup,2200)}catch(e){showGroupError(e.message)}
+    if(!id)return;const token=++state.openToken;showOpeningGroup(id);
+    try{
+      const d=await api(`/platform/agent-chats/${encodeURIComponent(id)}`,{cache:'no-store'});if(token!==state.openToken)return;
+      if(state.poll)clearInterval(state.poll);state.group=d;window.__agentieActiveGroupChat=d;renderThread(d);const input=document.getElementById('messageInput');if(input){input.placeholder=`Message ${d.name}...`;input.focus()}state.poll=setInterval(refreshGroup,2200)
+    }catch(e){if(token===state.openToken)showGroupError(e.message)}
   }
   async function sendGroup(){
     if(!state.group)return false;const input=document.getElementById('messageInput'),send=document.getElementById('sendButton'),value=String(input?.value||'').trim();if(!value)return true;if(input)input.value='';if(send)send.disabled=true;
@@ -101,9 +109,17 @@
 
   async function loadGroups(){try{const d=await api('/platform/agent-chats',{cache:'no-store'});state.groups=d.items||[];markActiveRows()}catch(_){ }}
 
+  document.addEventListener('pointerdown',e=>{
+    const groupRow=e.target.closest?.('#persistentAgentList .sidebar-group-row');if(!groupRow)return;
+    const id=groupRow.dataset.groupId;if(!id)return;e.preventDefault();e.stopImmediatePropagation();state.lastPointerGroup=id;state.lastPointerAt=Date.now();openGroup(id);
+  },true);
+
   document.addEventListener('click',e=>{
     const groupRow=e.target.closest?.('#persistentAgentList .sidebar-group-row');
-    if(groupRow){e.preventDefault();e.stopImmediatePropagation();openGroup(groupRow.dataset.groupId);return}
+    if(groupRow){
+      e.preventDefault();e.stopImmediatePropagation();const id=groupRow.dataset.groupId;
+      if(id&&!(state.lastPointerGroup===id&&Date.now()-state.lastPointerAt<800))openGroup(id);return
+    }
     const normal=e.target.closest?.('#persistentAgentList .agent-row:not(.sidebar-group-row)');if(normal&&state.group)leaveGroup();
     const atItem=e.target.closest?.('.agentie-at-menu .agentie-at-item');if(atItem){const name=atItem.querySelector('.agentie-at-copy strong')?.textContent?.trim();const group=state.groups.find(x=>x.name===name);if(group){e.preventDefault();e.stopImmediatePropagation();document.querySelector('.agentie-at-menu')?.classList.remove('open');openGroup(group.id)}}
     if(!e.target.closest?.('.agentie-connected-profile'))document.querySelector('.agentie-connected-profile-menu')?.classList.remove('open');
