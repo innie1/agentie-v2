@@ -121,6 +121,11 @@ def _execute_approved_action(item: dict):
         if not statement:raise ValueError("Approved repeated company knowledge is missing the statement.")
         from agentie.core.company_knowledge import force_add_duplicate_company_knowledge
         result={"added":True,"knowledge":force_add_duplicate_company_knowledge(statement),"repeated":True}
+    elif kind == "computer_guest_command":
+        command=str(meta.get("command") or "").strip();agent_id=str(meta.get("agent_id") or "").strip()
+        if not command or not agent_id:raise ValueError("Approved Company Computer command is missing command or agent ownership metadata.")
+        from agentie.core.company_computer_commands import execute_approved_guest_command
+        result=execute_approved_guest_command(command,agent_id)
     else:return None
     item["status"] = "consumed";item["consumed_at"] = datetime.now(timezone.utc).isoformat();item["execution_result"] = result;return result
 def resolve_approval(approval_id: str, approved: bool, remember: bool = False):
