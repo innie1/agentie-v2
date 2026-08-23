@@ -15,6 +15,7 @@ class GroupChatComposerFocusRegressionTests(unittest.TestCase):
         self.assertIn('MutationObserver',text)
         self.assertIn("ta.focus({preventScroll:true})",text)
         self.assertIn('setSelectionRange',text)
+        self.assertIn('__agentieGroupOfflineCache',text)
         self.assertIn('__agentieNavigationConnect',text)
         self.assertIn('__agentieGroupInstantOpenGuard',text)
 
@@ -31,15 +32,17 @@ class GroupChatComposerFocusRegressionTests(unittest.TestCase):
         ):
             self.assertIn(marker,text)
 
-    def test_focus_guard_is_bundled_after_chat_ui_and_instant_open_runs_last(self):
+    def test_focus_guard_is_bundled_after_chat_ui_cache_before_navigation_and_instant_open_last(self):
         source=Path('agentie/core/platform_next4_api.py').read_text(encoding='utf-8')
-        bundle='_frontend_bundle("platform_next4.js", "platform_chat_focus_guard.js", "group_chat_markdown.js", "model_router.js", "navigation_connect.js", "group_chat_instant_open.js")'
+        bundle='_frontend_bundle("platform_next4.js", "platform_chat_focus_guard.js", "group_chat_markdown.js", "model_router.js", "group_chat_offline_cache.js", "navigation_connect.js", "group_chat_instant_open.js")'
         self.assertIn(bundle,source)
         self.assertLess(bundle.index('platform_next4.js'),bundle.index('platform_chat_focus_guard.js'))
-        self.assertLess(bundle.index('model_router.js'),bundle.index('navigation_connect.js'))
+        self.assertLess(bundle.index('model_router.js'),bundle.index('group_chat_offline_cache.js'))
+        self.assertLess(bundle.index('group_chat_offline_cache.js'),bundle.index('navigation_connect.js'))
         self.assertLess(bundle.index('navigation_connect.js'),bundle.index('group_chat_instant_open.js'))
         self.assertIn('group_chat_markdown.js',bundle)
         self.assertIn('@router.get("/platform-chat-focus-guard.js")',source)
+        self.assertIn('@router.get("/platform-group-chat-offline-cache.js")',source)
         self.assertIn('@router.get("/platform-navigation-connect.js")',source)
         self.assertIn('@router.get("/platform-group-instant-open.js")',source)
 
