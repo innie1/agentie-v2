@@ -25,17 +25,44 @@ def _load_global():
         "blocked_mcp_servers":sorted({str(x).lower() for x in data.get("blocked_mcp_servers",[])}),
         "updated_at":data.get("updated_at"),
     }
-
 def _save_global(data):GLOBAL_ACCESS_FILE.parent.mkdir(parents=True,exist_ok=True);data["updated_at"]=_now();GLOBAL_ACCESS_FILE.write_text(json.dumps(data,indent=2,ensure_ascii=False),encoding="utf-8")
 
 def agent_from_session(session_id):
     m=re.match(r"^agent:(agt_[a-z0-9]+):",str(session_id or ""),re.I);return agent_registry.get_agent(m.group(1)) if m else None
 
 def _mutate_agent(key,fn):
-    """Compatibility helper for non-tool agent permissions such as delegation."""
+    """Compatibility helper for agent metadata/behavior such as delegation or preferred Skills."""
     data=agent_registry._load();needle=str(key).casefold();target=next((x for x in data.get("agents",[]) if str(x.get("id","")).casefold()==needle or str(x.get("name","")).casefold()==needle),None)
     if not target:raise ValueError("Agent was not found.")
     fn(target);target["updated_at"]=_now();data["updated_at"]=target["updated_at"];agent_registry._save(data);return agent_registry.get_agent(target["id"]) or {}
+
+def _mentioned_mcp(message):
+    """Detect which connected shared MCP a natural request is referring to.
+
+    This is routing only. It does not grant access or create an agent-level
+    approval. Consequential actions are still approved by the tool/action path.
+    """
+    text=" ".join(str(message or "").strip().split());low=text.casefold()
+    if not low:return None
+    names={str(item.get("name") or "").casefold():str(item.get("name") or "") for item in list_servers()}
+    if not names:return None
+    # Local AgentMail history/settings commands are handled by the email preflight
+    # and must not be mistaken for a remote inbox operation.
+    if re.search(r"\b(?:show|view|list)\s+email\s+history\b|\bset\s+(?:my\s+)?agentmail\s+inbox\b",low):return None
+    def connected(name):return names.get(name.casefold())
+    google=connected("google-workspace")
+    if google and re.search(r"\b(?:gmail|google\s+mail|google\s+drive|drive\s+file|google\s+docs?|google\s+sheets?|google\s+calendar)\b",low):return google
+    canva=connected("canva")
+    if canva and re.search(r"\bcanva\b",low):return canva
+    whatsapp=connected("whatsapp")
+    if whatsapp and re.search(r"\bwhats\s*app\b|\bwhatsapp\b",low):return whatsapp
+    agentmail=connected("agentmail")
+    if agentmail and re.search(r"\b(?:email|e-mail|inbox|mail)\b",low):return agentmail
+    # If a connected MCP is named explicitly, route to it without inventing an
+    # agent-level permission decision.
+    for key,display in names.items():
+        if key and re.search(rf"(?<![a-z0-9]){re.escape(key)}(?![a-z0-9])",low):return display
+    return None
 
 def global_skill_allowed(skill_id):
     sid=str(skill_id or "").lower();skill=all_skills().get(sid)
@@ -66,8 +93,6 @@ def mcp_allowed(agent,name):
     return global_mcp_allowed(name)
 
 def set_skill_access(agent_id,skill_id,mode):
-    # Kept only so older API clients fail clearly instead of silently maintaining
-    # a permission model Agentie no longer uses.
     if not agent_registry.get_agent(agent_id):raise ValueError("Agent was not found.")
     if str(skill_id or "").lower() not in all_skills():raise ValueError("Skill or capability was not found.")
     raise ValueError("Per-agent tool access has been removed. Manage the capability once in the workspace Plugins/Skills catalog.")
@@ -99,8 +124,8 @@ def access_snapshot(agent_id):
 def guard_agent_capability(session_id,message):
     """Tool selection is no longer an agent-level approval gate.
 
-    Connected tools are shared workspace capabilities. The runtime still creates
-    the normal approval when the *action* is consequential (send, publish,
-    delete, payment, permission change, etc.).
+    Connected tools are shared workspace capabilities. Approval is attached to
+    consequential actions (send, publish, delete, payment, permission change,
+    etc.), not to an agent merely selecting a connected tool.
     """
     return None
