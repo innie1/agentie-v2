@@ -119,7 +119,10 @@ def poll_team_completion_events(limit=20):
     with _LOCK:
         items=_load()
         for j in reversed(items):
-            if j.get("status") not in terminal or j.get("completion_notified_at") or _autopilot_failure_pending(j):continue
+            if j.get("status") not in terminal or j.get("completion_notified_at"):continue
+            if str(j.get("interaction_mode") or "task").casefold()=="chat":
+                j["completion_notified_at"]=now;changed=True;continue
+            if _autopilot_failure_pending(j):continue
             status=str(j.get("status") or "completed");ok=status=="completed";title="Agent collaboration completed" if ok else "Agent collaboration needs attention";events.append({"message":f"{title}: {j.get('task') or 'team task'}.","card":{**team_job_card(j),"completion_event":True}});j["completion_notified_at"]=now;changed=True
             if len(events)>=max(1,limit):break
         if changed:_save(items)
