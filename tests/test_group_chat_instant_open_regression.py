@@ -34,10 +34,11 @@ class GroupChatInstantOpenRegressionTests(unittest.TestCase):
         self.assertIn("document.querySelector('.chat-shell')", guard)
         self.assertIn("document.scrollingElement||document.documentElement||document.body", guard)
         self.assertIn("getComputedStyle(shell)", guard)
-        self.assertIn("shell.scrollHeight>shell.clientHeight+1", guard)
+        self.assertIn("if(/auto|scroll|overlay/.test(overflow))return shell", guard)
         self.assertIn("root.scrollTop=root.scrollHeight", guard)
         self.assertNotIn("behavior:'smooth'", guard)
         self.assertIn("window.__agentieGroupScrollRoot=scrollHost", runtime)
+        self.assertIn("if(/auto|scroll|overlay/.test(overflow))return shell", runtime)
 
     def test_reveal_waits_one_frame_and_guard_stays_presentation_only(self):
         src = self.guard
