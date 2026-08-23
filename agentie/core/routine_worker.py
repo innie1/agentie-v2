@@ -8,6 +8,7 @@ from typing import Any
 from agentie.core.automation_events import close_event,mark_delivered,pending_events
 from agentie.core.browser_monitor import capture_website,routine_always_show,website_routine_target
 from agentie.core.job_engine import create_job,job_card,poll_job_completion_events,start_job
+from agentie.core.proactive import scan_and_nudge
 from agentie.core.routine_engine import claim_due_routines,event_routines_for,mark_event_routine_claimed,record_run
 from agentie.core.runner import run_agent
 from agentie.core.team_orchestrator import poll_team_completion_events
@@ -124,6 +125,8 @@ async def _loop()->None:
             for routine in claim_due_routines(datetime.now().astimezone()):await _execute_routine(routine)
             await _dispatch_internal_events()
         except Exception as exc:_push({"message":f"Routine scheduler error: {exc}","card":None})
+        try:scan_and_nudge()
+        except Exception as exc:_push({"message":f"Stalled-handoff monitor error: {exc}","card":None})
         await asyncio.sleep(15)
 def start_routine_worker()->None:
     global _TASK
