@@ -128,7 +128,6 @@ def _host_terminal(command: str) -> dict[str, Any]:
     return {"command": raw, "output": output[:50000], "exit_code": proc.returncode}
 
 
-# Backward-compatible name used by a few older tests/callers.
 _terminal = _host_terminal
 
 
@@ -267,4 +266,4 @@ def route_desktop_request(message: str, session_id: str | None = None) -> dict[s
     except (ValueError, RuntimeError, ComputerError) as exc:
         info = computer_status()
         return {"message": str(exc), "card": desktop_card("error", mode="qemu", state=info.get("state"), error=str(exc), action=(info.get("acceleration") or {}).get("action"))}
-    return {"message": "Unknown desktop command.", "card": desktop_card("error", error="Unknown desktop command")
+    return {"message": "Unknown desktop command.", "card": desktop_card("error", error="Unknown desktop command")}
