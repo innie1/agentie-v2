@@ -7,7 +7,7 @@ from typing import Any
 from playwright.async_api import Browser, BrowserContext, Page, Playwright, async_playwright
 
 from agentie.core.browser_monitor import _publish_frame, _set_live_state, _stop_requested, _url, _validate_url, get_live_state
-from agentie.core.company_computer import ComputerError, acquire_for_session, request_user_takeover_for_session, status as computer_status, touch_activity
+from agentie.core.company_computer_backend import ComputerError, acquire_for_session, request_user_takeover_for_session, status as computer_status, touch_activity
 from agentie.core.company_computer_guest_setup import ensure_guest_runtime
 from agentie.tools.approval_tools import approval_is_granted, consume_approval, create_approval
 
@@ -258,10 +258,11 @@ async def browser_session_command(message: str, session_id: str | None = None) -
                 if _stop_requested(): raise RuntimeError("Browser task stopped by user.")
                 result, page = await _perform(page, step); actions.append(result); await _publish_frame(page, status="working", url=page.url, detail=result); await asyncio.to_thread(touch_activity, {"url": page.url, "title": await page.title()}); await _maybe_require_human(page, session_id)
             title = await page.title(); await _publish_frame(page, status="done", url=page.url, detail="Browser actions complete"); _set_live_state(active=False, status="done", url=page.url, detail="Browser actions complete")
-            return {"message": "Completed the browser actions.", "card": {"type": "browser_actions", "title": title or "Browser", "url": page.url, "actions": actions, "computer_mode": "qemu"}}
+            info = computer_status()
+            return {"message": "Completed the browser actions.", "card": {"type": "browser_actions", "title": title or "Browser", "url": page.url, "actions": actions, "computer_mode": info.get("backend", "qemu")}}
         except BrowserHumanTakeoverRequired as exc:
             page_url = _PAGE.url if _PAGE and not _PAGE.is_closed() else (target or ""); _set_live_state(active=False, status="paused", url=page_url, detail=exc.reason); info = computer_status()
-            return {"message": "User action required. Take control of the same Agentie Computer, complete the verification, then press Continue Agent.", "card": {"type": "computer_takeover", "reason": exc.reason, "url": page_url, "display_url": info.get("display_url"), "command": message, "state": info.get("state")}}
+            return {"message": "User action required. Take control of the same Agentie Computer, complete the verification, then press Continue Agent.", "card": {"type": "computer_takeover", "reason": exc.reason, "url": page_url, "display_url": info.get("display_url"), "command": message, "state": info.get("state"), "backend": info.get("backend", "qemu")}}
         except BrowserApprovalRequired as exc:
             page_url = _PAGE.url if _PAGE and not _PAGE.is_closed() else (target or ""); _set_live_state(active=False, status="paused", url=page_url, detail=f"Approval required: {exc.step}")
             return {"message": "This browser action needs your approval before I continue.", "card": {"type": "browser_approval", "url": page_url, "step": exc.step, "approval": exc.approval, "command": message}}
