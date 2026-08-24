@@ -18,6 +18,7 @@ if _virtualbox_selected():
     # intentionally hold the module object rather than the new backend facade.
     from agentie.core import company_computer_virtualbox as _vbox
     from agentie.core import company_computer_virtualbox_provisioning as _vbox_provisioning  # noqa: F401
+    from agentie.core import company_computer_virtualbox_guestcontrol as _vbox_guestcontrol  # noqa: F401
 
     for _name in (
         "prepare", "start", "stop", "suspend", "resume", "status",
