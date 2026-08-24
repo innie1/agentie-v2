@@ -101,6 +101,7 @@ class TelegramChannelRegressionTests(unittest.IsolatedAsyncioTestCase):
         source=Path("main.py").read_text(encoding="utf-8");ui=Path("frontend/telegram_plugin.js").read_text(encoding="utf-8")
         for value in ('/plugins/telegram','/plugins/telegram/pair','start_telegram_channels','telegram-plugin.js'):self.assertIn(value,source+ui)
         self.assertIn('BotFather',ui);self.assertIn('revoke_token=true',ui)
+        plugins=Path("frontend/plugins.js").read_text(encoding="utf-8");self.assertIn('plugins-mobile-launch',plugins);self.assertIn("mobileButton.onclick=togglePlugins",plugins)
 
 
 if __name__=="__main__":unittest.main()

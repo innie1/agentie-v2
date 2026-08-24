@@ -18,11 +18,13 @@
     .plugins-foot{display:flex;justify-content:space-between;align-items:center;margin-top:8px;font-size:11px;color:var(--muted)}.plugins-refresh{border:0;background:transparent;color:var(--muted);cursor:pointer;padding:3px}
     .mcp-approval-detail{margin-top:9px;padding:9px;border-radius:10px;background:var(--soft);font-size:12px;line-height:1.45}.mcp-approval-actions{display:flex;gap:7px;flex-wrap:wrap;margin-top:10px}.mcp-approval-actions button{border:1px solid var(--border);background:var(--panel);color:var(--text);padding:6px 10px;border-radius:9px;cursor:pointer}.mcp-approval-actions .approve-once{background:var(--accent);color:var(--accent-text);border-color:var(--accent)}.mcp-approval-actions .always-allow{font-weight:600}.mcp-approval-note{font-size:10px;color:var(--muted);margin-top:7px;line-height:1.35}
     .web-shot{margin-top:10px;border:1px solid var(--border);border-radius:12px;overflow:hidden;background:var(--soft)}.web-shot img{display:block;width:100%;max-height:520px;object-fit:contain;background:#fff}.web-shot-meta{margin-top:8px;font-size:11px;color:var(--muted);overflow:hidden;text-overflow:ellipsis}.web-shot-excerpt{margin-top:9px;font-size:12px;line-height:1.45;color:var(--muted);white-space:pre-wrap;max-height:120px;overflow:auto}
-    @media(max-width:760px){.plugins-panel{left:12px;right:12px;bottom:12px;width:auto}.plugins-launch{display:none}}
+    .plugins-mobile-launch{display:none;position:fixed;right:58px;top:12px;z-index:90;width:34px;height:34px;border:1px solid var(--border);border-radius:10px;background:var(--panel);color:var(--text);cursor:pointer;place-items:center}
+    @media(max-width:760px){.plugins-panel{left:12px;right:12px;bottom:12px;width:auto}.plugins-launch{display:none}.plugins-mobile-launch{display:grid}}
   `;
   document.head.appendChild(style);
 
   const button=document.createElement('button');button.id='agentiePluginsButton';button.className='plugins-launch';button.type='button';button.innerHTML='<span class="plug-dot">🔌</span><span>Plugins</span>';sidebar.appendChild(button);
+  const mobileButton=document.createElement('button');mobileButton.className='plugins-mobile-launch';mobileButton.type='button';mobileButton.title='Plugins';mobileButton.setAttribute('aria-label','Plugins');mobileButton.textContent='🔌';document.body.appendChild(mobileButton);
   const panel=document.createElement('div');panel.className='plugins-panel';panel.id='agentiePluginsPanel';panel.innerHTML=`<div class="plugins-head"><strong>Plugins</strong><button class="plugins-close" type="button" aria-label="Close">×</button></div><div class="plugins-body"><div class="plugin-empty">Loading…</div></div>`;document.body.appendChild(panel);
   const body=panel.querySelector('.plugins-body');
 
@@ -85,7 +87,7 @@
     };
   }
 
-  button.onclick=()=>{panel.classList.toggle('open');if(panel.classList.contains('open'))loadPlugins()};panel.querySelector('.plugins-close').onclick=()=>panel.classList.remove('open');document.addEventListener('keydown',event=>{if(event.key==='Escape')panel.classList.remove('open')});
+  const togglePlugins=()=>{panel.classList.toggle('open');if(panel.classList.contains('open'))loadPlugins()};button.onclick=togglePlugins;mobileButton.onclick=togglePlugins;panel.querySelector('.plugins-close').onclick=()=>panel.classList.remove('open');document.addEventListener('keydown',event=>{if(event.key==='Escape')panel.classList.remove('open')});
 })();
 
 // Single persistent-agent UI implementation. This is the browser-loaded copy.
