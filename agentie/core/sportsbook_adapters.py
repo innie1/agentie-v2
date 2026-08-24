@@ -2,11 +2,9 @@ from __future__ import annotations
 
 """Real sportsbook adapter contract for Agentie.
 
-This module intentionally ships with no pretend sportsbook implementations.
-A sportsbook only becomes available to the betting runtime after a tested
-adapter registers itself here.  Adapters prepare slips, recheck the exact live
-market immediately before submission, and submit only after Agentie's normal
-approval path has been resolved.
+A sportsbook becomes available only after a real adapter registers here.
+Adapters prepare slips, recheck exact live markets immediately before
+submission, and submit only through Agentie's normal approval path.
 """
 
 import threading
@@ -29,6 +27,10 @@ class SportsbookAdapter(ABC):
         if not sid:
             raise SportsbookAdapterError("Sportsbook adapter is missing sportsbook_id.")
         return {"id": sid, "name": str(self.display_name or sid).strip() or sid}
+
+    def diagnostics(self) -> dict[str, Any]:
+        """Optional non-secret runtime properties surfaced in betting status."""
+        return {}
 
     @abstractmethod
     async def prepare_bet(self, leg: dict[str, Any]) -> dict[str, Any]:
@@ -82,6 +84,17 @@ def require_adapter(sportsbook_id: str) -> SportsbookAdapter:
     return adapter
 
 
-def list_adapters() -> list[dict[str, str]]:
+def list_adapters() -> list[dict[str, Any]]:
     with _LOCK:
-        return [adapter.identity() for adapter in _ADAPTERS.values()]
+        adapters = list(_ADAPTERS.values())
+    out: list[dict[str, Any]] = []
+    for adapter in adapters:
+        item: dict[str, Any] = dict(adapter.identity())
+        try:
+            diagnostics = adapter.diagnostics()
+            if isinstance(diagnostics, dict) and diagnostics:
+                item["diagnostics"] = diagnostics
+        except Exception as exc:
+            item["diagnostics"] = {"status": "diagnostics_unavailable", "detail": str(exc)[:200]}
+        out.append(item)
+    return out
