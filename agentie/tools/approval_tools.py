@@ -126,6 +126,11 @@ def _execute_approved_action(item: dict):
         if not command or not agent_id:raise ValueError("Approved Company Computer command is missing command or agent ownership metadata.")
         from agentie.core.company_computer_commands import execute_approved_guest_command
         result=execute_approved_guest_command(command,agent_id)
+    elif kind == "sports_bet_submit":
+        plan_id=str(meta.get("plan_id") or "").strip();snapshot=str(meta.get("snapshot_hash") or "").strip()
+        if not plan_id or not snapshot:raise ValueError("Approved sports betting action is missing its execution plan snapshot.")
+        from agentie.core.sports_betting import execute_approved_plan
+        result=execute_approved_plan(plan_id,expected_snapshot_hash=snapshot)
     else:return None
     item["status"] = "consumed";item["consumed_at"] = datetime.now(timezone.utc).isoformat();item["execution_result"] = result;return result
 def resolve_approval(approval_id: str, approved: bool, remember: bool = False):
