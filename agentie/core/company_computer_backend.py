@@ -31,6 +31,7 @@ def backend_name(system: str | None = None) -> str:
 def _backend() -> ModuleType:
     if backend_name() == "virtualbox":
         from agentie.core import company_computer_virtualbox as backend
+        from agentie.core import company_computer_virtualbox_provisioning as _vbox_provisioning  # noqa: F401
         return backend
     from agentie.core import company_computer as backend
     # QGA methods are registered on the QEMU module by this compatibility module.
