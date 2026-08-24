@@ -20,6 +20,7 @@ if _virtualbox_selected():
     from agentie.core import company_computer_virtualbox_provisioning as _vbox_provisioning  # noqa: F401
     from agentie.core import company_computer_virtualbox_guestcontrol as _vbox_guestcontrol  # noqa: F401
 
+    computer._ACTIVE_BACKEND = "virtualbox"
     for _name in (
         "prepare", "start", "stop", "suspend", "resume", "status",
         "acquire_agent", "acquire_for_session", "handoff_agent",
@@ -29,6 +30,7 @@ if _virtualbox_selected():
     ):
         setattr(computer, _name, getattr(_vbox, _name))
 else:
+    computer._ACTIVE_BACKEND = "qemu"
     _ORIGINAL_ACCELERATION = computer.acceleration
 
     def acceleration(qemu: str | None = None, profile: dict[str, Any] | None = None) -> dict[str, Any]:
