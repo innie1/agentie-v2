@@ -1,4 +1,4 @@
-tested_sha=fa56f98b5033d9126c3e8e6ab8861b54b1928cfc
+tested_sha=0f39750227abb589416c42c33b3621d7b9896bed
 exit_code=1
 --- regression tail ---
 test_local_escalation_only_accepts_model_runtime_failures (test_model_router_regression.ModelRouterRegressionTests.test_local_escalation_only_accepts_model_runtime_failures) ... ok
@@ -248,6 +248,6 @@ Traceback (most recent call last):
 AssertionError: 'Hypervisor' not found in 'Install or use a Windows QEMU build with WHPX support.'
 
 ----------------------------------------------------------------------
-Ran 740 tests in 25.308s
+Ran 740 tests in 22.636s
 
 FAILED (failures=1)
