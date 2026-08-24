@@ -440,7 +440,7 @@ def _migrate_existing_qcow2() -> Path:
     try:
         _convert_qcow2_to_vdi(OLD_QCOW2, temporary)
         _verify_vdi(temporary)
-        os.replace(temporary, DISK)
+        _finalize_vdi(temporary, DISK)
         return DISK
     except ComputerError:
         temporary.unlink(missing_ok=True)
@@ -463,6 +463,16 @@ def _ensure_qcow2_backup() -> None:
             "Could not safely create the Company Computer QCOW2 backup. "
             "The original disk was preserved; free some disk space, confirm the Company Computer folder is writable, and retry."
         ) from exc
+
+
+def _finalize_vdi(staging: Path, destination: Path) -> None:
+    """Verify, unregister, atomically publish and register a new VDI."""
+    if destination.exists():
+        raise ComputerError("Refusing to replace an existing persistent Company Computer VDI.")
+    _run_checked(["closemedium", "disk", str(staging)], stage="disk_unregister_temporary", timeout=60)
+    staging.replace(destination)
+    _run_checked(["openmedium", "disk", str(destination)], stage="disk_register_final", timeout=60)
+    _run_checked(["showmediuminfo", "disk", str(destination)], stage="disk_verify_final", timeout=60)
 
 
 def ensure_disk(profile: dict[str, Any] | None = None) -> Path:
@@ -624,7 +634,14 @@ def ensure_seed_iso() -> Path:
     shutil.rmtree(temp, ignore_errors=True)
     temp.mkdir(parents=True)
     (temp / "user-data").write_text(_cloud_init_user_data(), encoding="utf-8")
-    (temp / "meta-data").write_text("instance-id: agentie-company-computer-vbox\nlocal-hostname: agentie-computer\n", encoding="utf-8")
+    migrated = OLD_QCOW2.exists() or OLD_QCOW2_BACKUP.exists()
+    instance_id = (
+        f"agentie-company-computer-vbox-migration-v{SEED_VERSION}"
+        if migrated else f"agentie-company-computer-vbox-v{SEED_VERSION}"
+    )
+    (temp / "meta-data").write_text(
+        f"instance-id: {instance_id}\nlocal-hostname: agentie-computer\n", encoding="utf-8"
+    )
     iso = pycdlib.PyCdlib()
     iso.new(interchange_level=3, joliet=3, vol_ident="cidata")
     iso.add_file(str(temp / "user-data"), iso_path="/USER_DAT.;1", joliet_path="/user-data")

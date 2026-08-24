@@ -55,7 +55,8 @@ class CompanyComputerVirtualBoxMigrationRegressionTests(unittest.TestCase):
                 self.assertEqual(temporary.read_bytes(), b"valid-vdi")
                 events.append("verified")
 
-            with self.paths(root)[0], self.paths(root)[1], self.paths(root)[2], self.paths(root)[3], patch.object(vbox, "_convert_qcow2_to_vdi", side_effect=convert), patch.object(vbox, "_verify_vdi", side_effect=verify):
+            ok = subprocess.CompletedProcess([], 0, stdout="", stderr="")
+            with self.paths(root)[0], self.paths(root)[1], self.paths(root)[2], self.paths(root)[3], patch.object(vbox, "_convert_qcow2_to_vdi", side_effect=convert), patch.object(vbox, "_verify_vdi", side_effect=verify), patch.object(vbox, "_run_checked", return_value=ok):
                 result = provisioning.ensure_disk({"system": "windows", "machine": "amd64"})
             self.assertEqual(events, ["converted", "verified"])
             self.assertEqual(result.read_bytes(), b"valid-vdi")

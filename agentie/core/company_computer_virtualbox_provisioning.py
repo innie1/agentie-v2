@@ -18,11 +18,11 @@ from typing import Any
 
 from agentie.core import company_computer_virtualbox as vbox
 
-SEED_VERSION = 3
+SEED_VERSION = 4
 ARCHIVE_NAME = "debian-13-generic-amd64.tar.xz"
 RAW_MEMBER_NAME = "debian-13-generic-amd64.raw"
 ARCHIVE = vbox.DOWNLOADS_DIR / ARCHIVE_NAME
-VM_CONFIG_VERSION = "2026-08-vbox-v3"
+VM_CONFIG_VERSION = "2026-08-vbox-v4"
 VM_CONFIG_MARKER = vbox.ROOT / "virtualbox-profile.version"
 
 
@@ -79,6 +79,7 @@ def _ensure_base_raw(profile: dict[str, Any]) -> Path:
 
 def ensure_disk(profile: dict[str, Any] | None = None) -> Path:
     if vbox.DISK.exists():
+        _ensure_final_medium_registered(vbox.DISK)
         return vbox.DISK
     info = profile or vbox.host_profile()
     vbox.ROOT.mkdir(parents=True, exist_ok=True)
@@ -94,6 +95,13 @@ def ensure_disk(profile: dict[str, Any] | None = None) -> Path:
         # staging file is not useful after VDI creation.
         raw.unlink(missing_ok=True)
     return vbox.DISK
+
+
+def _ensure_final_medium_registered(disk: Path) -> None:
+    info = vbox._run(["showmediuminfo", "disk", str(disk)], timeout=60)
+    if info.returncode != 0:
+        vbox._run_checked(["openmedium", "disk", str(disk)], stage="disk_register_final", timeout=60)
+    vbox._run_checked(["showmediuminfo", "disk", str(disk)], stage="disk_verify_final", timeout=60)
 
 
 def _cloud_init_user_data() -> str:
@@ -253,13 +261,51 @@ def _configure_common(profile: dict[str, Any]) -> None:
 
 def _create_vm(profile: dict[str, Any]) -> None:
     additions = guest_additions_iso()
-    vbox._run_checked(["createvm", "--name", vbox.VM_NAME, "--ostype", "Debian_64", "--register"], stage="vm_create")
+    machine_root = _machine_root()
+    legacy_root = _default_machine_root()
+    if legacy_root != machine_root:
+        _preserve_stale_machine_folder(legacy_root)
+    _preserve_stale_machine_folder(machine_root)
+    vbox._run_checked([
+        "createvm", "--name", vbox.VM_NAME, "--ostype", "Debian_64",
+        "--basefolder", str(machine_root), "--register",
+    ], stage="vm_create")
     _configure_common(profile)
     vbox._run_checked(["storagectl", vbox.VM_NAME, "--name", "SATA", "--add", "sata", "--controller", "IntelAhci"], stage="storage_controller")
     vbox._run_checked(["storageattach", vbox.VM_NAME, "--storagectl", "SATA", "--port", "0", "--device", "0", "--type", "hdd", "--medium", str(vbox.DISK)], stage="disk_attach")
     vbox._run_checked(["storageattach", vbox.VM_NAME, "--storagectl", "SATA", "--port", "1", "--device", "0", "--type", "dvddrive", "--medium", str(vbox.SEED_ISO)], stage="seed_attach")
     vbox._run_checked(["storageattach", vbox.VM_NAME, "--storagectl", "SATA", "--port", "2", "--device", "0", "--type", "dvddrive", "--medium", str(additions)], stage="guest_additions_attach")
     VM_CONFIG_MARKER.write_text(VM_CONFIG_VERSION + "\n", encoding="utf-8")
+
+
+def _machine_root() -> Path:
+    return vbox.ROOT / "virtualbox-machines"
+
+
+def _default_machine_root() -> Path:
+    result = vbox._run(["list", "systemproperties"], timeout=30)
+    if result.returncode == 0:
+        for line in (result.stdout or "").splitlines():
+            if line.lower().startswith("default machine folder:"):
+                value = line.split(":", 1)[1].strip()
+                if value:
+                    return Path(value)
+    return _machine_root()
+
+
+def _preserve_stale_machine_folder(machine_root: Path) -> Path | None:
+    """Move an unregistered settings folder aside without deleting its files."""
+    stale = machine_root / vbox.VM_NAME
+    if vbox._vm_exists() or not stale.exists():
+        return None
+    suffix = 1
+    preserved = machine_root / f"{vbox.VM_NAME}.stale-{suffix}"
+    while preserved.exists():
+        suffix += 1
+        preserved = machine_root / f"{vbox.VM_NAME}.stale-{suffix}"
+    machine_root.mkdir(parents=True, exist_ok=True)
+    stale.replace(preserved)
+    return preserved
 
 
 def _repair_existing_vm(profile: dict[str, Any]) -> None:

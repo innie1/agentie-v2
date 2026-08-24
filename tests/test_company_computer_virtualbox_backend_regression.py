@@ -31,7 +31,12 @@ class CompanyComputerVirtualBoxRegressionTests(unittest.TestCase):
             root = Path(tmp)
             disk = root / "company-computer.vdi"
             disk.write_bytes(b"persistent-user-data")
-            with patch.object(vbox, "DISK", disk), patch.object(vbox, "_run_checked", side_effect=AssertionError("must not recreate VDI")):
+            ok = subprocess.CompletedProcess([], 0, stdout="UUID: test", stderr="")
+            with (
+                patch.object(vbox, "DISK", disk),
+                patch.object(vbox, "_run", return_value=ok),
+                patch.object(vbox, "_run_checked", return_value=ok),
+            ):
                 result = provisioning.ensure_disk({"system": "windows", "machine": "amd64"})
             self.assertEqual(result, disk)
             self.assertEqual(disk.read_bytes(), b"persistent-user-data")
@@ -55,12 +60,94 @@ class CompanyComputerVirtualBoxRegressionTests(unittest.TestCase):
                 patch.object(vbox, "OLD_QCOW2", old),
                 patch.object(vbox, "OLD_QCOW2_BACKUP", backup),
                 patch.object(vbox, "_convert_qcow2_to_vdi", side_effect=convert),
+                patch.object(vbox, "_run", return_value=subprocess.CompletedProcess([], 0, stdout="", stderr="")),
+                patch.object(vbox, "_run_checked", return_value=subprocess.CompletedProcess([], 0, stdout="", stderr="")),
             ):
                 result = provisioning.ensure_disk({"system": "windows", "machine": "amd64"})
             self.assertEqual(result, disk)
             self.assertEqual(old.read_bytes(), b"old-persistent-machine")
             self.assertEqual(backup.read_bytes(), b"old-persistent-machine")
             self.assertEqual(disk.read_bytes(), b"migrated")
+
+    def test_migrated_vdi_is_unregistered_before_atomic_publish_then_registered(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            staging = root / "company-computer.vdi.migration-part"
+            destination = root / "company-computer.vdi"
+            staging.write_bytes(b"verified-migration")
+            calls: list[list[str]] = []
+
+            def checked(args, **kwargs):
+                calls.append(list(args))
+                return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+
+            with patch.object(vbox, "_run_checked", side_effect=checked):
+                vbox._finalize_vdi(staging, destination)
+            self.assertEqual(destination.read_bytes(), b"verified-migration")
+            self.assertEqual(
+                [call[0] for call in calls],
+                ["closemedium", "openmedium", "showmediuminfo"],
+            )
+            self.assertEqual(calls[0][-1], str(staging))
+            self.assertEqual(calls[1][-1], str(destination))
+
+    def test_stale_unregistered_machine_folder_is_preserved_before_create(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            machine_root = Path(tmp) / "machines"
+            stale = machine_root / vbox.VM_NAME
+            stale.mkdir(parents=True)
+            (stale / f"{vbox.VM_NAME}.vbox").write_text("settings", encoding="utf-8")
+            with patch.object(vbox, "_vm_exists", return_value=False):
+                preserved = provisioning._preserve_stale_machine_folder(machine_root)
+            self.assertIsNotNone(preserved)
+            self.assertFalse(stale.exists())
+            self.assertEqual(
+                (preserved / f"{vbox.VM_NAME}.vbox").read_text(encoding="utf-8"),
+                "settings",
+            )
+
+    def test_existing_final_vdi_is_registered_on_idempotent_retry(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            disk = Path(tmp) / "company-computer.vdi"
+            disk.write_bytes(b"persistent-user-data")
+            missing = subprocess.CompletedProcess([], 1, stdout="", stderr="not registered")
+            calls: list[list[str]] = []
+            def checked(args, **kwargs):
+                calls.append(list(args))
+                return subprocess.CompletedProcess(args, 0, stdout="UUID: test", stderr="")
+            with (
+                patch.object(vbox, "DISK", disk),
+                patch.object(vbox, "_run", return_value=missing),
+                patch.object(vbox, "_run_checked", side_effect=checked),
+            ):
+                provisioning.ensure_disk({"system": "windows", "machine": "amd64"})
+            self.assertEqual(disk.read_bytes(), b"persistent-user-data")
+            self.assertEqual([call[0] for call in calls], ["openmedium", "showmediuminfo"])
+
+    def test_migration_seed_identity_is_new_and_stable_across_retries(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            old = root / "company-computer.qcow2"
+            old.write_bytes(b"persistent")
+            with (
+                patch.object(vbox, "ROOT", root),
+                patch.object(vbox, "SEED_ISO", root / "seed.iso"),
+                patch.object(vbox, "OLD_QCOW2", old),
+                patch.object(vbox, "OLD_QCOW2_BACKUP", root / "backup.qcow2"),
+                patch.object(vbox, "_cloud_init_user_data", return_value="#cloud-config\n"),
+                patch.object(vbox, "SEED_VERSION", provisioning.SEED_VERSION),
+            ):
+                vbox.ensure_seed_iso()
+                import pycdlib
+                iso = pycdlib.PyCdlib()
+                iso.open(str(vbox.SEED_ISO))
+                output = root / "meta-data"
+                iso.get_file_from_iso(str(output), joliet_path="/meta-data")
+                iso.close()
+                first = output.read_text(encoding="utf-8")
+                vbox.ensure_seed_iso()
+            self.assertIn("instance-id: agentie-company-computer-vbox-migration-v4", first)
+            self.assertNotIn("instance-id: agentie-company-computer\n", first)
 
     def test_vbox_failure_reports_exact_setup_stage(self):
         failed = subprocess.CompletedProcess(["VBoxManage"], 1, stdout="", stderr="bad config")
