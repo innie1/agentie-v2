@@ -405,22 +405,64 @@ def _convert_qcow2_to_vdi(source: Path, destination: Path) -> None:
     destination.unlink(missing_ok=True)
     qemu_img = _qemu_img_for_migration()
     if not qemu_img:
-        raise ComputerError(
-            "Agentie found your existing QEMU Company Computer and preserved it, but qemu-img is not available for the one-time migration to VirtualBox. Nothing was deleted."
-        )
-    DOWNLOADS_DIR.mkdir(parents=True, exist_ok=True)
-    raw = DOWNLOADS_DIR / "company-computer-migration.raw"
-    raw.unlink(missing_ok=True)
+        detail = (proc.stderr or proc.stdout or "").strip()[-1500:]
+        raise ComputerError(_migration_error(detail or "Direct VDI conversion failed and qemu-img is unavailable."))
+    convert = subprocess.run(
+        [qemu_img, "convert", "-p", "-O", "vdi", str(source), str(destination)],
+        capture_output=True, text=True, timeout=1200, shell=False,
+    )
+    if convert.returncode != 0 or not destination.exists():
+        detail = (convert.stderr or convert.stdout or "").strip()[-1500:]
+        destination.unlink(missing_ok=True)
+        raise ComputerError(_migration_error(detail))
+
+
+def _migration_error(detail: str = "") -> str:
+    suffix = f" Details: {detail}" if detail else ""
+    return (
+        "Could not write the migrated Company Computer VDI. The existing QCOW2 and backup were preserved. "
+        "Free some disk space, confirm the Company Computer folder is writable, and retry."
+        + suffix
+    )
+
+
+def _verify_vdi(path: Path) -> None:
+    if not path.is_file() or path.stat().st_size <= 0:
+        raise ComputerError("The migrated Company Computer VDI was empty or unreadable.")
+    checked = _run(["showmediuminfo", "disk", str(path)], timeout=120)
+    if checked.returncode != 0:
+        detail = (checked.stderr or checked.stdout or "").strip()[-1500:]
+        raise ComputerError("The migrated Company Computer VDI could not be verified. " + detail)
+
+
+def _migrate_existing_qcow2() -> Path:
+    temporary = DISK.with_name(f".{DISK.name}.{secrets.token_hex(6)}.tmp")
     try:
-        convert = subprocess.run(
-            [qemu_img, "convert", "-p", "-O", "raw", str(source), str(raw)],
-            capture_output=True, text=True, timeout=1200, shell=False,
-        )
-        if convert.returncode != 0:
-            raise ComputerError("Could not convert the existing Company Computer disk: " + ((convert.stderr or convert.stdout or "").strip()[-1500:]))
-        _run_checked(["convertfromraw", str(raw), str(destination), "--format", "VDI"], stage="disk_migration", timeout=1200)
-    finally:
-        raw.unlink(missing_ok=True)
+        _convert_qcow2_to_vdi(OLD_QCOW2, temporary)
+        _verify_vdi(temporary)
+        os.replace(temporary, DISK)
+        return DISK
+    except ComputerError:
+        temporary.unlink(missing_ok=True)
+        raise
+    except (OSError, subprocess.SubprocessError) as exc:
+        temporary.unlink(missing_ok=True)
+        raise ComputerError(_migration_error(str(exc))) from exc
+
+
+def _ensure_qcow2_backup() -> None:
+    if OLD_QCOW2_BACKUP.exists():
+        return
+    temporary = OLD_QCOW2_BACKUP.with_name(f".{OLD_QCOW2_BACKUP.name}.{secrets.token_hex(6)}.tmp")
+    try:
+        shutil.copy2(OLD_QCOW2, temporary)
+        os.replace(temporary, OLD_QCOW2_BACKUP)
+    except OSError as exc:
+        temporary.unlink(missing_ok=True)
+        raise ComputerError(
+            "Could not safely create the Company Computer QCOW2 backup. "
+            "The original disk was preserved; free some disk space, confirm the Company Computer folder is writable, and retry."
+        ) from exc
 
 
 def ensure_disk(profile: dict[str, Any] | None = None) -> Path:
@@ -429,10 +471,8 @@ def ensure_disk(profile: dict[str, Any] | None = None) -> Path:
     info = profile or host_profile()
     ROOT.mkdir(parents=True, exist_ok=True)
     if OLD_QCOW2.exists():
-        if not OLD_QCOW2_BACKUP.exists():
-            shutil.copy2(OLD_QCOW2, OLD_QCOW2_BACKUP)
-        _convert_qcow2_to_vdi(OLD_QCOW2, DISK)
-        return DISK
+        _ensure_qcow2_backup()
+        return _migrate_existing_qcow2()
     raw = _ensure_base_raw(info)
     _run_checked(["convertfromraw", str(raw), str(DISK), "--format", "VDI"], stage="disk_create", timeout=1200)
     _run_checked(["modifymedium", "disk", str(DISK), "--resize", "12288"], stage="disk_resize", timeout=120)

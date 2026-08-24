@@ -83,10 +83,8 @@ def ensure_disk(profile: dict[str, Any] | None = None) -> Path:
     info = profile or vbox.host_profile()
     vbox.ROOT.mkdir(parents=True, exist_ok=True)
     if vbox.OLD_QCOW2.exists():
-        if not vbox.OLD_QCOW2_BACKUP.exists():
-            shutil.copy2(vbox.OLD_QCOW2, vbox.OLD_QCOW2_BACKUP)
-        vbox._convert_qcow2_to_vdi(vbox.OLD_QCOW2, vbox.DISK)
-        return vbox.DISK
+        vbox._ensure_qcow2_backup()
+        return vbox._migrate_existing_qcow2()
     raw = _ensure_base_raw(info)
     try:
         vbox._run_checked(["convertfromraw", str(raw), str(vbox.DISK), "--format", "VDI"], stage="disk_create", timeout=1800)
