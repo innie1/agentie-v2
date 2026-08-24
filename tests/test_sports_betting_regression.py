@@ -6,7 +6,8 @@ from unittest.mock import patch
 from agentie.core import skill_registry
 from agentie.core import sports_betting as betting
 from agentie.core.sports_betting_skill import route_sports_betting_command
-from agentie.core.sportsbook_adapters import SportsbookAdapter, register_adapter, unregister_adapter
+from agentie.core.sportybet_adapter import SportyBetAdapter, _event_teams
+from agentie.core.sportsbook_adapters import SportsbookAdapter, get_adapter, register_adapter, unregister_adapter
 from agentie.tools import approval_tools
 
 
@@ -56,6 +57,8 @@ class SportsBettingRegressionTests(unittest.TestCase):
         self.approval_patch.start()
         for sid in ("booka", "bookb", "missing"):
             unregister_adapter(sid)
+        if get_adapter("sportybet") is None:
+            register_adapter(SportyBetAdapter())
 
     def tearDown(self):
         for sid in ("booka", "bookb", "missing"):
@@ -152,12 +155,20 @@ class SportsBettingRegressionTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             approval_tools.resolve_approval(approval["id"], True)
 
-    def test_builtin_skill_is_real_and_live_status_exposes_adapter_state(self):
+    def test_builtin_skill_registers_real_sportybet_adapter(self):
         item = skill_registry.all_skills()["sports-betting"]
         self.assertTrue(item["enabled"])
         self.assertIn("arbitrage", item["capabilities"])
         self.assertTrue(item["runtime"]["paper_mode"])
-        self.assertFalse(item["runtime"]["live_execution_available"])
+        self.assertTrue(item["runtime"]["live_execution_available"])
+        adapter_ids = {row["id"] for row in item["runtime"]["sportsbook_adapters"]}
+        self.assertIn("sportybet", adapter_ids)
+        self.assertIsInstance(get_adapter("sportybet"), SportyBetAdapter)
+
+    def test_sportybet_event_parser_handles_common_match_names(self):
+        self.assertEqual(_event_teams("Arsenal v Chelsea"), ["Arsenal", "Chelsea"])
+        self.assertEqual(_event_teams("Arsenal vs Chelsea"), ["Arsenal", "Chelsea"])
+        self.assertEqual(_event_teams("Arsenal - Chelsea"), ["Arsenal", "Chelsea"])
 
     def test_skill_routes_manual_arbitrage_and_value_analysis(self):
         arb = route_sports_betting_command("calculate arbitrage odds 2.10, 2.10 bankroll 10000")
@@ -166,6 +177,21 @@ class SportsBettingRegressionTests(unittest.TestCase):
         value = route_sports_betting_command("calculate value bet odds 2.20 probability 55% bankroll 100000")
         self.assertIsNotNone(value)
         self.assertTrue(value["card"]["positive_ev"])
+
+    def test_multiline_betting_commands_do_not_fall_through_to_calculator(self):
+        result = route_sports_betting_command(
+            "sports betting status\n"
+            "calculate arbitrage odds 2.10, 2.10 bankroll 10000\n"
+            "calculate value bet odds 2.20 probability 55% bankroll 100000\n"
+            "show betting performance"
+        )
+        self.assertIsNotNone(result)
+        self.assertEqual(result["card"]["type"], "sports_betting_batch")
+        self.assertEqual(len(result["card"]["items"]), 4)
+        self.assertEqual(result["card"]["items"][0]["type"], "sports_betting_status")
+        self.assertEqual(result["card"]["items"][1]["type"], "arbitrage_analysis")
+        self.assertEqual(result["card"]["items"][2]["type"], "value_bet_analysis")
+        self.assertEqual(result["card"]["items"][3]["type"], "sports_betting_performance")
 
 
 if __name__ == "__main__":
