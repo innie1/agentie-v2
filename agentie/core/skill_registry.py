@@ -10,6 +10,8 @@ from agentie.core.code_execution import route_code_command
 from agentie.core.external_skill_runtime import route_last30days
 from agentie.core.native_last30days import route as route_native_last30days,status as native_last30days_status
 from agentie.core.observability import current_trace_id,set_current_trace
+from agentie.core.sports_betting import runtime_status as sports_betting_status
+from agentie.core.sports_betting_skill import route_sports_betting_command
 from agentie.core.visual_artifacts import try_visual_request
 from agentie.core.web_research_service import answer_web_search,search_sources,source_card,sources_only_requested
 from agentie.core.workflow_skills import create_workflow_skill,delete_workflow_skill,get_workflow_skill,list_workflow_skills,set_workflow_skill_status,skill_card
@@ -26,6 +28,7 @@ DEFAULT_SKILLS={
   "jobs":{"name":"Jobs & Delegation","description":"Durable background jobs, parallel agents, routines and delegation.","agents":["general","manager","research","coding","github"],"enabled":True,"capabilities":["jobs","delegation","routines"],"permissions":["delegate","schedule"],"kind":"capability"},
   "github":{"name":"GitHub","description":"Repository inspection, issues, pull requests, Actions and GitHub workflows.","agents":["github","coding","manager"],"enabled":True,"capabilities":["github_read","repositories","issues","pull_requests","actions"],"permissions":["github_read","github_write"],"kind":"capability"},
   "browser-automation":{"name":"Browser Automation","description":"Navigate websites, interact with pages, capture screenshots and complete browser workflows.","agents":["general","research","manager"],"enabled":True,"capabilities":["browser","navigation","web_automation","screenshot"],"permissions":["web_read","web_interact"],"kind":"capability"},
+  "sports-betting":{"name":"Sports Betting","description":"Paper betting, arbitrage detection, +EV/value analysis, stake sizing, performance tracking and approval-gated sportsbook execution through tested adapters.","agents":["general","research","manager"],"enabled":True,"capabilities":["sports_odds","arbitrage","value_betting","paper_betting","betting_performance","sportsbook_automation"],"permissions":["web_read","web_interact","financial_action_approval"],"kind":"capability","runtime_status":sports_betting_status},
   "email":{"name":"Email","description":"Read, search, draft and send email when an approved email MCP or plugin is connected.","agents":["general","manager"],"enabled":True,"capabilities":["email","inboxes","messages","drafts","attachments"],"permissions":["email_read","email_write","send"],"kind":"capability"},
   "knowledge-memory":{"name":"Knowledge Memory","description":"Persistent entities, observations, relations and useful long-term knowledge.","agents":["general","research","manager","coding","github"],"enabled":True,"capabilities":["knowledge_graph","entities","relations","memory"],"permissions":["memory_read","memory_write"],"kind":"capability"},
   "planning":{"name":"Planning & Reasoning","description":"Structured planning, decomposition, verification and multi-step reasoning.","agents":["general","research","manager","coding"],"enabled":True,"capabilities":["reasoning","planning","verification","sequential_thinking"],"permissions":["read"],"kind":"capability"},
@@ -132,6 +135,9 @@ def route_skill_command(message:str)->dict[str,Any]|None:
     if access is not None:return access
     workflow=_workflow_skill_command(text,lower)
     if workflow is not None:return workflow
+    if skill_enabled("sports-betting"):
+        betting=route_sports_betting_command(message)
+        if betting is not None:return betting
     visual=try_visual_request("",message)
     if visual is not None:return visual
     native=route_native_last30days(message)
