@@ -4,6 +4,11 @@ import re
 from typing import Any
 
 from agentie.core.sports_betting import analyze_value_bet, detect_arbitrage, performance, runtime_status
+from agentie.core.sportybet_adapter import ensure_sportybet_registered
+
+# SportyBet is Agentie's first real built-in sportsbook adapter. Registration is
+# cheap; browser startup remains lazy until an actual live plan is prepared.
+ensure_sportybet_registered()
 
 
 def _money(text: str) -> float:
@@ -15,7 +20,7 @@ def _odds_list(text: str) -> list[float]:
     return [float(value) for value in values]
 
 
-def route_sports_betting_command(message: str) -> dict[str, Any] | None:
+def _route_single(message: str) -> dict[str, Any] | None:
     text = " ".join(str(message or "").strip().split())
     lower = text.casefold().strip(" .?!")
 
@@ -97,3 +102,27 @@ def route_sports_betting_command(message: str) -> dict[str, Any] | None:
         }
 
     return None
+
+
+def route_sports_betting_command(message: str) -> dict[str, Any] | None:
+    raw = str(message or "").strip()
+    if not raw:
+        return None
+
+    # Preserve newline boundaries before the normal single-command parser
+    # collapses whitespace. This prevents a pasted betting checklist from
+    # falling through into the generic calculator parser.
+    lines = [line.strip() for line in raw.splitlines() if line.strip()]
+    if len(lines) > 1:
+        results = [_route_single(line) for line in lines]
+        if all(item is not None for item in results):
+            clean = [item for item in results if item is not None]
+            return {
+                "message": "\n".join(item.get("message") or "" for item in clean if item.get("message")),
+                "card": {
+                    "type": "sports_betting_batch",
+                    "items": [item.get("card") for item in clean],
+                },
+            }
+
+    return _route_single(raw)
