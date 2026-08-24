@@ -113,8 +113,10 @@ class SportsBettingRegressionTests(unittest.TestCase):
         )
         with self.assertRaises(RuntimeError) as ctx:
             betting.prepare_execution_plan(plan["id"])
-        self.assertIn("not", str(ctx.exception).lower())
-        self.assertIn("adapter", str(ctx.exception).lower())
+        message = str(ctx.exception).lower()
+        self.assertIn("unavailable", message)
+        self.assertIn("adapter", message)
+        self.assertIn("missing", message)
 
     def test_changed_leg_aborts_every_site_before_any_submit(self):
         booka = FakeSportsbook("booka")
