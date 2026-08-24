@@ -19,6 +19,7 @@ if _virtualbox_selected():
     from agentie.core import company_computer_virtualbox as _vbox
     from agentie.core import company_computer_virtualbox_provisioning as _vbox_provisioning  # noqa: F401
     from agentie.core import company_computer_virtualbox_guestcontrol as _vbox_guestcontrol  # noqa: F401
+    from agentie.core import company_computer_virtualbox_recovery as _vbox_recovery  # noqa: F401
 
     computer._ACTIVE_BACKEND = "virtualbox"
     for _name in (
