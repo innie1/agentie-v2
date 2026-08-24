@@ -9,15 +9,16 @@ from agentie.core.browser_monitor import LIVE_FRAME_FILE, _set_live_state, reque
 async def shutdown_computer() -> dict[str, Any]:
     """Power down the shared persistent Agentie Company Computer.
 
-    The QCOW2 disk remains intact, including browser profiles, cookies, downloads,
-    installed applications and user files. This never powers down the host OS.
+    The persistent guest disk remains intact, including browser profiles,
+    cookies, downloads, installed applications and user files. This never
+    powers down the host OS.
     """
     request_browser_stop()
 
     # Do not explicitly close the guest Chromium context through CDP: the VM owns
     # that browser and its persistent profile. Disconnect Agentie's Playwright
     # client after the guest has received its normal power-down request.
-    from agentie.core.company_computer import stop as stop_company_computer
+    from agentie.core.company_computer_backend import stop as stop_company_computer
     from agentie.core import browser_automation as browser
 
     result = stop_company_computer()
@@ -43,7 +44,8 @@ async def shutdown_computer() -> dict[str, Any]:
         "card": {
             "type": "desktop_view",
             "app": "stopped",
-            "mode": "qemu",
+            "mode": result.get("backend", "qemu"),
+            "backend": result.get("backend", "qemu"),
             "state": result.get("state", "STOPPED"),
             "persistent": True,
         },
