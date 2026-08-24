@@ -8,7 +8,7 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
-from agentie.core.company_computer import (
+from agentie.core.company_computer_backend import (
     ComputerError,
     acquire_user,
     continue_agent,
@@ -84,9 +84,9 @@ def _read_text(name: str) -> dict[str, Any]:
 def _host_terminal(command: str) -> dict[str, Any]:
     """Compatibility-only safe host workspace terminal.
 
-    Real agent shell work belongs in the QEMU guest. This helper remains only
-    for explicit legacy `Desktop control: terminal ...` workspace inspection.
-    It never exposes arbitrary host shell access.
+    Real agent shell work belongs in the persistent Linux guest. This helper
+    remains only for explicit legacy `Desktop control: terminal ...` workspace
+    inspection. It never exposes arbitrary host shell access.
     """
     raw = str(command or "").strip()
     if not raw:
@@ -172,9 +172,12 @@ def _real_desktop_card(info: dict[str, Any], app: str = "desktop") -> dict[str, 
     profile = info.get("profile") or {}
     return desktop_card(
         app,
-        mode="qemu",
+        mode=info.get("backend", "qemu"),
+        backend=info.get("backend", "qemu"),
         computer_id=info.get("computer_id", "company-default"),
         state=info.get("state", "STOPPED"),
+        readiness_stage=info.get("readiness_stage"),
+        needs_restart=bool(info.get("needs_restart")),
         running=bool(info.get("running")),
         display_ready=bool(info.get("display_ready")),
         browser_ready=bool(info.get("browser_ready")),
@@ -194,6 +197,20 @@ def _real_desktop_card(info: dict[str, Any], app: str = "desktop") -> dict[str, 
     )
 
 
+def _error_card(exc: Exception) -> dict[str, Any]:
+    info = computer_status()
+    return desktop_card(
+        "error",
+        mode=info.get("backend", "qemu"),
+        backend=info.get("backend", "qemu"),
+        state=info.get("state"),
+        readiness_stage=info.get("readiness_stage"),
+        needs_restart=bool(info.get("needs_restart")),
+        error=str(exc),
+        action=(info.get("acceleration") or {}).get("action"),
+    )
+
+
 def route_desktop_request(message: str, session_id: str | None = None) -> dict[str, Any] | None:
     text = " ".join(str(message or "").strip().split())
     if not text:
@@ -207,8 +224,7 @@ def route_desktop_request(message: str, session_id: str | None = None) -> dict[s
         if desktop_action is not None:
             return desktop_action
     except (ValueError, RuntimeError, ComputerError) as exc:
-        info = computer_status()
-        return {"message": str(exc), "card": desktop_card("error", mode="qemu", state=info.get("state"), error=str(exc), action=(info.get("acceleration") or {}).get("action"))}
+        return {"message": str(exc), "card": _error_card(exc)}
 
     lower = text.lower()
     prefix = "desktop control:"
@@ -269,6 +285,5 @@ def route_desktop_request(message: str, session_id: str | None = None) -> dict[s
             result = _host_terminal(command[9:])
             return {"message": "Host workspace command completed.", "card": desktop_card("terminal", terminal=result)}
     except (ValueError, RuntimeError, ComputerError) as exc:
-        info = computer_status()
-        return {"message": str(exc), "card": desktop_card("error", mode="qemu", state=info.get("state"), error=str(exc), action=(info.get("acceleration") or {}).get("action"))}
+        return {"message": str(exc), "card": _error_card(exc)}
     return {"message": "Unknown desktop command.", "card": desktop_card("error", error="Unknown desktop command")}
