@@ -16,9 +16,8 @@ def _virtualbox_selected() -> bool:
 if _virtualbox_selected():
     # Keep the legacy company_computer module API compatible for modules that
     # intentionally hold the module object rather than the new backend facade.
-    # This lets commands/files/desktop tooling migrate without duplicating a
-    # second control stack. Direct function imports use company_computer_backend.
     from agentie.core import company_computer_virtualbox as _vbox
+    from agentie.core import company_computer_virtualbox_provisioning as _vbox_provisioning  # noqa: F401
 
     for _name in (
         "prepare", "start", "stop", "suspend", "resume", "status",
