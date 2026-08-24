@@ -33,6 +33,7 @@ def _backend() -> ModuleType:
         from agentie.core import company_computer_virtualbox as backend
         from agentie.core import company_computer_virtualbox_provisioning as _vbox_provisioning  # noqa: F401
         from agentie.core import company_computer_virtualbox_guestcontrol as _vbox_guestcontrol  # noqa: F401
+        from agentie.core import company_computer_virtualbox_recovery as _vbox_recovery  # noqa: F401
         return backend
     from agentie.core import company_computer as backend
     # QGA methods are registered on the QEMU module by this compatibility module.
