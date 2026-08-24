@@ -107,11 +107,12 @@ def _service_for_task(text: str, *, ignore_plugins: bool = False) -> dict[str, A
 def _fallback_proposal(text: str,candidate: dict[str,Any])->dict[str,Any]:
     service=str(candidate["service"]);task=str(candidate["task"]);return {"message":f"I don’t see a connected {service} capability for this task. Agentie can use its Computer instead.","card":{"type":"computer_fallback_proposal","service":service,"url":candidate["url"],"task":task,"consequential":candidate["consequential"],"actions":[{"action":"use_computer","label":"Use Computer","command":f"Use Computer for: {task}"},{"action":"keep_in_chat","label":"Keep in chat"}]}}
 def _desktop_fallback_card(info:dict[str,Any],candidate:dict[str,Any],task:str,*,navigated_url:str|None=None)->dict[str,Any]:
-    accel=info.get("acceleration") or {};profile=info.get("profile") or {};return {"type":"desktop_view","app":"desktop","mode":"qemu","computer_id":info.get("computer_id","company-default"),"state":info.get("state"),"running":bool(info.get("running")),"display_url":info.get("display_url"),"display_ready":bool(info.get("display_ready")),"browser_ready":bool(info.get("browser_ready")),"accelerator":accel.get("accelerator"),"vm_ram_mb":profile.get("vm_ram_mb"),"vm_vcpus":profile.get("vm_vcpus"),"fallback_service":candidate["service"],"fallback_task":task,"fallback_url":navigated_url or candidate["url"],"consequential":candidate["consequential"]}
+    accel=info.get("acceleration") or {};profile=info.get("profile") or {};return {"type":"desktop_view","app":"desktop","mode":info.get("backend","qemu"),"backend":info.get("backend","qemu"),"computer_id":info.get("computer_id","company-default"),"state":info.get("state"),"running":bool(info.get("running")),"display_url":info.get("display_url"),"display_ready":bool(info.get("display_ready")),"browser_ready":bool(info.get("browser_ready")),"accelerator":accel.get("accelerator"),"vm_ram_mb":profile.get("vm_ram_mb"),"vm_vcpus":profile.get("vm_vcpus"),"fallback_service":candidate["service"],"fallback_task":task,"fallback_url":navigated_url or candidate["url"],"consequential":candidate["consequential"]}
 async def _launch_computer_fallback(task:str,session_id:str|None=None)->dict[str,Any]:
     candidate=_service_for_task(task,ignore_plugins=True)
     if not candidate:return {"message":"I couldn’t determine which website the Computer should use for that task.","card":None}
-    from agentie.core.company_computer import acquire_for_session,status as company_status
+    from agentie.core.company_computer_backend import acquire_for_session
+    from agentie.core.company_computer_backend import status as company_status
     try:
         info=await asyncio.wait_for(asyncio.to_thread(acquire_for_session,session_id),timeout=45);navigated_url=None
         try:

@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from agentie.core import company_computer as computer
+from agentie.core import company_computer_backend as computer
 from agentie.core.company_computer_guest_setup import ensure_guest_runtime
 
 _KEY_MAP = {
@@ -129,21 +129,21 @@ def route_desktop_control(message: str, session_id: str | None = None) -> dict[s
     match = re.match(r"^click\s+at\s+(\d+)\s*[, ]\s*(\d+)$", command, re.I)
     if match:
         info = desktop_click(int(match.group(1)), int(match.group(2)), session_id)
-        return {"message": f"Clicked the Company Computer at {match.group(1)}, {match.group(2)}.", "card": {"type": "desktop_view", "app": "desktop", "mode": "qemu", **info, "last_action": command}}
+        return {"message": f"Clicked the Company Computer at {match.group(1)}, {match.group(2)}.", "card": {"type": "desktop_view", "app": "desktop", "mode": info.get("backend", computer.selected_backend()), **info, "last_action": command}}
 
     match = re.match(r"^type\s+(?:focused\s*:\s*)?(.+)$", command, re.I)
     if match:
         info = desktop_type(match.group(1), session_id)
-        return {"message": "Typed into the focused Company Computer control.", "card": {"type": "desktop_view", "app": "desktop", "mode": "qemu", **info, "last_action": "typed text"}}
+        return {"message": "Typed into the focused Company Computer control.", "card": {"type": "desktop_view", "app": "desktop", "mode": info.get("backend", computer.selected_backend()), **info, "last_action": "typed text"}}
 
     match = re.match(r"^(?:press|key)\s+(.+)$", command, re.I)
     if match:
         info = desktop_key(match.group(1), session_id)
-        return {"message": f"Pressed {match.group(1)} on the Company Computer.", "card": {"type": "desktop_view", "app": "desktop", "mode": "qemu", **info, "last_action": command}}
+        return {"message": f"Pressed {match.group(1)} on the Company Computer.", "card": {"type": "desktop_view", "app": "desktop", "mode": info.get("backend", computer.selected_backend()), **info, "last_action": command}}
 
     match = re.match(r"^scroll\s+(up|down)(?:\s+(\d+))?$", command, re.I)
     if match:
         info = desktop_scroll(match.group(1), session_id, steps=int(match.group(2) or 4))
-        return {"message": f"Scrolled {match.group(1).lower()} on the Company Computer.", "card": {"type": "desktop_view", "app": "desktop", "mode": "qemu", **info, "last_action": command}}
+        return {"message": f"Scrolled {match.group(1).lower()} on the Company Computer.", "card": {"type": "desktop_view", "app": "desktop", "mode": info.get("backend", computer.selected_backend()), **info, "last_action": command}}
 
     raise ValueError("Unknown Company Computer control command.")

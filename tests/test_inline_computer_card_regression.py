@@ -29,8 +29,8 @@ class InlineComputerCardRegressionTests(unittest.TestCase):
         self.assertIn("title.textContent=`${computerOwnerName()} Computer`", self.text)
         self.assertIn("Starting Computer", self.text)
 
-    def test_qemu_display_and_human_takeover_are_native(self):
-        self.assertIn("card.mode==='qemu'", self.text)
+    def test_hypervisor_display_and_human_takeover_are_native(self):
+        self.assertIn("['qemu','virtualbox']", self.text)
         self.assertIn("card.display_url", self.text)
         self.assertIn("computer_takeover", self.text)
         self.assertIn("Take Control", self.text)

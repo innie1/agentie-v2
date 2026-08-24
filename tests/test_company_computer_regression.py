@@ -71,7 +71,7 @@ class CompanyComputerRegressionTests(unittest.TestCase):
 
     def test_qemu_detection_prefers_bundled_runtime(self):
         profile=self.profile("linux")
-        fake=Path.cwd()/"runtime"/"qemu"/"qemu-system-x86_64"
+        fake=Path.cwd()/"runtime"/"qemu"/("qemu-system-x86_64.exe" if os.name=="nt" else "qemu-system-x86_64")
         original_exists=Path.exists
         def exists(path):return True if path==fake else original_exists(path)
         with patch.object(Path,"exists",exists):

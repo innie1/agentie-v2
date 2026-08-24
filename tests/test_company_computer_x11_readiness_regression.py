@@ -9,7 +9,7 @@ class CompanyComputerX11ReadinessRegressionTests(unittest.TestCase):
         script = setup._repair_script()
         self.assertIn("xdotool getdisplaygeometry", script)
         self.assertNotIn("[ -S /tmp/.X11-unix/X0 ] && break", script)
-        self.assertIn("touch /var/lib/agentie/runtime-v6", script)
+        self.assertIn("touch /var/lib/agentie/runtime-v7", script)
 
     def test_health_check_requires_live_x_display(self):
         command = " ".join(setup._desktop_health_command())

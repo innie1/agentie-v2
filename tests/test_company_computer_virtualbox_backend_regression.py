@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import os
 import subprocess
 import tempfile
@@ -149,6 +150,38 @@ class CompanyComputerVirtualBoxRegressionTests(unittest.TestCase):
         self.assertIn("company_computer_backend", desktop)
         self.assertIn("company_computer_backend", browser)
         self.assertIn("company_computer_backend", session)
+
+    def test_all_shared_runtime_layers_use_backend_facade(self):
+        for name in (
+            "company_computer_files.py",
+            "company_computer_desktop.py",
+            "company_computer_idle.py",
+            "company_computer_guest_setup.py",
+        ):
+            source = (Path.cwd() / "agentie" / "core" / name).read_text(encoding="utf-8")
+            self.assertIn("company_computer_backend", source, name)
+            self.assertNotIn("from agentie.core import company_computer as computer", source, name)
+
+    def test_backend_neutral_upload_uses_guest_exec(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp) / "payload.bin"
+            source.write_bytes(b"backend-neutral")
+            with patch.object(backend, "guest_exec", return_value={"exitcode": 0}) as guest:
+                total = backend.guest_upload(source, "/home/agentie/payload.bin", chunk_bytes=1024)
+        self.assertEqual(total, len(b"backend-neutral"))
+        self.assertEqual(guest.call_args.args[0][0], "/usr/bin/python3")
+
+    def test_backend_neutral_download_decodes_guest_stdout(self):
+        chunks = [b"backend-neutral", b""]
+        def guest_exec(*args, **kwargs):
+            inner = base64.b64encode(chunks.pop(0))
+            return {"exitcode": 0, "out-data": base64.b64encode(inner).decode("ascii")}
+        with tempfile.TemporaryDirectory() as tmp:
+            destination = Path(tmp) / "payload.bin"
+            with patch.object(backend, "guest_exec", side_effect=guest_exec):
+                total = backend.guest_download("/home/agentie/payload.bin", destination, max_bytes=100)
+            self.assertEqual(destination.read_bytes(), b"backend-neutral")
+        self.assertEqual(total, len(b"backend-neutral"))
 
     def test_virtualbox_backend_contains_no_anti_bot_evasion(self):
         source = (Path.cwd() / "agentie" / "core" / "company_computer_virtualbox.py").read_text(encoding="utf-8").lower()

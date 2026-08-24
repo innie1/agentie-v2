@@ -3,7 +3,7 @@ from __future__ import annotations
 import threading
 import time
 
-from agentie.core import company_computer as computer
+from agentie.core import company_computer_backend as computer
 
 _THREAD: threading.Thread | None = None
 _STOP = threading.Event()
@@ -19,8 +19,8 @@ def run_idle_cycle(now: float | None = None) -> str | None:
 
     USER_CONTROL and USER_REQUIRED are never reclaimed automatically. A stale
     AGENT_CONTROL lease is released only after the configured idle threshold,
-    then the VM is suspended so QEMU releases host RAM/CPU while QCOW2 state
-    remains persistent.
+    then the VM is suspended so the selected hypervisor releases host resources
+    while the guest disk remains persistent.
     """
     current = computer._row()
     state = str(current.get("state") or "STOPPED")
@@ -54,7 +54,7 @@ def start_idle_coordinator() -> None:
                     run_idle_cycle()
                 except Exception:
                     # Lifecycle checks must never crash Agentie. Runtime status
-                    # exposes actual QEMU errors to the Computer card instead.
+                    # exposes actual backend errors to the Computer card instead.
                     continue
 
         _THREAD = threading.Thread(

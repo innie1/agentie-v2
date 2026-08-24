@@ -40,11 +40,11 @@ class CompanyComputerDesktopControlRegressionTests(unittest.TestCase):
         self.assertIn("apt-get install", install_argv[-1])
         self.assertIn("xdotool", install_argv[-1])
 
-    def test_explicit_desktop_control_route_returns_qemu_card(self):
-        with patch.object(desktop, "desktop_scroll", return_value={"computer_id": "company-default", "state": "IDLE"}) as scroll:
+    def test_explicit_desktop_control_route_returns_selected_backend_card(self):
+        with patch.object(desktop, "desktop_scroll", return_value={"computer_id": "company-default", "state": "IDLE", "backend": "virtualbox"}) as scroll:
             result = desktop.route_desktop_control("Company Computer control: scroll down 3", "agent:agt_sales:main")
         scroll.assert_called_once_with("down", "agent:agt_sales:main", steps=3)
-        self.assertEqual(result["card"]["mode"], "qemu")
+        self.assertEqual(result["card"]["mode"], "virtualbox")
         self.assertEqual(result["card"]["computer_id"], "company-default")
 
     def test_new_control_layer_has_no_legacy_runtime_dependency(self):
@@ -54,6 +54,7 @@ class CompanyComputerDesktopControlRegressionTests(unittest.TestCase):
         self.assertNotIn("xfce", source)
         self.assertIn("xdotool", source)
         self.assertIn("ensure_guest_runtime", source)
+        self.assertIn("company_computer_backend", source)
 
 
 if __name__ == "__main__":

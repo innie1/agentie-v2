@@ -24,7 +24,7 @@ class CompanyComputerCommandsRegressionTests(unittest.TestCase):
         self.assertEqual(argv[-1], "pwd")
         self.assertEqual(response["terminal"]["output"], "/home/agentie\n")
         self.assertEqual(response["terminal"]["user"], "agentie")
-        self.assertEqual(response["card"]["mode"], "qemu")
+        self.assertEqual(response["card"]["mode"], commands.computer.selected_backend())
 
     def test_package_install_requires_existing_approval_before_guest_execution(self):
         with patch.object(commands, "approval_is_granted", return_value=False), patch.object(commands, "create_approval", return_value={"id": "approve1", "status": "pending"}) as create, patch.object(commands.computer, "guest_exec") as guest, patch.object(commands, "ensure_guest_runtime") as prepare:
