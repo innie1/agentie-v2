@@ -5,7 +5,7 @@ import re
 import shlex
 from typing import Any
 
-from agentie.core import company_computer as computer
+from agentie.core import company_computer_backend as computer
 from agentie.core.company_computer_files import download_guest_file, upload_workspace_file
 from agentie.core.company_computer_guest_setup import ensure_guest_runtime
 from agentie.tools.approval_tools import approval_is_granted, consume_approval, create_approval
@@ -110,9 +110,10 @@ def _execute_command(raw: str, agent_id: str, reason: str | None, timeout: int) 
             "persistent": True,
             "truncated": bool(result.get("out-truncated") or result.get("err-truncated")),
         }
+        status = computer.status()
         return {
             "message": "Company Computer terminal command completed." if exit_code == 0 else f"Company Computer terminal command exited with code {exit_code}.",
-            "card": {"type": "desktop_view", "app": "terminal", "mode": "qemu", "terminal": terminal},
+            "card": {"type": "desktop_view", "app": "terminal", "mode": status.get("backend", "qemu"), "backend": status.get("backend", "qemu"), "terminal": terminal},
             "terminal": terminal,
         }
     finally:
@@ -123,12 +124,7 @@ def _execute_command(raw: str, agent_id: str, reason: str | None, timeout: int) 
 
 
 def execute_approved_guest_command(command: str, agent_id: str, *, timeout: int = 300) -> dict[str, Any]:
-    """Execute a command whose specific approval has just been resolved.
-
-    This is intentionally separate from `run_guest_command` so approval
-    resolution can execute the approved action exactly once without creating a
-    second approval or relying on a retry from the UI.
-    """
+    """Execute a command whose specific approval has just been resolved."""
     raw = str(command or "").strip()
     owner = str(agent_id or "").strip()
     if not raw or not owner:
@@ -142,12 +138,7 @@ def execute_approved_guest_command(command: str, agent_id: str, *, timeout: int 
 
 
 def run_guest_command(command: str, session_id: str | None = None, *, timeout: int = 120) -> dict[str, Any]:
-    """Execute a real command inside the persistent Company Computer.
-
-    Normal commands run as the unprivileged `agentie` guest user. Destructive,
-    external-write, package-install, and system-changing commands use the
-    existing Agentie approval system before they can execute.
-    """
+    """Execute a real command inside the persistent Company Computer."""
     raw = str(command or "").strip()
     if not raw:
         raise ValueError("A Company Computer terminal command is required.")
@@ -219,9 +210,10 @@ def launch_guest_app(app: str, session_id: str | None = None) -> dict[str, Any]:
         exit_code = int(result.get("exitcode") or 0)
         if exit_code != 0:
             raise computer.ComputerError(_decode(result.get("err-data")) or f"Could not open {app} inside Agentie Computer.")
+        info = computer.status()
         return {
             "message": f"Opened {key} inside Agentie Computer.",
-            "card": {"type": "desktop_view", "app": "desktop", "mode": "qemu", **computer.status(), "last_action": f"Opened {key}"},
+            "card": {"type": "desktop_view", "app": "desktop", "mode": info.get("backend", "qemu"), "backend": info.get("backend", "qemu"), **info, "last_action": f"Opened {key}"},
         }
     finally:
         try:
@@ -253,17 +245,19 @@ def route_company_computer_command(message: str, session_id: str | None = None) 
     if match:
         ensure_guest_runtime()
         item = upload_workspace_file(match.group(1).strip())
+        info = computer.status()
         return {
             "message": f"Copied {item['name']} into Agentie Computer.",
-            "card": {"type": "desktop_view", "app": "files", "mode": "qemu", "transfer": item},
+            "card": {"type": "desktop_view", "app": "files", "mode": info.get("backend", "qemu"), "backend": info.get("backend", "qemu"), "transfer": item},
         }
 
     match = re.match(r"^(?:copy|download|export)\s+(.+?)\s+from\s+(?:the\s+)?(?:company\s+)?computer(?:\s+as\s+([^\\/]+))?$", text, re.I)
     if match:
         ensure_guest_runtime()
         item = download_guest_file(match.group(1).strip(), (match.group(2) or "").strip() or None)
+        info = computer.status()
         return {
             "message": f"Copied {item['name']} from Agentie Computer into the Agentie workspace.",
-            "card": {"type": "desktop_view", "app": "files", "mode": "qemu", "transfer": item},
+            "card": {"type": "desktop_view", "app": "files", "mode": info.get("backend", "qemu"), "backend": info.get("backend", "qemu"), "transfer": item},
         }
     return None
