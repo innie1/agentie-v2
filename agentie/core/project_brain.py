@@ -41,7 +41,15 @@ def create_project(name,goal,kind=None,owner_agent_id=None):
             if owner_agent_id and owner_agent_id not in (existing.get("assigned_agent_ids") or []):existing.setdefault("assigned_agent_ids",[]).append(owner_agent_id);existing["updated_at"]=_now();_save(items)
             return dict(existing)
         k=kind or _kind(f"{clean_name} {clean_goal}");preset=PROJECT_TYPES.get(k,PROJECT_TYPES["general"]);now=_now();assigned=[owner_agent_id] if owner_agent_id else []
-        item={"id":"proj_"+uuid.uuid4().hex[:10],"name":clean_name,"goal":clean_goal,"kind":k,"status":"active","owner_agent_id":owner_agent_id,"assigned_agent_ids":assigned,"assigned_agents":[],"agent_work":[],"skill":preset["skill"],"specialists":preset["specialists"],"goals":[clean_goal[:1000]],"decisions":[],"knowledge":[],"milestones":[],"artifacts":[],"handoffs":[],"summaries":[],"created_at":now,"updated_at":now};items.append(item);_save(items);return dict(item)
+        item={"id":"proj_"+uuid.uuid4().hex[:10],"name":clean_name,"goal":clean_goal,"kind":k,"status":"active","owner_agent_id":owner_agent_id,"assigned_agent_ids":assigned,"assigned_agents":[],"agent_work":[],"skill":preset["skill"],"specialists":preset["specialists"],"goals":[clean_goal[:1000]],"decisions":[],"knowledge":[],"milestones":[],"artifacts":[],"handoffs":[],"summaries":[],"share_mode":"scoped","created_at":now,"updated_at":now};items.append(item);_save(items);return dict(item)
+def set_share_mode(pid,mode):
+    """Set project context sharing: scoped by default, or full team sharing."""
+    clean=str(mode or "").strip().casefold()
+    if clean not in {"scoped","full"}:raise ValueError('share_mode must be "scoped" or "full".')
+    with _LOCK:
+        items=_load();p=next((x for x in items if x.get("id")==pid),None)
+        if not p:return None
+        p["share_mode"]=clean;p["updated_at"]=_now();_save(items);return dict(p)
 def update_project(pid,**changes):
     with _LOCK:
         items=_load();p=next((x for x in items if x.get("id")==pid),None)
@@ -99,17 +107,29 @@ def _knowledge_allowed(x,role_l,agent_name=None):
     if source and not x.get("shared") and source!=viewer:return False
     return audience in {"all",role_l} or any(w and w in role_l for w in audience.split(','))
 def project_context(project,role,task,max_items=8,agent_name=None):
+    full=str(project.get("share_mode") or "scoped").casefold()=="full"
     role_l=str(role or "").casefold();parts=[f"PROJECT: {project.get('name')}",f"GOAL: {project.get('goal')}",f"YOUR ASSIGNMENT: {task}"];skill=activate_project_skill(project.get("skill"))
     if skill:parts.append(f"ACTIVATED SKILL — {skill['name']}:\n{skill['instructions']}")
     decisions=[str(x.get("value",x)) for x in project.get("decisions",[])[-max_items:]]
     if decisions:parts.append("DECISIONS:\n- "+"\n- ".join(decisions))
     knowledge=[]
     for x in project.get("knowledge",[])[-max_items*2:]:
-        if isinstance(x,dict) and _knowledge_allowed(x,role_l,agent_name):knowledge.append(str(x.get("value",x)))
+        if not isinstance(x,dict):continue
+        if full or _knowledge_allowed(x,role_l,agent_name):knowledge.append(str(x.get("value",x)))
     if knowledge:parts.append("RELEVANT PROJECT KNOWLEDGE:\n- "+"\n- ".join(knowledge[-max_items:]))
     milestones=[str(x.get("value",x)) for x in project.get("milestones",[])[-max_items:]]
     if milestones:parts.append("MILESTONES:\n- "+"\n- ".join(milestones))
-    parts.append("CONTEXT RULE: Use only this scoped project brief plus your own agent memory. Do not import another specialist's private conversation.");return "\n\n".join(parts)
+    if full:
+        updates=[]
+        for w in project.get("agent_work",[]) or []:
+            if not isinstance(w,dict):continue
+            if str(w.get("agent_name") or "").casefold()==str(agent_name or "").casefold():continue
+            summary=w.get("latest_summary")
+            if summary:updates.append(f"{w.get('agent_name')} ({w.get('role')}): {summary}")
+        if updates:parts.append("TEAM UPDATES (shared, full-context mode):\n- "+"\n- ".join(updates[-max_items:]))
+        parts.append("CONTEXT RULE: This project is set to full sharing. You can see every specialist's knowledge and latest result summary, same as a shared team thread.")
+    else:parts.append("CONTEXT RULE: Use only this scoped project brief plus your own agent memory. Do not import another specialist's private conversation.")
+    return "\n\n".join(parts)
 def record_handoff(pid,from_agent,to_agent,task,team_job_id=None):
     append_project_item(pid,"handoffs",{"from":from_agent,"to":to_agent,"task":task,"team_job_id":team_job_id})
     try:
@@ -127,10 +147,13 @@ def _scoped_values(p,role,max_items=8,viewer_name=None):
         if _knowledge_allowed(x,role_l,viewer_name):knowledge.append(str(x.get("value",x)))
     return decisions,knowledge[-max_items:],milestones
 def project_card(p,viewer_agent_id=None):
-    base={"type":"project","id":p["id"],"name":p["name"],"goal":p["goal"],"kind":p["kind"],"status":p["status"],"skill":p.get("skill"),"specialists":p.get("specialists",[]),"assigned_agents":p.get("assigned_agents",[]),"assigned_to_viewer":bool(viewer_agent_id and viewer_agent_id in (p.get("assigned_agent_ids") or [])),"updated_at":p.get("updated_at")}
+    base={"type":"project","id":p["id"],"name":p["name"],"goal":p["goal"],"kind":p["kind"],"status":p["status"],"skill":p.get("skill"),"specialists":p.get("specialists",[]),"assigned_agents":p.get("assigned_agents",[]),"assigned_to_viewer":bool(viewer_agent_id and viewer_agent_id in (p.get("assigned_agent_ids") or [])),"updated_at":p.get("updated_at"),"share_mode":p.get("share_mode","scoped")}
     if viewer_agent_id:
-        work=next((dict(x) for x in (p.get("agent_work") or []) if str(x.get("agent_id"))==str(viewer_agent_id)),None);role=(work or {}).get("role") or "general";decisions,context,milestones=_scoped_values(p,role,viewer_name=(work or {}).get("agent_name"));task=(work or {}).get("task") or "Work on this project";display_goal=f"Your delegated task: {task}. Project goal: {p.get('goal','')}";own_summary=(work or {}).get("latest_summary")
-        return {**base,"goal":display_goal,"viewer_assignment":work,"goals":[f"Your delegated task: {task}"],"decisions":decisions,"context":context,"milestones":milestones,"summaries":[own_summary] if own_summary else []}
+        full=str(p.get("share_mode") or "scoped").casefold()=="full"
+        work=next((dict(x) for x in (p.get("agent_work") or []) if str(x.get("agent_id"))==str(viewer_agent_id)),None);role=(work or {}).get("role") or "general";task=(work or {}).get("task") or "Work on this project";display_goal=f"Your delegated task: {task}. Project goal: {p.get('goal','')}";own_summary=(work or {}).get("latest_summary")
+        if full:decisions=_item_values(p,"decisions");context=_item_values(p,"knowledge");milestones=_item_values(p,"milestones");summaries=_item_values(p,"summaries",8)
+        else:decisions,context,milestones=_scoped_values(p,role,viewer_name=(work or {}).get("agent_name"));summaries=[own_summary] if own_summary else []
+        return {**base,"goal":display_goal,"viewer_assignment":work,"goals":[f"Your delegated task: {task}"],"decisions":decisions,"context":context,"milestones":milestones,"summaries":summaries}
     return {**base,"goals":_item_values(p,"goals"),"decisions":_item_values(p,"decisions"),"context":_item_values(p,"knowledge"),"milestones":_item_values(p,"milestones"),"summaries":p.get("summaries",[])[-8:]}
 def _name_from_goal(goal,kind):
     clean=re.sub(r"^(i\s+(want|plan|need)\s+to\s+|i('m| am)\s+)","",goal.strip(),flags=re.I);clean=re.sub(r"\s+"," ",clean).strip(" .?!");return clean[:70] or f"{kind.title()} project"
@@ -187,6 +210,16 @@ def _delete_request(raw):
 def route_project_command(message):
     text=" ".join(message.strip().split());lower=text.casefold().strip(" .?!");delegated=_project_delegation(text)
     if delegated is not None:return delegated
+    m_share=re.match(r"^(?:make|set)\s+project\s+(.+?)\s+(?:fully shared|full(?:ly)? sharing|share everything|share mode full)[.!?]?$",text,re.I) or re.match(r"^(?:enable )?full (?:context )?sharing (?:for|on) project\s+(.+?)[.!?]?$",text,re.I)
+    if m_share:
+        p=get_project(m_share.group(1).strip())
+        if not p:return {"message":"Project was not found.","card":None}
+        updated=set_share_mode(p["id"],"full");return {"message":f"{updated['name']} is now fully shared — every specialist sees every other specialist's knowledge and latest result, like a shared team thread.","card":project_card(updated)}
+    m_scope=re.match(r"^(?:make|set)\s+project\s+(.+?)\s+(?:scoped|scope sharing|share mode scoped)[.!?]?$",text,re.I)
+    if m_scope:
+        p=get_project(m_scope.group(1).strip())
+        if not p:return {"message":"Project was not found.","card":None}
+        updated=set_share_mode(p["id"],"scoped");return {"message":f"{updated['name']} is back to scoped sharing — each specialist gets a curated brief, no raw peer conversation.","card":project_card(updated)}
     if lower in {"delete project","delete a project","remove project","delete projects","remove projects"}:return _delete_picker()
     m_delete=re.match(r"^(?:delete|remove)\s+projects?\s+(.+?)[.!?]?$",text,re.I)
     if m_delete:return _delete_request(m_delete.group(1))
