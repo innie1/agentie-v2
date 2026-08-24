@@ -209,7 +209,7 @@ done
 DISPLAY=:0 /usr/bin/xdotool getdisplaygeometry >/dev/null 2>&1 || exit 1
 exec /usr/bin/dbus-run-session -- /bin/sh -lc '
   pcmanfm --desktop --profile LXDE >/tmp/pcmanfm.log 2>&1 &
-  chromium --user-data-dir=/home/agentie/.config/chromium-agentie --remote-debugging-port=9222 --remote-debugging-address=0.0.0.0 --remote-allow-origins=* --no-first-run --no-default-browser-check --restore-last-session about:blank >/tmp/chromium.log 2>&1 &
+  chromium --user-data-dir=/home/agentie/.config/chromium-agentie --disable-gpu --remote-debugging-port=9222 --remote-debugging-address=0.0.0.0 --remote-allow-origins=* --no-first-run --no-default-browser-check --restore-last-session about:blank >/tmp/chromium.log 2>&1 &
   exec /usr/bin/openbox --sm-disable >/tmp/openbox.log 2>&1
 '
 EOF
@@ -219,6 +219,7 @@ chown agentie:agentie /home/agentie/.agentie-desktop-session.sh
 cat >/etc/systemd/system/agentie-xorg.service <<'EOF'
 [Unit]
 Description=Agentie Xorg display server
+Conflicts=getty@tty1.service
 After=systemd-user-sessions.service
 
 [Service]

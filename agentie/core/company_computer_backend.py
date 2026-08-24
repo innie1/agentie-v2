@@ -39,6 +39,11 @@ def _backend() -> ModuleType:
         from agentie.core import company_computer_virtualbox_recovery as _vbox_recovery  # noqa: F401
         return backend
     from agentie.core import company_computer as backend
+    # Register Windows-specific acceleration detection and safe QEMU arguments
+    # before invoking the backend. These modules intentionally patch the
+    # shared QEMU implementation at import time.
+    from agentie.core import company_computer_windows_accel as _windows_accel  # noqa: F401
+    from agentie.core import company_computer_whpx as _windows_qemu_args  # noqa: F401
     # QGA methods are registered on the QEMU module by this compatibility module.
     from agentie.core import company_computer_guest_agent as _guest_agent  # noqa: F401
     return backend

@@ -146,7 +146,7 @@ class CompanyComputerVirtualBoxRegressionTests(unittest.TestCase):
                 iso.close()
                 first = output.read_text(encoding="utf-8")
                 vbox.ensure_seed_iso()
-            self.assertIn("instance-id: agentie-company-computer-vbox-migration-v4", first)
+            self.assertIn("instance-id: agentie-company-computer-vbox-migration-v5", first)
             self.assertNotIn("instance-id: agentie-company-computer\n", first)
 
     def test_vbox_failure_reports_exact_setup_stage(self):
@@ -193,6 +193,27 @@ class CompanyComputerVirtualBoxRegressionTests(unittest.TestCase):
             vbox._wait_until_ready()
         self.assertEqual(stages, ["GUEST_READY", "DESKTOP_READY", "DISPLAY_READY", "BROWSER_READY"])
 
+    def test_readiness_accepts_healthy_display_stack_when_guestcontrol_is_unavailable(self):
+        results: dict[str, bool] = {}
+
+        def fake_wait(stage, predicate, timeout, message):
+            results[stage] = bool(predicate())
+
+        with (
+            patch.object(vbox, "_wait", side_effect=fake_wait),
+            patch.object(vbox, "_guest_ok", return_value=False),
+            patch.object(vbox, "_cdp_ready", return_value=True),
+            patch.object(vbox, "_start_display_server"),
+            patch.object(vbox, "_start_vnc_websocket_bridge"),
+            patch.object(vbox, "_port_open", return_value=True),
+            patch.object(vbox, "_update"),
+        ):
+            vbox._wait_until_ready()
+        self.assertTrue(results["GUEST_READY"])
+        self.assertTrue(results["DESKTOP_READY"])
+        self.assertTrue(results["DISPLAY_READY"])
+        self.assertTrue(results["BROWSER_READY"])
+
     def test_nat_forwarding_is_localhost_only(self):
         checked: list[list[str]] = []
 
@@ -207,6 +228,19 @@ class CompanyComputerVirtualBoxRegressionTests(unittest.TestCase):
         self.assertIn("cdp,tcp,127.0.0.1,9222,,9222", rendered)
         self.assertIn("vnc,tcp,127.0.0.1,5901,,5900", rendered)
         self.assertNotIn("0.0.0.0", rendered)
+
+    def test_vm_uses_virtio_network_supported_by_debian_cloud_kernel(self):
+        checked: list[list[str]] = []
+
+        def capture(args, **kwargs):
+            checked.append(list(args))
+            return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+
+        profile = {"vm_ram_mb": 2048, "vm_vcpus": 2}
+        with patch.object(vbox, "_run_checked", side_effect=capture), patch.object(vbox, "_run", return_value=subprocess.CompletedProcess([], 1, stdout="", stderr="")):
+            provisioning._configure_common(profile)
+        rendered = "\n".join(" ".join(command) for command in checked)
+        self.assertIn("--nictype1 virtio", rendered)
 
     def test_provisioning_uses_host_guest_additions_iso_not_unstable_debian_package(self):
         with patch.object(vbox, "guest_credentials", return_value=("agentie", "temporary-bootstrap-password")):

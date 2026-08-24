@@ -34,6 +34,14 @@ class CompanyComputerWindowsAccelerationRegressionTests(unittest.TestCase):
         self.assertEqual(result["accelerator"], "whpx")
         self.assertIn("WHPX", result["reason"])
 
+    def test_explicit_tcg_mode_wins_when_windows_hypervisor_is_unavailable(self):
+        with patch.object(computer, "_accel_help", return_value={"whpx", "tcg"}), patch.object(
+            computer, "_whpx_feature_enabled", return_value=False
+        ), patch.object(computer, "ALLOW_TCG", True):
+            result = windows_accel.acceleration("qemu-system-x86_64", self.profile())
+        self.assertTrue(result["available"])
+        self.assertEqual(result["accelerator"], "tcg")
+
 
 if __name__ == "__main__":
     unittest.main()

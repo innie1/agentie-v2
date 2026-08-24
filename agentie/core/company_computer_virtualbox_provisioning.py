@@ -18,7 +18,7 @@ from typing import Any
 
 from agentie.core import company_computer_virtualbox as vbox
 
-SEED_VERSION = 4
+SEED_VERSION = 5
 ARCHIVE_NAME = "debian-13-generic-amd64.tar.xz"
 RAW_MEMBER_NAME = "debian-13-generic-amd64.raw"
 ARCHIVE = vbox.DOWNLOADS_DIR / ARCHIVE_NAME
@@ -139,6 +139,15 @@ packages:
   - dkms
   - linux-headers-amd64
 write_files:
+  - path: /etc/systemd/network/20-agentie.network
+    permissions: '0644'
+    content: |
+      [Match]
+      Name=en*
+      [Network]
+      Address=10.0.2.15/24
+      Gateway=10.0.2.2
+      DNS=10.0.2.3
   - path: /home/agentie/.agentie-desktop-session.sh
     owner: agentie:agentie
     permissions: '0755'
@@ -214,6 +223,8 @@ write_files:
       [Install]
       WantedBy=graphical.target
 runcmd:
+  - [systemctl, enable, systemd-networkd.service]
+  - [systemctl, restart, systemd-networkd.service]
   - [mkdir, -p, /home/agentie/Downloads]
   - [mkdir, -p, /home/agentie/Desktop]
   - [mkdir, -p, /tmp/runtime-agentie]
@@ -229,7 +240,7 @@ runcmd:
   - [systemctl, restart, agentie-xorg.service]
   - [systemctl, restart, agentie-desktop.service]
   - [systemctl, restart, agentie-vnc.service]
-  - [gpasswd, -d, agentie, sudo]
+  - [bash, -lc, "gpasswd -d agentie sudo >/dev/null 2>&1 || true"]
 final_message: "Agentie Computer guest is ready."
 """
 
@@ -249,7 +260,8 @@ def _configure_common(profile: dict[str, Any]) -> None:
         "--memory", str(profile["vm_ram_mb"]),
         "--cpus", str(profile["vm_vcpus"]),
         "--nic1", "nat",
-        "--graphicscontroller", "vmsvga",
+        "--nictype1", "virtio",
+        "--graphicscontroller", "vboxsvga",
         "--vram", "64",
         "--audio-enabled", "off",
         "--clipboard-mode", "disabled",

@@ -48,6 +48,15 @@ class CompanyComputerWHPXRegressionTests(unittest.TestCase):
         accel_index = args.index("-accel")
         self.assertEqual(args[accel_index + 1], "kvm")
 
+    def test_tcg_uses_emulated_cpu_instead_of_unsupported_host_cpu(self):
+        args = cc._qemu_args(self._config(accelerator="tcg"))
+        joined = " ".join(args)
+        self.assertIn("-accel tcg", joined)
+        self.assertIn("-cpu max", joined)
+        self.assertNotIn("-cpu host", joined)
+        self.assertIn("-vga std", joined)
+        self.assertNotIn("-device virtio-vga", joined)
+
     def test_whpx_fix_keeps_persistent_disk_and_guest_agent_channel(self):
         args = cc._qemu_args(self._config())
         joined = " ".join(args)

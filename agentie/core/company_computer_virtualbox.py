@@ -156,6 +156,7 @@ def _update(**fields: Any) -> dict[str, Any]:
     if "needs_restart" in values:
         values["needs_restart"] = int(bool(values["needs_restart"]))
     assignments = ", ".join(f"{key}=?" for key in values)
+    _ensure_db()
     with closing(_db()) as db:
         db.execute(f"UPDATE computer_state SET {assignments} WHERE id=1", list(values.values()))
         db.commit()
@@ -829,15 +830,21 @@ def _start_vnc_websocket_bridge() -> None:
 
 
 def _wait_until_ready() -> None:
-    _wait("GUEST_READY", lambda: _guest_ok(["/bin/true"]), 300,
+    # A migrated Company Computer can have a healthy graphical desktop and
+    # Chromium while VBoxService is temporarily unavailable (for example
+    # after a host VirtualBox upgrade).  The VNC and CDP services are the
+    # authoritative requirements for the visible computer; do not hide a
+    # working desktop solely because guestcontrol is unavailable.
+    display_stack_ready = lambda: _port_open(VNC_HOST_PORT) and _cdp_ready()
+    _wait("GUEST_READY", lambda: _guest_ok(["/bin/true"]) or display_stack_ready(), 300,
           "Agentie Computer started, but VirtualBox Guest Additions did not become ready.")
     _wait("DESKTOP_READY", lambda: _guest_ok([
         "/bin/bash", "-lc",
         "systemctl is-active --quiet agentie-xorg.service && systemctl is-active --quiet agentie-desktop.service && DISPLAY=:0 xdotool getdisplaygeometry >/dev/null 2>&1",
-    ]), 360, "Agentie Computer started, but its Linux desktop did not become ready.")
+    ]) or display_stack_ready(), 360, "Agentie Computer started, but its Linux desktop did not become ready.")
     _wait("DISPLAY_READY", lambda: _guest_ok([
         "/bin/bash", "-lc", f"systemctl is-active --quiet agentie-vnc.service && ss -ltn | grep -q ':{VNC_GUEST_PORT} '",
-    ]) and _port_open(VNC_HOST_PORT), 120, "Agentie Computer desktop is running, but its display service did not become reachable.")
+    ]) and _port_open(VNC_HOST_PORT) or display_stack_ready(), 120, "Agentie Computer desktop is running, but its display service did not become reachable.")
     _start_display_server()
     _start_vnc_websocket_bridge()
     if not _port_open(DISPLAY_HTTP_PORT) or not _port_open(VNC_WEBSOCKET_PORT):

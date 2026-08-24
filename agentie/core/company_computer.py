@@ -322,6 +322,7 @@ write_files:
     content: |
       [Unit]
       Description=Agentie lightweight desktop
+      Conflicts=getty@tty1.service
       After=network-online.target cloud-final.service
       Wants=network-online.target
       [Service]

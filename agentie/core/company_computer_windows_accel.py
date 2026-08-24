@@ -35,7 +35,8 @@ def acceleration(qemu: str | None = None, profile: dict[str, Any] | None = None)
         }
 
     supported = computer._accel_help(binary)
-    if "whpx" in supported:
+    whpx_enabled = computer._whpx_feature_enabled()
+    if "whpx" in supported and (whpx_enabled or not computer.ALLOW_TCG):
         return {"available": True, "accelerator": "whpx", "reason": None, "action": None}
 
     if computer.ALLOW_TCG and "tcg" in supported:

@@ -44,7 +44,7 @@ def _whpx_safe_qemu_args(config: dict[str, Any], *, resume_snapshot: bool = Fals
     accelerator = str(acceleration.get("accelerator") or "").lower()
     machine = str(profile.get("machine") or "").lower()
 
-    if accelerator != "whpx" or machine in {"arm64", "aarch64"}:
+    if accelerator not in {"whpx", "tcg"}:
         _record_effective_args(args)
         return args
 
@@ -52,16 +52,23 @@ def _whpx_safe_qemu_args(config: dict[str, Any], *, resume_snapshot: bool = Fals
     index = 0
     while index < len(args):
         if index + 1 < len(args) and args[index] == "-cpu" and args[index + 1] == "host":
+            if accelerator == "tcg":
+                cleaned.extend(["-cpu", "max"])
             index += 2
             continue
 
-        if index + 1 < len(args) and args[index] == "-smp":
+        if accelerator == "whpx" and index + 1 < len(args) and args[index] == "-smp":
             cleaned.extend(["-smp", "1"])
             index += 2
             continue
 
-        if index + 1 < len(args) and args[index] == "-accel" and args[index + 1].startswith("whpx"):
+        if accelerator == "whpx" and index + 1 < len(args) and args[index] == "-accel" and args[index + 1].startswith("whpx"):
             cleaned.extend(["-accel", "whpx,kernel-irqchip=off"])
+            index += 2
+            continue
+
+        if accelerator == "tcg" and index + 1 < len(args) and args[index] == "-device" and args[index + 1] == "virtio-vga":
+            cleaned.extend(["-vga", "std"])
             index += 2
             continue
 
