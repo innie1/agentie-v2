@@ -170,6 +170,29 @@ class SportsBettingRegressionTests(unittest.TestCase):
         self.assertEqual(_event_teams("Arsenal vs Chelsea"), ["Arsenal", "Chelsea"])
         self.assertEqual(_event_teams("Arsenal - Chelsea"), ["Arsenal", "Chelsea"])
 
+    def test_sportybet_status_exposes_safe_browser_policy(self):
+        item = skill_registry.all_skills()["sports-betting"]
+        sporty = next(row for row in item["runtime"]["sportsbook_adapters"] if row["id"] == "sportybet")
+        diag = sporty["diagnostics"]
+        self.assertEqual(diag["browser_mode"], "persistent_visible_chromium")
+        self.assertTrue(diag["human_takeover"])
+        self.assertTrue(diag["approval_required"])
+        self.assertTrue(diag["recheck_before_submit"])
+        self.assertFalse(diag["automatic_submit_retry"])
+        self.assertFalse(diag["anti_bot_evasion"])
+
+    def test_sportybet_adapter_does_not_add_stealth_or_proxy_bypass_code(self):
+        source = Path("agentie/core/sportybet_adapter.py").read_text(encoding="utf-8").lower()
+        forbidden = (
+            "playwright_stealth",
+            "navigator.webdriver",
+            "automationcontrolled",
+            "residential_proxy",
+            "proxy_server=",
+        )
+        for marker in forbidden:
+            self.assertNotIn(marker, source)
+
     def test_skill_routes_manual_arbitrage_and_value_analysis(self):
         arb = route_sports_betting_command("calculate arbitrage odds 2.10, 2.10 bankroll 10000")
         self.assertIsNotNone(arb)
