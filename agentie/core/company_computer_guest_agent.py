@@ -8,15 +8,11 @@ from typing import Any
 from agentie.core import company_computer as computer
 
 
-def _virtualbox_selected() -> bool:
-    try:
-        from agentie.core.company_computer_backend import backend_name
-        return backend_name() == "virtualbox"
-    except Exception:
-        return False
+def _module_is_virtualbox_compat() -> bool:
+    return str(getattr(computer, "_ACTIVE_BACKEND", "")).lower() == "virtualbox"
 
 
-if not _virtualbox_selected():
+if not _module_is_virtualbox_compat():
     from agentie.core import company_computer_resume_compat as _resume_compat  # resumes paused VM before QGA use
 
     def _qga_request(payload: dict[str, Any], timeout: float = 10.0) -> dict[str, Any]:
