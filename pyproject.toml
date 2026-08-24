@@ -5,6 +5,7 @@ description = "Python-first agent platform built with FastAPI and the OpenAI Age
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
+  "cryptography>=43.0.0",
   "ddgs>=9.5.0",
   "fastapi>=0.115.0",
   "fastembed>=0.7.0",

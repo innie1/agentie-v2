@@ -1,4 +1,5 @@
 import json,os,re
+from types import SimpleNamespace
 from datetime import datetime,timedelta
 from pathlib import Path
 from typing import Any
@@ -35,6 +36,8 @@ from agentie.core.runner import run_agent
 from agentie.core.skill_registry import list_skills
 from agentie.core.specialty_router import maybe_auto_delegate
 from agentie.core.team_orchestrator import create_team_job,start_team_job
+from agentie.core.telegram_channel import configure as configure_telegram,create_pair_code as create_telegram_pair_code,disconnect as disconnect_telegram,public_state as telegram_public_state,set_handler as set_telegram_handler,start_all as start_telegram_channels
+from agentie.core.telegram_channel import queue_proactive as queue_telegram_proactive
 from agentie.core.whatsapp_cloud import poll_events as poll_whatsapp_events
 from agentie.core.whatsapp_webhook import router as whatsapp_router
 from agentie.core.workflow_skills import create_workflow_skill,skill_card
@@ -46,7 +49,7 @@ from agentie.tools.productivity_tools import REMINDERS
 app=FastAPI(title="Agentie API",version="1.10.1",description="Local-first Agentie runtime with persistent user-defined agents, skills, routines, collaboration, plugins, approvals, memory and local artifact generation")
 app.include_router(whatsapp_router)
 app.include_router(platform_next4_router)
-FRONTEND_DIR=Path(__file__).parent/"frontend";FRONTEND_FILE=FRONTEND_DIR/"index.html";CARDS_JS=FRONTEND_DIR/"cards.js";EVENTS_JS=FRONTEND_DIR/"events.js";UPLOAD_JS=FRONTEND_DIR/"upload.js";PLUGINS_JS=FRONTEND_DIR/"plugins.js";PLUGIN_SETUP_JS=FRONTEND_DIR/"plugin_setup.js";PLUGIN_ACCESS_JS=FRONTEND_DIR/"plugin_access.js";BROWSER_SCREEN_JS=FRONTEND_DIR/"browser_screen.js";UI_UPGRADE_JS=FRONTEND_DIR/"ui_upgrade.js";PLATFORM_JS=FRONTEND_DIR/"platform.js"
+FRONTEND_DIR=Path(__file__).parent/"frontend";FRONTEND_FILE=FRONTEND_DIR/"index.html";CARDS_JS=FRONTEND_DIR/"cards.js";EVENTS_JS=FRONTEND_DIR/"events.js";UPLOAD_JS=FRONTEND_DIR/"upload.js";PLUGINS_JS=FRONTEND_DIR/"plugins.js";PLUGIN_SETUP_JS=FRONTEND_DIR/"plugin_setup.js";PLUGIN_ACCESS_JS=FRONTEND_DIR/"plugin_access.js";TELEGRAM_JS=FRONTEND_DIR/"telegram_plugin.js";BROWSER_SCREEN_JS=FRONTEND_DIR/"browser_screen.js";UI_UPGRADE_JS=FRONTEND_DIR/"ui_upgrade.js";PLATFORM_JS=FRONTEND_DIR/"platform.js"
 class AgentRequest(BaseModel):
     message:str=Field(min_length=1,max_length=20_000);agent_type:str=Field(default="general",pattern="^(general|research|coding|manager|github)$");session_id:str|None=Field(default=None,max_length=200)
 class AgentResponse(BaseModel):
@@ -56,6 +59,7 @@ class ApprovalDecision(BaseModel):approved:bool
 class FileAction(BaseModel):action:str=Field(pattern="^(inspect|checksum|extract|text|preview)$")
 class AgentAccessUpdate(BaseModel):kind:str=Field(pattern="^(skill|mcp)$");capability_id:str=Field(min_length=1,max_length=120);mode:str|None=Field(default=None,pattern="^(inherit|allow|block)$");allowed:bool|None=None
 class PluginSetupUpdate(BaseModel):values:dict[str,str]=Field(default_factory=dict)
+class TelegramSetupRequest(BaseModel):token:str=Field(min_length=20,max_length=256)
 class AgentBuilderDraftRequest(BaseModel):description:str=Field(min_length=1,max_length=5000);name:str="";job:str=""
 class AgentBuilderCreateRequest(BaseModel):
     name:str=Field(min_length=1,max_length=120);job:str=Field(min_length=1,max_length=500);description:str="";goal:str="";working_style:str="";responsibilities:list[str]=Field(default_factory=list);instructions:str="";skills:list[str]=Field(default_factory=list);plugins:list[str]=Field(default_factory=list);approval_policy:dict[str,Any]=Field(default_factory=dict);memory_policy:dict[str,Any]=Field(default_factory=dict);can_delegate:bool=False;manager_id:str|None=None
@@ -121,12 +125,16 @@ def _observability_command(session_id,message):
     if lower in {"usage","show usage","cost","show cost","show costs","observability","show observability","request history","show request history"}:return {"message":"Here is recent Agentie usage and routing.","card":summary_card(session_id,20)}
     return None
 
+async def _telegram_route(owner_id:str,agent_id:str,message:str)->dict[str,Any]:
+    agent=get_agent(agent_id);agent_type=str((agent or {}).get("base") or agent_id or "general");agent_type=agent_type if agent_type in {"general","research","coding","manager","github"} else "general";session=(str((agent or {}).get("session_prefix") or f"telegram:{owner_id}:{agent_id}:")+"main")
+    response=await agent_run(AgentRequest(message=message,agent_type=agent_type,session_id=session),SimpleNamespace(client=SimpleNamespace(host="telegram")))
+    return response.model_dump()
 @app.on_event("startup")
-async def startup_event():apply_all_credentials();start_routine_worker()
+async def startup_event():apply_all_credentials();start_routine_worker();set_telegram_handler(_telegram_route);await start_telegram_channels()
 @app.get("/")
 async def chat_ui():
     if not FRONTEND_FILE.exists():raise HTTPException(404,"Frontend not found.")
-    html=FRONTEND_FILE.read_text(encoding="utf-8")+'\n<script src="/cards.js?v=201"></script>\n<script src="/events.js?v=201"></script>\n<script src="/upload.js?v=201"></script>\n<script src="/plugins.js?v=207"></script>\n<script src="/plugin-setup.js?v=207"></script>\n<script src="/plugin-access.js?v=203"></script>\n<script src="/browser-screen.js?v=201"></script>\n<script src="/ui-upgrade.js?v=203"></script>\n<script src="/platform.js?v=211"></script>\n';return HTMLResponse(html,headers={"Cache-Control":"no-store, no-cache, must-revalidate, max-age=0"})
+    html=FRONTEND_FILE.read_text(encoding="utf-8")+'\n<script src="/cards.js?v=201"></script>\n<script src="/events.js?v=201"></script>\n<script src="/upload.js?v=201"></script>\n<script src="/plugins.js?v=208"></script>\n<script src="/plugin-setup.js?v=207"></script>\n<script src="/telegram-plugin.js?v=201"></script>\n<script src="/plugin-access.js?v=203"></script>\n<script src="/browser-screen.js?v=201"></script>\n<script src="/ui-upgrade.js?v=203"></script>\n<script src="/platform.js?v=211"></script>\n';return HTMLResponse(html,headers={"Cache-Control":"no-store, no-cache, must-revalidate, max-age=0"})
 @app.get("/cards.js")
 async def cards_js():return Response(CARDS_JS.read_text(encoding="utf-8"),media_type="application/javascript",headers={"Cache-Control":"no-store"})
 @app.get("/events.js")
@@ -139,6 +147,8 @@ async def plugins_js():return Response(PLUGINS_JS.read_text(encoding="utf-8"),me
 async def plugin_setup_js():return Response(PLUGIN_SETUP_JS.read_text(encoding="utf-8"),media_type="application/javascript",headers={"Cache-Control":"no-store"})
 @app.get("/plugin-access.js")
 async def plugin_access_js():return Response(PLUGIN_ACCESS_JS.read_text(encoding="utf-8"),media_type="application/javascript",headers={"Cache-Control":"no-store"})
+@app.get("/telegram-plugin.js")
+async def telegram_plugin_js():return Response(TELEGRAM_JS.read_text(encoding="utf-8"),media_type="application/javascript",headers={"Cache-Control":"no-store"})
 @app.get("/browser-screen.js")
 async def browser_screen_js():return Response(BROWSER_SCREEN_JS.read_text(encoding="utf-8"),media_type="application/javascript",headers={"Cache-Control":"no-store"})
 @app.get("/ui-upgrade.js")
@@ -191,7 +201,20 @@ async def routines_list(agent_id:str|None=None):return {"items":[x for x in list
 
 @app.get("/plugins/state")
 async def plugins_state():
-    state=plugin_state();state["plugins"]=list_skills();state["agents"]=list_agents();registered={str(x.get("name") or "").lower() for x in state.get("mcp_servers",[])};state["mcp_servers"]=[{**item,"setup":public_setup_state(str(item.get("name") or ""))} for item in state.get("mcp_servers",[])];state["mcp_presets"]=[{**item,"installed":item["id"].lower() in registered,"setup_state":public_setup_state(item["id"])} for item in mcp_presets()];return state
+    state=plugin_state();state["plugins"]=list_skills();state["agents"]=list_agents();state["channels"]=[{"id":"telegram","name":"Telegram","description":"Two-way private conversations, proactive updates, routines and approval buttons through your own Telegram bot.","setup":telegram_public_state()}];registered={str(x.get("name") or "").lower() for x in state.get("mcp_servers",[])};state["mcp_servers"]=[{**item,"setup":public_setup_state(str(item.get("name") or ""))} for item in state.get("mcp_servers",[])];state["mcp_presets"]=[{**item,"installed":item["id"].lower() in registered,"setup_state":public_setup_state(item["id"])} for item in mcp_presets()];return state
+@app.get("/plugins/telegram")
+async def telegram_state(request:Request):return telegram_public_state(request.headers.get("X-Agentie-User") or "local-user")
+@app.post("/plugins/telegram")
+async def telegram_setup(body:TelegramSetupRequest,request:Request):
+    try:return await configure_telegram(request.headers.get("X-Agentie-User") or "local-user",body.token)
+    except ValueError as exc:raise HTTPException(400,str(exc)) from exc
+    except Exception as exc:raise HTTPException(502,str(exc)) from exc
+@app.post("/plugins/telegram/pair")
+async def telegram_pair(request:Request):
+    try:return create_telegram_pair_code(request.headers.get("X-Agentie-User") or "local-user")
+    except ValueError as exc:raise HTTPException(400,str(exc)) from exc
+@app.delete("/plugins/telegram")
+async def telegram_disconnect(request:Request,revoke_token:bool=False):return await disconnect_telegram(request.headers.get("X-Agentie-User") or "local-user",revoke_token=revoke_token)
 @app.get("/plugins/setup/{server_name}")
 async def plugin_setup_state(server_name:str):
     if not get_server(server_name):raise HTTPException(404,"MCP server is not registered.")
@@ -293,12 +316,12 @@ async def poll_local_events():
         if item.get("status")!="scheduled":continue
         try:due=datetime.fromisoformat(item.get("due_at")).astimezone()
         except Exception:continue
-        if due<=now:events.append({"message":f"Reminder: {item.get('text','')}","card":{"type":"reminder",**item}});repeat=float(item.get("repeat_minutes") or 0);item["due_at"]=(now+timedelta(minutes=repeat)).isoformat(timespec="seconds") if repeat>0 else item.get("due_at");item["status"]="scheduled" if repeat>0 else "delivered";item["last_fired_at"]=now.isoformat(timespec="seconds");changed=True
+        if due<=now:event={"message":f"Reminder: {item.get('text','')}","card":{"type":"reminder",**item}};events.append(event);queue_telegram_proactive(event["message"],event["card"]);repeat=float(item.get("repeat_minutes") or 0);item["due_at"]=(now+timedelta(minutes=repeat)).isoformat(timespec="seconds") if repeat>0 else item.get("due_at");item["status"]="scheduled" if repeat>0 else "delivered";item["last_fired_at"]=now.isoformat(timespec="seconds");changed=True
     if changed:_save(REMINDERS,reminders)
     schedules=_load(SCHEDULES,[]);changed=False
     for item in schedules:
         try:
-            if _schedule_due(item,now):events.append({"message":f"Scheduled reminder: {item.get('text','')}","card":{"type":"schedule",**item}});item["last_fired_at"]=now.isoformat(timespec="seconds");changed=True
+            if _schedule_due(item,now):event={"message":f"Scheduled reminder: {item.get('text','')}","card":{"type":"schedule",**item}};events.append(event);queue_telegram_proactive(event["message"],event["card"]);item["last_fired_at"]=now.isoformat(timespec="seconds");changed=True
         except Exception:continue
     if changed:_save(SCHEDULES,schedules)
     events.extend(poll_routine_events());events.extend(poll_whatsapp_events());return {"events":events}

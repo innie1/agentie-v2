@@ -58,6 +58,23 @@ Agentie includes a real skill registry and MCP client. Capabilities can be allow
 
 Examples include Filesystem, Playwright, GitHub, Memory, Fetch, Time, Git, Google Workspace and other MCP-compatible services when their actual runtimes and credentials are configured.
 
+## Telegram channel
+
+Telegram is available as a native two-way channel in **Plugins → Channels**. Each local Agentie user supplies a bot token created with [BotFather](https://t.me/BotFather), then pairs one private Telegram account with a short-lived, one-time code. Bot tokens are encrypted in the local workspace and are never returned by the API or shown again after saving.
+
+Start Agentie, open Plugins, add Telegram, save the BotFather token, and choose **Generate pairing code**. Open the bot in a private Telegram chat and send that code. Normal language is the primary interface; these shortcuts are also available:
+
+```text
+/manager
+/agent Ben
+/agent
+/status
+/routines
+/approvals
+```
+
+Agentie uses Telegram long polling, so a public callback URL is not required. Approval buttons resolve through Agentie's existing approval store. Approving in Telegram does not grant broader permissions, and real-money or other consequential actions still require an explicit approval. Use **Disconnect** to unpair the account or **Remove token** to delete the encrypted credential and stop the channel.
+
 ## Teach by Demonstration
 
 Agentie can record browser workflows performed in the visible Chromium session inside the Company Computer, turn the recorded actions into reusable workflow skills, and replay them through the same browser executor.

@@ -20,7 +20,12 @@ def _load_events()->list[dict[str,Any]]:
     try:return json.loads(EVENTS.read_text(encoding="utf-8")) if EVENTS.exists() else []
     except Exception:return []
 def _save_events(items:list[dict[str,Any]])->None:EVENTS.parent.mkdir(parents=True,exist_ok=True);EVENTS.write_text(json.dumps(items[-200:],indent=2,ensure_ascii=False),encoding="utf-8")
-def _push(event:dict[str,Any])->None:items=_load_events();items.append(event);_save_events(items)
+def _push(event:dict[str,Any])->None:
+    items=_load_events();items.append(event);_save_events(items)
+    try:
+        from agentie.core.telegram_channel import queue_proactive
+        queue_proactive(str(event.get("message") or "Agentie update"),event.get("card"))
+    except Exception:pass
 def poll_routine_events()->list[dict[str,Any]]:
     items=_load_events()
     if items:_save_events([])

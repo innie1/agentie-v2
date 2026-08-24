@@ -79,7 +79,12 @@ def create_approval(action: str, reason: str, metadata: dict | None = None):
     else:
         parts = _mcp_parts(action)
         if parts:item["metadata"] = {"kind": "mcp", "server": parts[0], "tool": parts[1]}
-    items.append(item);_save(items);return item
+    items.append(item);_save(items)
+    try:
+        from agentie.core.telegram_channel import queue_proactive
+        queue_proactive("Agentie needs your approval.",{"type":"approvals","items":[item]})
+    except Exception:pass
+    return item
 def create_background_mcp_approval(action: str, reason: str, *, agent_id: str, agent_name: str, server: str, tool: str, command: str = ""):
     item=create_approval(action,reason,{"kind":"mcp","server":server,"tool":tool,"background":True,"agent_id":agent_id,"agent_name":agent_name,"command":command})
     return item
