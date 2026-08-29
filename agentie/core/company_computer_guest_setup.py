@@ -181,6 +181,16 @@ apt-get install -y --no-install-recommends \
   openbox dbus dbus-x11 pcmanfm xterm chromium qemu-guest-agent xdotool \
   curl ca-certificates unzip fonts-dejavu-core
 
+if [ "$(uname -m)" = "x86_64" ] && ! command -v google-chrome-stable >/dev/null 2>&1; then
+  curl -fsSL https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb -o /tmp/google-chrome.deb
+  apt-get install -y /tmp/google-chrome.deb
+fi
+if command -v google-chrome-stable >/dev/null 2>&1; then
+  update-alternatives --set x-www-browser /usr/bin/google-chrome-stable || true
+  update-alternatives --set gnome-www-browser /usr/bin/google-chrome-stable || true
+  runuser -u agentie -- env HOME=/home/agentie xdg-settings set default-web-browser google-chrome.desktop || true
+fi
+
 mkdir -p /etc/X11 /var/lib/agentie /tmp/runtime-agentie /home/agentie/Downloads /home/agentie/Desktop
 cat >/etc/X11/Xwrapper.config <<'EOF'
 allowed_users=anybody
@@ -209,7 +219,8 @@ done
 DISPLAY=:0 /usr/bin/xdotool getdisplaygeometry >/dev/null 2>&1 || exit 1
 exec /usr/bin/dbus-run-session -- /bin/sh -lc '
   pcmanfm --desktop --profile LXDE >/tmp/pcmanfm.log 2>&1 &
-  chromium --user-data-dir=/home/agentie/.config/chromium-agentie --disable-gpu --remote-debugging-port=9222 --remote-debugging-address=0.0.0.0 --remote-allow-origins=* --no-first-run --no-default-browser-check --restore-last-session about:blank >/tmp/chromium.log 2>&1 &
+  BROWSER=/usr/bin/google-chrome-stable; [ -x "$BROWSER" ] || BROWSER=/usr/bin/chromium
+  "$BROWSER" --user-data-dir=/home/agentie/.config/chromium-agentie --password-store=basic --disable-gpu --remote-debugging-port=9222 --remote-debugging-address=0.0.0.0 --remote-allow-origins=* --no-first-run --no-default-browser-check --restore-last-session about:blank >/tmp/chromium.log 2>&1 &
   exec /usr/bin/openbox --sm-disable >/tmp/openbox.log 2>&1
 '
 EOF

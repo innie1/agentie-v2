@@ -166,7 +166,8 @@ write_files:
       DISPLAY=:0 xdotool getdisplaygeometry >/dev/null 2>&1
       exec dbus-run-session -- sh -lc '
         pcmanfm --desktop --profile LXDE >/tmp/pcmanfm.log 2>&1 &
-        chromium --user-data-dir=/home/agentie/.config/chromium-agentie --remote-debugging-port=9222 --remote-debugging-address=0.0.0.0 --remote-allow-origins=* --no-first-run --no-default-browser-check --restore-last-session about:blank >/tmp/chromium.log 2>&1 &
+        BROWSER=/usr/bin/google-chrome-stable; [ -x "$BROWSER" ] || BROWSER=/usr/bin/chromium
+        "$BROWSER" --user-data-dir=/home/agentie/.config/chromium-agentie --password-store=basic --remote-debugging-port=9222 --remote-debugging-address=0.0.0.0 --remote-allow-origins=* --no-first-run --no-default-browser-check --restore-last-session about:blank >/tmp/chromium.log 2>&1 &
         exec openbox --sm-disable >/tmp/openbox.log 2>&1
       '
   - path: /etc/systemd/system/agentie-xorg.service

@@ -52,7 +52,9 @@ class CompanyComputerGuestSetupRegressionTests(unittest.TestCase):
 
     def test_desktop_session_keeps_persistent_chromium_profile(self):
         script = setup._repair_script()
-        self.assertIn("chromium --user-data-dir=/home/agentie/.config/chromium-agentie", script)
+        self.assertIn('BROWSER=/usr/bin/google-chrome-stable', script)
+        self.assertIn('--password-store=basic', script)
+        self.assertIn('google-chrome-stable_current_amd64.deb', script)
         self.assertIn("--restore-last-session", script)
         self.assertIn("pcmanfm --desktop", script)
 

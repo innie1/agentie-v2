@@ -211,6 +211,15 @@ def _error_card(exc: Exception) -> dict[str, Any]:
     )
 
 
+def _ensure_visible_computer() -> dict[str, Any]:
+    """Start the computer without hiding a healthy display behind guest-control repair."""
+    info = start_computer()
+    if info.get("display_ready"):
+        return info
+    ensure_guest_runtime()
+    return computer_status()
+
+
 def route_desktop_request(message: str, session_id: str | None = None) -> dict[str, Any] | None:
     text = " ".join(str(message or "").strip().split())
     if not text:
@@ -238,12 +247,12 @@ def route_desktop_request(message: str, session_id: str | None = None) -> dict[s
 
     try:
         if low in {"start", "start real desktop", "home", "desktop", "show home"}:
-            start_computer()
-            ensure_guest_runtime()
+            _ensure_visible_computer()
             info = acquire_user()
             return {"message": "Agentie Computer ready for you.", "card": _real_desktop_card(info)}
         if low in {"take user control", "user control", "take control"}:
-            ensure_guest_runtime()
+            info = computer_status()
+            if not info.get("display_ready"):ensure_guest_runtime()
             info = acquire_user()
             return {"message": "User Control enabled on the same Agentie Computer.", "card": _real_desktop_card(info)}
         if low in {"continue agent", "return to agent"}:
@@ -261,7 +270,8 @@ def route_desktop_request(message: str, session_id: str | None = None) -> dict[s
             return {"message": "Agentie Computer suspended.", "card": _real_desktop_card(info, "suspended")}
         if low in {"resume", "wake"}:
             resume_computer()
-            ensure_guest_runtime()
+            info = computer_status()
+            if not info.get("display_ready"):ensure_guest_runtime()
             info = acquire_user()
             return {"message": "Agentie Computer resumed for you.", "card": _real_desktop_card(info)}
         if low in {"files", "open files", "show files"}:

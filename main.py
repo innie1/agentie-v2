@@ -10,6 +10,7 @@ load_dotenv()
 import uvicorn
 from fastapi import FastAPI,File,HTTPException,Request,UploadFile
 from fastapi.responses import FileResponse,HTMLResponse,Response
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel,Field
 from agentie.core.agent_access import access_snapshot,guard_agent_capability,set_mcp_access,set_skill_access
 from agentie.core.agent_builder import draft_agent_spec,normalize_create_spec
@@ -53,7 +54,8 @@ from agentie.tools.productivity_tools import REMINDERS
 app=FastAPI(title="Agentie API",version="1.10.1",description="Local-first Agentie runtime with persistent user-defined agents, skills, routines, collaboration, plugins, approvals, memory and local artifact generation")
 app.include_router(whatsapp_router)
 app.include_router(platform_next4_router)
-FRONTEND_DIR=Path(__file__).parent/"frontend";FRONTEND_FILE=FRONTEND_DIR/"index.html";CARDS_JS=FRONTEND_DIR/"cards.js";EVENTS_JS=FRONTEND_DIR/"events.js";UPLOAD_JS=FRONTEND_DIR/"upload.js";PLUGINS_JS=FRONTEND_DIR/"plugins.js";PLUGIN_SETUP_JS=FRONTEND_DIR/"plugin_setup.js";PLUGIN_ACCESS_JS=FRONTEND_DIR/"plugin_access.js";TELEGRAM_JS=FRONTEND_DIR/"telegram_plugin.js";BROWSER_SCREEN_JS=FRONTEND_DIR/"browser_screen.js";UI_UPGRADE_JS=FRONTEND_DIR/"ui_upgrade.js";PLATFORM_JS=FRONTEND_DIR/"platform.js"
+FRONTEND_DIR=Path(__file__).parent/"frontend";FRONTEND_FILE=FRONTEND_DIR/"index.html";FRONTEND_DIST=FRONTEND_DIR/"dist";CARDS_JS=FRONTEND_DIR/"cards.js";EVENTS_JS=FRONTEND_DIR/"events.js";UPLOAD_JS=FRONTEND_DIR/"upload.js";PLUGINS_JS=FRONTEND_DIR/"plugins.js";PLUGIN_SETUP_JS=FRONTEND_DIR/"plugin_setup.js";PLUGIN_ACCESS_JS=FRONTEND_DIR/"plugin_access.js";TELEGRAM_JS=FRONTEND_DIR/"telegram_plugin.js";BROWSER_SCREEN_JS=FRONTEND_DIR/"browser_screen.js";UI_UPGRADE_JS=FRONTEND_DIR/"ui_upgrade.js";PLATFORM_JS=FRONTEND_DIR/"platform.js"
+if (FRONTEND_DIST/"assets").exists():app.mount("/assets",StaticFiles(directory=FRONTEND_DIST/"assets"),name="frontend-assets")
 class AgentRequest(BaseModel):
     message:str=Field(min_length=1,max_length=20_000);agent_type:str=Field(default="general",pattern="^(general|research|coding|manager|github)$");session_id:str|None=Field(default=None,max_length=200)
 class AgentResponse(BaseModel):
@@ -137,8 +139,20 @@ async def _telegram_route(owner_id:str,agent_id:str,message:str)->dict[str,Any]:
 async def startup_event():apply_all_credentials();start_routine_worker();set_telegram_handler(_telegram_route);await start_telegram_channels()
 @app.get("/")
 async def chat_ui():
+    built=FRONTEND_DIST/"index.html"
+    if built.exists():return HTMLResponse(built.read_text(encoding="utf-8"),headers={"Cache-Control":"no-store, no-cache, must-revalidate, max-age=0"})
     if not FRONTEND_FILE.exists():raise HTTPException(404,"Frontend not found.")
     html=FRONTEND_FILE.read_text(encoding="utf-8")+'\n<script src="/cards.js?v=201"></script>\n<script src="/events.js?v=201"></script>\n<script src="/upload.js?v=201"></script>\n<script src="/plugins.js?v=208"></script>\n<script src="/plugin-setup.js?v=207"></script>\n<script src="/telegram-plugin.js?v=201"></script>\n<script src="/plugin-access.js?v=203"></script>\n<script src="/browser-screen.js?v=201"></script>\n<script src="/ui-upgrade.js?v=203"></script>\n<script src="/platform.js?v=211"></script>\n';return HTMLResponse(html,headers={"Cache-Control":"no-store, no-cache, must-revalidate, max-age=0"})
+@app.get("/legacy-core.js")
+async def legacy_core_js():
+    source=FRONTEND_FILE.read_text(encoding="utf-8");match=re.search(r"<script>(.*?)</script>",source,re.S)
+    if not match:raise HTTPException(404,"Legacy runtime not found.")
+    return Response(match.group(1),media_type="application/javascript",headers={"Cache-Control":"no-store"})
+@app.get("/legacy-app.css")
+async def legacy_app_css():
+    source=FRONTEND_FILE.read_text(encoding="utf-8");match=re.search(r"<style>(.*?)</style>",source,re.S)
+    if not match:raise HTTPException(404,"Legacy styles not found.")
+    return Response(match.group(1),media_type="text/css",headers={"Cache-Control":"no-store"})
 @app.get("/cards.js")
 async def cards_js():return Response(CARDS_JS.read_text(encoding="utf-8"),media_type="application/javascript",headers={"Cache-Control":"no-store"})
 @app.get("/events.js")

@@ -27,9 +27,9 @@ _EXTERNAL_WRITE = re.compile(
 )
 
 _APP_ALIASES = {
-    "browser": ["/usr/bin/chromium"],
+    "browser": ["/usr/bin/google-chrome-stable"],
     "chromium": ["/usr/bin/chromium"],
-    "chrome": ["/usr/bin/chromium"],
+    "chrome": ["/usr/bin/google-chrome-stable"],
     "terminal": ["/usr/bin/xterm"],
     "xterm": ["/usr/bin/xterm"],
     "files": ["/usr/bin/pcmanfm", "/home/agentie"],
