@@ -493,10 +493,13 @@ def stop()->dict[str,Any]:
                 try:psutil.Process(int(pid)).terminate()
                 except Exception:pass
         _PROCESS=None;PID_FILE.unlink(missing_ok=True);return _update(state="STOPPED",controller_type=None,controller_agent_id=None,job_id=None,takeover_reason=None,vm_pid=None,suspended_snapshot=0,last_activity=_now())
-def display_url(*,view_only:bool=False)->str:return f"http://127.0.0.1:{DISPLAY_HTTP_PORT}/vnc.html?autoconnect=1&resize=scale&view_only={1 if view_only else 0}&path=websockify?token=&port={VNC_WEBSOCKET_PORT}"
+def display_url(*,view_only:bool=False)->str:return f"http://127.0.0.1:{DISPLAY_HTTP_PORT}/vnc.html?autoconnect=1&resize=scale&view_only={1 if view_only else 0}&host=127.0.0.1&port={VNC_WEBSOCKET_PORT}&path="
 def status()->dict[str,Any]:
     row=_row();running=_is_pid_alive(row.get("vm_pid"))
     if row["state"] not in {"STOPPED","ERROR"} and not running:row=_update(state="STOPPED",controller_type=None,controller_agent_id=None,job_id=None,takeover_reason=None,vm_pid=None,suspended_snapshot=0)
+    if running and _port_open(VNC_PORT):
+        try:_start_display_server()
+        except Exception:pass
     profile=host_profile();qemu=qemu_binary(profile);accel=acceleration(qemu,profile) if qemu else {"available":False,"accelerator":None,"reason":"QEMU is not installed yet.","action":"Open Agentie Computer to let Agentie install or locate QEMU."}
     row.update({"computer_id":"company-default","persistent":True,"running":running,"display_ready":running and _port_open(VNC_PORT),"browser_ready":running and _port_open(CDP_PORT),"display_url":display_url(view_only=row.get("controller_type")=="agent"),"cdp_url":f"http://127.0.0.1:{CDP_PORT}","disk_path":str(DISK),"disk_exists":DISK.exists(),"profile":profile,"acceleration":accel})
     return row

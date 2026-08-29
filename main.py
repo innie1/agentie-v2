@@ -3,6 +3,10 @@ from types import SimpleNamespace
 from datetime import datetime,timedelta
 from pathlib import Path
 from typing import Any
+from dotenv import load_dotenv
+
+load_dotenv()
+
 import uvicorn
 from fastapi import FastAPI,File,HTTPException,Request,UploadFile
 from fastapi.responses import FileResponse,HTMLResponse,Response

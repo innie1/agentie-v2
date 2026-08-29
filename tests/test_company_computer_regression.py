@@ -131,6 +131,7 @@ class CompanyComputerRegressionTests(unittest.TestCase):
     def test_display_is_qemu_native_vnc_websocket_not_old_stack(self):
         url=cc.display_url(view_only=True)
         self.assertIn("vnc.html",url);self.assertIn("view_only=1",url);self.assertIn(str(cc.VNC_WEBSOCKET_PORT),url)
+        self.assertIn("host=127.0.0.1",url);self.assertTrue(url.endswith("&path="));self.assertNotIn("path=websockify",url)
         source=Path("agentie/core/company_computer.py").read_text(encoding="utf-8").lower()
         self.assertNotIn("kasmvnc",source);self.assertNotIn("xfce",source);self.assertNotIn("wsl",source);self.assertNotIn("8444",source)
 
