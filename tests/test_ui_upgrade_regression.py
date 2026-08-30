@@ -51,6 +51,12 @@ class UIUpgradeRegressionTests(unittest.TestCase):
         self.assertIn("message:'Show routines'",self.ui)
         self.assertIn('Create routine',self.ui)
 
+    def test_company_computer_panel_can_be_hidden_and_reopened(self):
+        self.assertIn('Company Computer',self.ui)
+        self.assertIn("close.title='Hide Computer'",self.ui)
+        self.assertIn("shell.classList.add('computer-panel-hidden')",self.ui)
+        self.assertIn("shell.classList.remove('computer-panel-hidden')",self.ui)
+
     def test_jobs_render_as_native_cards_not_json(self):
         self.assertIn("if(c?.type==='jobs')return renderJobs(c)",self.ui)
         self.assertIn("if(c?.type==='job_progress')return renderJob(c)",self.ui)

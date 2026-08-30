@@ -28,3 +28,21 @@ def test_show_desktop_repairs_when_display_is_not_ready():
         result = desktop_runtime.route_desktop_request("show desktop", "session")
     repair.assert_called_once_with()
     assert result["card"]["display_ready"] is True
+
+
+def test_show_desktop_never_claims_ready_when_display_is_unavailable():
+    unavailable = {
+        "running": True,
+        "display_ready": False,
+        "browser_ready": False,
+        "backend": "virtualbox",
+        "last_error": "Display bridge is unavailable.",
+    }
+    with (
+        patch.object(desktop_runtime, "_ensure_visible_computer", return_value=unavailable),
+        patch.object(desktop_runtime, "acquire_user", return_value=unavailable),
+        patch.object(desktop_runtime, "computer_status", return_value=unavailable),
+    ):
+        result = desktop_runtime.route_desktop_request("show desktop", "session")
+    assert result["message"] == "Display bridge is unavailable."
+    assert result["card"]["error"] == "Display bridge is unavailable."

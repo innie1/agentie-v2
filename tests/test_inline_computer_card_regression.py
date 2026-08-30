@@ -29,6 +29,16 @@ class InlineComputerCardRegressionTests(unittest.TestCase):
         self.assertIn("title.textContent=`${computerOwnerName()} Computer`", self.text)
         self.assertIn("Starting Computer", self.text)
 
+    def test_close_dismisses_the_view_without_waiting_for_shutdown(self):
+        self.assertIn("function dismissComputer()", self.text)
+        self.assertIn(".arc-close').onclick=dismissComputer", self.text)
+        self.assertIn("row.remove()", self.text)
+
+    def test_stuck_starting_overlay_retries_the_real_desktop_connection(self):
+        self.assertIn("readyRetry=setTimeout", self.text)
+        self.assertIn("ensureComputer(true)", self.text)
+        self.assertIn("currentComputerState==='STARTING'", self.text)
+
     def test_hypervisor_display_and_human_takeover_are_native(self):
         self.assertIn("['qemu','virtualbox']", self.text)
         self.assertIn("card.display_url", self.text)

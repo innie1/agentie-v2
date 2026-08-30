@@ -249,6 +249,9 @@ def route_desktop_request(message: str, session_id: str | None = None) -> dict[s
         if low in {"start", "start real desktop", "home", "desktop", "show home"}:
             _ensure_visible_computer()
             info = acquire_user()
+            if not info.get("running") or not info.get("display_ready"):
+                detail = info.get("last_error") or "Agentie Computer started, but its display is not ready yet."
+                raise ComputerError(str(detail))
             return {"message": "Agentie Computer ready for you.", "card": _real_desktop_card(info)}
         if low in {"take user control", "user control", "take control"}:
             info = computer_status()
