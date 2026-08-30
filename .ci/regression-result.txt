@@ -1,7 +1,6 @@
-tested_sha=0f39750227abb589416c42c33b3621d7b9896bed
+tested_sha=87f516486e5e68b2e87cc89cc8895f01ac46bc00
 exit_code=1
 --- regression tail ---
-test_local_escalation_only_accepts_model_runtime_failures (test_model_router_regression.ModelRouterRegressionTests.test_local_escalation_only_accepts_model_runtime_failures) ... ok
 test_local_provider_is_openai_compatible_and_configurable (test_model_router_regression.ModelRouterRegressionTests.test_local_provider_is_openai_compatible_and_configurable) ... ok
 test_local_runner_does_not_retry_cloud (test_model_router_regression.ModelRouterRegressionTests.test_local_runner_does_not_retry_cloud) ... ok
 test_manual_local_never_allows_cloud_fallback (test_model_router_regression.ModelRouterRegressionTests.test_manual_local_never_allows_cloud_fallback) ... ok
@@ -172,6 +171,7 @@ test_team_card_exposes_completion_time_for_grace_period (test_typed_results_team
 test_team_job_has_native_renderer_and_no_json_fallback (test_typed_results_team_ui_regression.TypedResultsTeamUIRegressionTests.test_team_job_has_native_renderer_and_no_json_fallback) ... ok
 test_agent_instructions_render_as_native_card (test_ui_upgrade_regression.UIUpgradeRegressionTests.test_agent_instructions_render_as_native_card) ... ok
 test_collapsed_sidebar_keeps_agent_orbs_without_brand_a (test_ui_upgrade_regression.UIUpgradeRegressionTests.test_collapsed_sidebar_keeps_agent_orbs_without_brand_a) ... ok
+test_company_computer_panel_can_be_hidden_and_reopened (test_ui_upgrade_regression.UIUpgradeRegressionTests.test_company_computer_panel_can_be_hidden_and_reopened) ... ok
 test_composer_switches_from_microphone_to_send_arrow (test_ui_upgrade_regression.UIUpgradeRegressionTests.test_composer_switches_from_microphone_to_send_arrow) ... ok
 test_jobs_render_as_native_cards_not_json (test_ui_upgrade_regression.UIUpgradeRegressionTests.test_jobs_render_as_native_cards_not_json) ... ok
 test_right_routines_panel_matches_sidebar_and_resizes_composer (test_ui_upgrade_regression.UIUpgradeRegressionTests.test_right_routines_panel_matches_sidebar_and_resizes_composer) ... ok
@@ -248,6 +248,6 @@ Traceback (most recent call last):
 AssertionError: 'Hypervisor' not found in 'Install or use a Windows QEMU build with WHPX support.'
 
 ----------------------------------------------------------------------
-Ran 740 tests in 22.636s
+Ran 747 tests in 22.298s
 
 FAILED (failures=1)
