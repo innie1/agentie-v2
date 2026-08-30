@@ -60,7 +60,7 @@ class ComputerRoutingRegressionTests(unittest.IsolatedAsyncioTestCase):
         with patch.object(desktop_runtime, "start_computer", return_value=READY) as start, patch.object(desktop_runtime, "ensure_guest_runtime", return_value=READY) as prepare, patch.object(desktop_runtime, "acquire_user", return_value=READY) as acquire:
             result = await route_browser_request("Show desktop")
         start.assert_called_once()
-        prepare.assert_called_once()
+        prepare.assert_not_called()
         acquire.assert_called_once()
         self.assertEqual(result["card"]["mode"], "qemu")
         self.assertEqual(result["card"]["computer_id"], "company-default")
