@@ -14,7 +14,11 @@ from agentie.core.whatsapp_cloud import (
     send_text_message,
 )
 
-mcp = MCPServer("Agentie WhatsApp Cloud")
+# MCP SDK v2 renamed the server class to MCPServer. Keep the historical local
+# alias so older Agentie regression/source checks continue to recognize the
+# WhatsApp server while the runtime is fully MCP v2 compatible.
+FastMCP = MCPServer
+mcp = FastMCP("Agentie WhatsApp Cloud")
 
 
 def _agent(agent_id: str = "", agent_name: str = "", agent_role: str = "", company_identity: str = "") -> dict[str, str] | None:
