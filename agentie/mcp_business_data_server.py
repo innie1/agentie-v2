@@ -52,8 +52,8 @@ def _filters(filters_json: str) -> dict[str, Any]:
     return value
 
 
-def _query_string(select: str = "*", limit: int = 20, filters: dict[str, Any] | None = None) -> str:
-    pairs: list[tuple[str, str]] = [("select", str(select or "*")[:500]), ("limit", str(max(1, min(int(limit), 100))))]
+def _filter_pairs(filters: dict[str, Any] | None = None) -> list[tuple[str, str]]:
+    pairs: list[tuple[str, str]] = []
     for key, value in (filters or {}).items():
         if value is None:
             pairs.append((str(key), "is.null"))
@@ -61,7 +61,20 @@ def _query_string(select: str = "*", limit: int = 20, filters: dict[str, Any] | 
             pairs.append((str(key), f"eq.{str(value).lower()}"))
         else:
             pairs.append((str(key), f"eq.{value}"))
+    return pairs
+
+
+def _query_string(select: str = "*", limit: int = 20, filters: dict[str, Any] | None = None) -> str:
+    pairs: list[tuple[str, str]] = [
+        ("select", str(select or "*")[:500]),
+        ("limit", str(max(1, min(int(limit), 100)))),
+        *_filter_pairs(filters),
+    ]
     return urlencode(pairs)
+
+
+def _mutation_query(filters: dict[str, Any]) -> str:
+    return urlencode(_filter_pairs(filters))
 
 
 def _decode_json(raw: bytes) -> Any:
@@ -170,7 +183,7 @@ def update_business_rows(
     base, key = _config()
     headers = _headers(key)
     headers["Prefer"] = "return=representation"
-    query = _query_string("*", 100, filters)
+    query = _mutation_query(filters)
     request = Request(
         f"{base}/rest/v1/{clean_table}?{query}",
         data=json.dumps(changes).encode("utf-8"),
@@ -205,7 +218,7 @@ def delete_business_rows(
     base, key = _config()
     headers = _headers(key)
     headers["Prefer"] = "return=representation"
-    query = _query_string("*", 100, filters)
+    query = _mutation_query(filters)
     request = Request(
         f"{base}/rest/v1/{clean_table}?{query}",
         headers=headers,
