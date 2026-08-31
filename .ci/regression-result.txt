@@ -1,14 +1,6 @@
-tested_sha=87f516486e5e68b2e87cc89cc8895f01ac46bc00
+tested_sha=841e6aac8ebd5029415e6a8b5114b5c55997a675
 exit_code=1
 --- regression tail ---
-test_local_provider_is_openai_compatible_and_configurable (test_model_router_regression.ModelRouterRegressionTests.test_local_provider_is_openai_compatible_and_configurable) ... ok
-test_local_runner_does_not_retry_cloud (test_model_router_regression.ModelRouterRegressionTests.test_local_runner_does_not_retry_cloud) ... ok
-test_manual_local_never_allows_cloud_fallback (test_model_router_regression.ModelRouterRegressionTests.test_manual_local_never_allows_cloud_fallback) ... ok
-test_manual_powerful_always_uses_cloud_tier (test_model_router_regression.ModelRouterRegressionTests.test_manual_powerful_always_uses_cloud_tier) ... ok
-test_runner_source_records_route_and_escalation_reason (test_model_router_regression.ModelRouterRegressionTests.test_runner_source_records_route_and_escalation_reason) ... ok
-test_actual_connected_script_contains_model_mode_control (test_model_router_route_mount_regression.ModelRouterRouteMountRegressionTests.test_actual_connected_script_contains_model_mode_control) ... ok
-test_model_router_routes_are_mounted_on_actual_app (test_model_router_route_mount_regression.ModelRouterRouteMountRegressionTests.test_model_router_routes_are_mounted_on_actual_app) ... ok
-test_ai_model_is_opened_from_profile_settings (test_navigation_rewire_connected_regression.NavigationRewireConnectedRegressionTests.test_ai_model_is_opened_from_profile_settings) ... ok
 test_group_identity_replaces_single_agent_topbar_while_active (test_navigation_rewire_connected_regression.NavigationRewireConnectedRegressionTests.test_group_identity_replaces_single_agent_topbar_while_active) ... ok
 test_group_polling_respects_manual_scroll_up (test_navigation_rewire_connected_regression.NavigationRewireConnectedRegressionTests.test_group_polling_respects_manual_scroll_up) ... ok
 test_group_row_opens_real_thread_in_normal_main_chat (test_navigation_rewire_connected_regression.NavigationRewireConnectedRegressionTests.test_group_row_opens_real_thread_in_normal_main_chat) ... ok
@@ -219,7 +211,7 @@ test_incoming_webhook_routes_to_support_agent_and_deduplicates (test_whatsapp_cl
 test_main_does_not_report_plugin_connected_when_required_fields_are_missing (test_whatsapp_cloud_regression.WhatsAppCloudRegressionTests.test_main_does_not_report_plugin_connected_when_required_fields_are_missing) ... ok
 test_main_wires_secure_whatsapp_webhook_and_event_poll (test_whatsapp_cloud_regression.WhatsAppCloudRegressionTests.test_main_wires_secure_whatsapp_webhook_and_event_poll) ... ok
 test_mark_read_also_uses_approval_instead_of_silent_external_mutation (test_whatsapp_cloud_regression.WhatsAppCloudRegressionTests.test_mark_read_also_uses_approval_instead_of_silent_external_mutation) ... ok
-test_mcp_server_exposes_real_whatsapp_tools_and_sender_identity_fields (test_whatsapp_cloud_regression.WhatsAppCloudRegressionTests.test_mcp_server_exposes_real_whatsapp_tools_and_sender_identity_fields) ... ok
+test_mcp_server_exposes_real_whatsapp_tools_and_sender_identity_fields (test_whatsapp_cloud_regression.WhatsAppCloudRegressionTests.test_mcp_server_exposes_real_whatsapp_tools_and_sender_identity_fields) ... FAIL
 test_natural_send_requires_existing_mcp_approval_before_execution_and_carries_agent_identity (test_whatsapp_cloud_regression.WhatsAppCloudRegressionTests.test_natural_send_requires_existing_mcp_approval_before_execution_and_carries_agent_identity) ... ok
 test_phone_normalization_uses_international_digits (test_whatsapp_cloud_regression.WhatsAppCloudRegressionTests.test_phone_normalization_uses_international_digits) ... ok
 test_plugin_setup_ui_guides_webhook_setup_and_keeps_clear_confirmation (test_whatsapp_cloud_regression.WhatsAppCloudRegressionTests.test_plugin_setup_ui_guides_webhook_setup_and_keeps_clear_confirmation) ... ok
@@ -247,7 +239,15 @@ Traceback (most recent call last):
                                                                                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 AssertionError: 'Hypervisor' not found in 'Install or use a Windows QEMU build with WHPX support.'
 
+======================================================================
+FAIL: test_mcp_server_exposes_real_whatsapp_tools_and_sender_identity_fields (test_whatsapp_cloud_regression.WhatsAppCloudRegressionTests.test_mcp_server_exposes_real_whatsapp_tools_and_sender_identity_fields)
 ----------------------------------------------------------------------
-Ran 747 tests in 22.298s
+Traceback (most recent call last):
+  File "/home/runner/work/agentie-v2/agentie-v2/tests/test_whatsapp_cloud_regression.py", line 205, in test_mcp_server_exposes_real_whatsapp_tools_and_sender_identity_fields
+    self.assertIn('FastMCP("Agentie WhatsApp Cloud")', source)
+AssertionError: 'FastMCP("Agentie WhatsApp Cloud")' not found in 'from __future__ import annotations\n\nimport json\nfrom typing import Any\n\nfrom mcp.server.mcpserver import MCPServer\n\nfrom agentie.core.plugin_connection_validation import validate_plugin_connection\nfrom agentie.core.whatsapp_cloud import (\n    get_message,\n    list_messages,\n    mark_message_read,\n    send_template_message,\n    send_text_message,\n)\n\nmcp = MCPServer("Agentie WhatsApp Cloud")\n\n\ndef _agent(agent_id: str = "", agent_name: str = "", agent_role: str = "", company_identity: str = "") -> dict[str, str] | None:\n    if not any((agent_id, agent_name, agent_role, company_identity)):\n        return None\n    return {\n        "id": str(agent_id or ""),\n        "name": str(agent_name or ""),\n        "role": str(agent_role or ""),\n        "company_identity": str(company_identity or ""),\n    }\n\n\n@mcp.tool()\ndef list_whatsapp_messages(\n    limit: int = 20,\n    phone: str | None = None,\n    direction: str | None = None,\n    needs_human: bool | None = None,\n) -> list[dict[str, Any]]:\n    """List locally recorded WhatsApp Cloud conversations received or sent by Agentie."""\n    return list_messages(limit=limit, phone=phone, direction=direction, needs_human=needs_human)\n\n\n@mcp.tool()\ndef get_whatsapp_message(message_id: str) -> dict[str, Any]:\n    """Get one locally recorded WhatsApp message by message ID."""\n    item = get_message(message_id)\n    if not item:\n        raise ValueError("WhatsApp message was not found in local history.")\n    return item\n\n\n@mcp.tool()\ndef send_whatsapp_text(\n    to: str,\n    text: str,\n    agent_id: str = "",\n    agent_name: str = "",\n    agent_role: str = "",\n    company_identity: str = "",\n) -> dict[str, Any]:\n    """Send a real WhatsApp text message through Meta WhatsApp Cloud API."""\n    return send_text_message(to, text, agent=_agent(agent_id, agent_name, agent_role, company_identity))\n\n\n@mcp.tool()\ndef send_whatsapp_template(\n    to: str,\n    template_name: str,\n    language_code: str = "en_US",\n    components_json: str = "[]",\n    agent_id: str = "",\n    agent_name: str = "",\n    agent_role: str = "",\n    company_identity: str = "",\n) -> dict[str, Any]:\n    """Send an approved WhatsApp template message through Meta WhatsApp Cloud API."""\n    try:\n        components = json.loads(components_json or "[]")\n    except json.JSONDecodeError as exc:\n        raise ValueError("components_json must be valid JSON.") from exc\n    if not isinstance(components, list):\n        raise ValueError("components_json must decode to a JSON list.")\n    return send_template_message(\n        to,\n        template_name,\n        language_code,\n        components,\n        agent=_agent(agent_id, agent_name, agent_role, company_identity),\n    )\n\n\n@mcp.tool()\ndef mark_whatsapp_read(message_id: str) -> dict[str, Any]:\n    """Mark one WhatsApp message as read through Meta WhatsApp Cloud API."""\n    return mark_message_read(message_id)\n\n\nif __name__ == "__main__":\n    validate_plugin_connection("whatsapp")\n    mcp.run(transport="stdio")\n'
 
-FAILED (failures=1)
+----------------------------------------------------------------------
+Ran 755 tests in 22.931s
+
+FAILED (failures=2)
