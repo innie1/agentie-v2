@@ -9,9 +9,10 @@ from agentie import (
     mcp_channels_server,
     mcp_company_server,
     mcp_computer_server,
+    mcp_whatsapp_server,
     mcp_workspace_server,
 )
-from agentie.mcp_business_data_server import _filters, _table
+from agentie.mcp_business_data_server import _filters, _mutation_query, _table
 from agentie.mcp_internal_setup import INTERNAL_SERVERS
 from agentie.mcp_runtime import approval_action
 
@@ -96,6 +97,18 @@ class InternalMcpServersRegressionTests(unittest.IsolatedAsyncioTestCase):
             }.issubset(names)
         )
 
+    async def test_existing_whatsapp_mcp_uses_current_sdk_and_still_lists_tools(self):
+        names = await self._tool_names(mcp_whatsapp_server.mcp)
+        self.assertTrue(
+            {
+                "list_whatsapp_messages",
+                "get_whatsapp_message",
+                "send_whatsapp_text",
+                "send_whatsapp_template",
+                "mark_whatsapp_read",
+            }.issubset(names)
+        )
+
     def test_internal_setup_registers_all_five_servers(self):
         self.assertEqual(
             set(INTERNAL_SERVERS),
@@ -124,6 +137,13 @@ class InternalMcpServersRegressionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(_filters('{"store_id":"abc"}'), {"store_id": "abc"})
         with self.assertRaises(ValueError):
             _filters('{"store-id":"abc"}')
+
+    def test_business_mutations_only_include_required_filters(self):
+        query = _mutation_query({"store_id": "abc", "active": True})
+        self.assertIn("store_id=eq.abc", query)
+        self.assertIn("active=eq.true", query)
+        self.assertNotIn("select=", query)
+        self.assertNotIn("limit=", query)
 
 
 if __name__ == "__main__":
