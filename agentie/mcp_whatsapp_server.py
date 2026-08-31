@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from mcp.server.fastmcp import FastMCP
+from mcp.server.mcpserver import MCPServer
 
 from agentie.core.plugin_connection_validation import validate_plugin_connection
 from agentie.core.whatsapp_cloud import (
@@ -14,7 +14,7 @@ from agentie.core.whatsapp_cloud import (
     send_text_message,
 )
 
-mcp = FastMCP("Agentie WhatsApp Cloud")
+mcp = MCPServer("Agentie WhatsApp Cloud")
 
 
 def _agent(agent_id: str = "", agent_name: str = "", agent_role: str = "", company_identity: str = "") -> dict[str, str] | None:
