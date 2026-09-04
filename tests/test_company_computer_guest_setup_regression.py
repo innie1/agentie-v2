@@ -33,6 +33,19 @@ class CompanyComputerGuestSetupRegressionTests(unittest.TestCase):
         ):
             self.assertIn(package, script)
 
+    def test_repair_recovers_interrupted_debian_package_state_first(self):
+        script = setup._repair_script()
+        self.assertLess(script.index("apt_retry -f install -y"), script.index("apt_retry install -y --no-install-recommends"))
+        self.assertIn("apt_retry install --reinstall -y libmpc3", script)
+        self.assertIn("dpkg -V chromium", script)
+        self.assertIn("chromium-common_*.deb", script)
+        self.assertIn("Acquire::https::Timeout=20", script)
+        self.assertNotIn("google-chrome-stable", script)
+        self.assertIn("need_packages=0", script)
+        self.assertIn("libmpc3_*.deb", script)
+        self.assertIn("dpkg-query -W", script)
+        self.assertIn("DNS=10.0.2.3", script)
+
     def test_repair_preserves_privilege_boundary_and_persistence(self):
         script = setup._repair_script()
         self.assertIn("gpasswd -d agentie sudo", script)
@@ -52,9 +65,9 @@ class CompanyComputerGuestSetupRegressionTests(unittest.TestCase):
 
     def test_desktop_session_keeps_persistent_chromium_profile(self):
         script = setup._repair_script()
-        self.assertIn('BROWSER=/usr/bin/google-chrome-stable', script)
+        self.assertIn('/usr/bin/chromium --user-data-dir=/home/agentie/.config/chromium-agentie', script)
         self.assertIn('--password-store=basic', script)
-        self.assertIn('google-chrome-stable_current_amd64.deb', script)
+        self.assertNotIn('google-chrome-stable', script)
         self.assertIn("--restore-last-session", script)
         self.assertIn("pcmanfm --desktop", script)
 

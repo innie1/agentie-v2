@@ -39,7 +39,7 @@ class CompanyComputerRegressionTests(unittest.TestCase):
         self.assertTrue(cc.STATE_DB.exists())
 
     def test_windows_selects_whpx(self):
-        with patch.object(cc,"_accel_help",return_value={"whpx","tcg"}), patch.object(cc,"_whpx_feature_enabled",return_value=True):
+        with patch.object(cc,"_accel_help",return_value={"whpx","tcg"}):
             result=cc.acceleration("qemu",self.profile("windows"))
         self.assertTrue(result["available"]);self.assertEqual(result["accelerator"],"whpx")
 
@@ -54,12 +54,12 @@ class CompanyComputerRegressionTests(unittest.TestCase):
         self.assertEqual(result["accelerator"],"kvm")
 
     def test_unavailable_acceleration_does_not_silently_use_tcg(self):
-        with patch.object(cc,"_accel_help",return_value={"tcg"}), patch.object(cc,"ALLOW_TCG",False), patch.object(cc,"_whpx_feature_enabled",return_value=False):
+        with patch.object(cc,"_accel_help",return_value={"tcg"}), patch.object(cc,"ALLOW_TCG",False):
             result=cc.acceleration("qemu",self.profile("windows"))
         self.assertFalse(result["available"]);self.assertEqual(result["accelerator"],"whpx");self.assertIn("Hypervisor",result["action"])
 
     def test_explicit_compatibility_mode_can_use_tcg(self):
-        with patch.object(cc,"_accel_help",return_value={"tcg"}), patch.object(cc,"ALLOW_TCG",True), patch.object(cc,"_whpx_feature_enabled",return_value=False):
+        with patch.object(cc,"_accel_help",return_value={"tcg"}), patch.object(cc,"ALLOW_TCG",True):
             result=cc.acceleration("qemu",self.profile("windows"))
         self.assertEqual(result["accelerator"],"tcg");self.assertTrue(result["compatibility_mode"])
 
@@ -88,7 +88,7 @@ class CompanyComputerRegressionTests(unittest.TestCase):
         config={"profile":self.profile("windows"),"qemu":"qemu-system-x86_64","acceleration":{"accelerator":"whpx"}}
         args=cc._qemu_args(config)
         joined=" ".join(args)
-        self.assertIn("-accel whpx",joined);self.assertIn(str(cc.DISK),joined);self.assertIn("websocket=",joined);self.assertIn(f"hostfwd=tcp:127.0.0.1:{cc.CDP_PORT}-:{cc.CDP_PORT}",joined)
+        self.assertIn("-accel whpx",joined);self.assertIn("-cpu Westmere",joined);self.assertIn(str(cc.DISK),joined);self.assertIn("websocket=",joined);self.assertIn(f"hostfwd=tcp:127.0.0.1:{cc.CDP_PORT}-:{cc.CDP_PORT}",joined)
 
     def test_shared_company_computer_has_one_persistent_identity(self):
         with patch.object(cc,"_is_pid_alive",return_value=False):

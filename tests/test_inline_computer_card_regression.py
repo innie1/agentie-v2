@@ -40,7 +40,7 @@ class InlineComputerCardRegressionTests(unittest.TestCase):
         self.assertIn("currentComputerState==='STARTING'", self.text)
 
     def test_hypervisor_display_and_human_takeover_are_native(self):
-        self.assertIn("['qemu','virtualbox']", self.text)
+        self.assertIn("==='qemu'", self.text)
         self.assertIn("card.display_url", self.text)
         self.assertIn("computer_takeover", self.text)
         self.assertIn("Take Control", self.text)

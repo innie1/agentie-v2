@@ -24,7 +24,7 @@ ROOT = Path.cwd() / "workspace" / "company_computer"
 RUNTIME_DIR = ROOT / "runtime"
 DOWNLOADS_DIR = RUNTIME_DIR / "downloads"
 NOVNC_DIR = RUNTIME_DIR / "novnc"
-BASE_IMAGE = RUNTIME_DIR / "debian-base.qcow2"
+BASE_IMAGE = RUNTIME_DIR / "debian-generic-base.qcow2"
 DISK = ROOT / "company-computer.qcow2"
 SEED_ISO = ROOT / "cloud-init.iso"
 STATE_DB = ROOT / "state.sqlite3"
@@ -212,15 +212,11 @@ def _accel_help(qemu:str)->set[str]:
     try:proc=subprocess.run([qemu,"-accel","help"],capture_output=True,text=True,timeout=8,shell=False);text=((proc.stdout or "")+"\n"+(proc.stderr or "")).lower()
     except Exception:return set()
     return {name for name in ("whpx","hvf","kvm","tcg") if name in text}
-def _whpx_feature_enabled()->bool:
-    if platform.system().lower()!="windows":return False
-    try:proc=subprocess.run(["dism.exe","/Online","/Get-FeatureInfo","/FeatureName:HypervisorPlatform","/English"],capture_output=True,text=True,timeout=12,shell=False);text=((proc.stdout or "")+"\n"+(proc.stderr or "")).lower();return proc.returncode==0 and "state : enabled" in text
-    except Exception:return False
 def acceleration(qemu:str|None=None,profile:dict[str,Any]|None=None)->dict[str,Any]:
     info=profile or host_profile();binary=qemu or qemu_binary(info)
     if not binary:return {"available":False,"accelerator":None,"reason":"QEMU is not installed yet.","action":"Open Agentie Computer to let Agentie install or locate QEMU."}
     supported=_accel_help(binary);system=info["system"]
-    if system=="windows":wanted="whpx";enabled=wanted in supported and _whpx_feature_enabled();action="Enable Windows Hypervisor Platform and CPU virtualization in firmware, then restart Windows."
+    if system=="windows":wanted="whpx";enabled=wanted in supported;action="Enable Windows Hypervisor Platform and CPU virtualization in firmware, then restart Windows."
     elif system=="darwin":wanted="hvf";enabled=wanted in supported;action="Use a QEMU build with HVF support and a Mac that supports hardware virtualization."
     elif system=="linux":wanted="kvm";enabled=wanted in supported and os.path.exists("/dev/kvm") and os.access("/dev/kvm",os.R_OK|os.W_OK);action="Enable KVM/CPU virtualization and give your user read/write access to /dev/kvm."
     else:wanted=None;enabled=False;action=f"Agentie Computer does not support {platform.system()} yet."
@@ -232,7 +228,7 @@ def acceleration(qemu:str|None=None,profile:dict[str,Any]|None=None)->dict[str,A
 def _debian_filename(profile:dict[str,Any])->str:
     arch=DEBIAN_ARCH.get(profile["machine"])
     if not arch:raise ComputerError(f"Unsupported host architecture: {profile['machine']}.")
-    return f"debian-13-genericcloud-{arch}.qcow2"
+    return f"debian-13-generic-{arch}.qcow2"
 def _debian_url(profile:dict[str,Any])->str:return "https://cloud.debian.org/images/cloud/trixie/latest/"+_debian_filename(profile)
 def _download(url:str,destination:Path,*,timeout:int=300)->None:
     destination.parent.mkdir(parents=True,exist_ok=True);partial=destination.with_suffix(destination.suffix+".part");request=urllib.request.Request(url,headers={"User-Agent":"Agentie/1.0"})
@@ -386,6 +382,37 @@ def _qmp_command(command:str,arguments:dict[str,Any]|None=None,timeout:float=3.0
             item=json.loads(line.decode("utf-8","replace"))
             if "return" in item or "error" in item:return item
     raise ComputerError(f"QMP command timed out: {command}")
+def _qga_request(payload:dict[str,Any],timeout:float=10.0)->dict[str,Any]:
+    if not _port_open(QGA_PORT):raise ComputerError("Guest automation channel is not ready yet.")
+    with socket.create_connection(("127.0.0.1",QGA_PORT),timeout=timeout) as sock:
+        sock.settimeout(timeout);file=sock.makefile("rwb",buffering=0);file.write(json.dumps(payload).encode("utf-8")+b"\n");deadline=time.time()+timeout
+        while time.time()<deadline:
+            line=file.readline()
+            if not line:break
+            try:item=json.loads(line.decode("utf-8","replace"))
+            except json.JSONDecodeError:continue
+            if "return" in item or "error" in item:return item
+    raise ComputerError("Guest automation command timed out.")
+def guest_exec(command:list[str],timeout:int=60)->dict[str,Any]:
+    if not command:raise ValueError("Guest command is required.")
+    touch_activity()
+    response=_qga_request({"execute":"guest-exec","arguments":{"path":command[0],"arg":command[1:],"capture-output":True}},timeout=min(max(float(timeout),10.0),60.0))
+    if response.get("error"):raise ComputerError(str(response["error"]))
+    pid=int((response.get("return") or {}).get("pid") or 0)
+    if not pid:raise ComputerError("Guest command did not start.")
+    deadline=time.time()+max(1,int(timeout))
+    while time.time()<deadline:
+        touch_activity()
+        item=_qga_request({"execute":"guest-exec-status","arguments":{"pid":pid}},timeout=min(10.0,max(1.0,deadline-time.time())))
+        if item.get("error"):raise ComputerError(str(item["error"]))
+        result=item.get("return") or {}
+        if result.get("exited"):touch_activity();return result
+        time.sleep(.2)
+    raise ComputerError("Guest command timed out.")
+def qmp_input(events:list[dict[str,Any]])->None:
+    result=_qmp_command("input-send-event",{"events":events})
+    if result.get("error"):raise ComputerError(str(result["error"]))
+    touch_activity()
 def _hmp(command:str)->str:
     result=_qmp_command("human-monitor-command",{"command-line":command},timeout=12)
     if result.get("error"):raise ComputerError(str(result["error"]))
@@ -400,14 +427,25 @@ def _aarch64_firmware(qemu:str)->str:
 def _qemu_args(config:dict[str,Any],*,resume_snapshot:bool=False)->list[str]:
     profile=config["profile"];accel=config["acceleration"]["accelerator"];qemu=config["qemu"];machine=profile["machine"];args=[qemu,"-name","Agentie Company Computer","-m",str(profile["vm_ram_mb"]),"-smp",str(profile["vm_vcpus"]),"-accel",accel]
     if machine in {"arm64","aarch64"}:args += ["-machine","virt","-cpu","host","-bios",_aarch64_firmware(qemu),"-device","virtio-gpu-pci"]
-    else:args += ["-machine","q35","-cpu","host","-device","virtio-vga"]
-    args += ["-drive",f"file={DISK},if=virtio,format=qcow2,cache=writeback,discard=unmap","-drive",f"file={SEED_ISO},media=cdrom,readonly=on","-netdev",f"user,id=net0,hostfwd=tcp:127.0.0.1:{CDP_PORT}-:{CDP_PORT}","-device","virtio-net-pci,netdev=net0","-vnc",f"127.0.0.1:{VNC_DISPLAY},websocket={VNC_WEBSOCKET_PORT}","-qmp",f"tcp:127.0.0.1:{QMP_PORT},server=on,wait=off","-chardev",f"socket,id=qga0,host=127.0.0.1,port={QGA_PORT},server=on,wait=off","-device","virtio-serial-pci","-device","virtserialport,chardev=qga0,name=org.qemu.guest_agent.0","-pidfile",str(PID_FILE),"-display","none"]
+    else:
+        args += ["-machine","q35"]
+        if accel=="whpx":args += ["-cpu","Westmere","-device","virtio-vga"]
+        elif accel=="tcg":args += ["-cpu","max","-vga","std"]
+        else:args += ["-cpu","host","-device","virtio-vga"]
+    if accel=="whpx":
+        index=args.index("-accel");args[index+1]="whpx,kernel-irqchip=off"
+        index=args.index("-smp");args[index+1]="1"
+    args += ["-drive",f"file={DISK},if=virtio,format=qcow2,cache=writeback,discard=unmap","-drive",f"file={SEED_ISO},media=cdrom,readonly=on","-netdev",f"user,id=net0,ipv6=off,hostfwd=tcp:127.0.0.1:{CDP_PORT}-:{CDP_PORT}","-device","virtio-net-pci,netdev=net0","-vnc",f"127.0.0.1:{VNC_DISPLAY},websocket={VNC_WEBSOCKET_PORT}","-qmp",f"tcp:127.0.0.1:{QMP_PORT},server=on,wait=off","-chardev",f"socket,id=qga0,host=127.0.0.1,port={QGA_PORT},server=on,wait=off","-device","virtio-serial-pci","-device","virtserialport,chardev=qga0,name=org.qemu.guest_agent.0","-pidfile",str(PID_FILE),"-display","none"]
     if resume_snapshot:args += ["-loadvm","agentie-idle"]
     return args
 def start()->dict[str,Any]:
     global _PROCESS
     with _STATE_LOCK:
         current=_row()
+        if current.get("state")=="SUSPENDED" and _is_pid_alive(current.get("vm_pid")):
+            result=_qmp_command("cont")
+            if result.get("error"):raise ComputerError(str(result["error"]))
+            _update(state="IDLE",suspended_snapshot=0,last_activity=_now(),last_error=None);_start_display_server();start_idle_monitor();return status()
         if _is_pid_alive(current.get("vm_pid")) and _port_open(VNC_PORT):_start_display_server();touch_activity();return status()
         config=prepare()
         for port in (VNC_PORT,VNC_WEBSOCKET_PORT,CDP_PORT,QMP_PORT,QGA_PORT):
@@ -416,12 +454,13 @@ def start()->dict[str,Any]:
         LOG_FILE.parent.mkdir(parents=True,exist_ok=True);log=LOG_FILE.open("ab",buffering=0);args=_qemu_args(config)
         try:_PROCESS=subprocess.Popen(args,stdin=subprocess.DEVNULL,stdout=log,stderr=subprocess.STDOUT,cwd=str(ROOT),creationflags=(subprocess.CREATE_NO_WINDOW if os.name=="nt" and hasattr(subprocess,"CREATE_NO_WINDOW") else 0))
         except Exception as exc:log.close();_update(state="ERROR",last_error=str(exc));raise ComputerError(f"Could not launch Agentie Computer: {exc}") from exc
-        deadline=time.time()+30
+        deadline=time.time()+max(30,int(os.getenv("AGENTIE_QEMU_START_TIMEOUT_SECONDS","90")))
+        vnc_ready=False
         while time.time()<deadline and _PROCESS.poll() is None:
-            if _port_open(VNC_PORT):break
+            if _port_open(VNC_PORT):vnc_ready=True;break
             time.sleep(.2)
         if _PROCESS.poll() is not None:_update(state="ERROR",vm_pid=None,last_error=f"QEMU exited with code {_PROCESS.returncode}. See {LOG_FILE}.");raise ComputerError(f"Agentie Computer could not start. See {LOG_FILE}.")
-        if not _port_open(VNC_PORT):_PROCESS.terminate();_update(state="ERROR",vm_pid=None,last_error="QEMU display did not become ready.");raise ComputerError("Agentie Computer started but its display did not become ready.")
+        if not vnc_ready:_PROCESS.terminate();_update(state="ERROR",vm_pid=None,last_error="QEMU display did not become ready.");raise ComputerError("Agentie Computer started but its display did not become ready.")
         _update(state="READY",vm_pid=_PROCESS.pid,last_activity=_now(),last_error=None);_start_display_server();start_idle_monitor();return status()
 def _session_agent_id(session_id:str|None)->str:
     text=str(session_id or "");

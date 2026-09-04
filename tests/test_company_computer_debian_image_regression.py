@@ -1,7 +1,6 @@
 import unittest
 
 from agentie.core import company_computer as cc
-from agentie.core import company_computer_debian_image  # noqa: F401 - registers generic image choice
 
 
 class CompanyComputerDebianImageRegressionTests(unittest.TestCase):

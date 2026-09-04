@@ -66,6 +66,9 @@ def inspect_file(path: Path) -> dict[str, Any]:
                 reader = csv.reader(handle);rows = []
                 for _, row in zip(range(6), reader): rows.append(row)
             card.update({"kind": "csv", "columns": len(rows[0]) if rows else 0, "preview_rows": rows})
+        elif suffix == ".docx":card.update({"kind": "docx"})
+        elif suffix == ".xlsx":card.update({"kind": "xlsx"})
+        elif suffix == ".pptx":card.update({"kind": "pptx"})
         elif suffix == ".json":
             data = json.loads(path.read_text(encoding="utf-8"));card.update({"kind": "json", "root_type": type(data).__name__, "items": len(data) if isinstance(data, (dict, list)) else None})
         elif suffix in {".yaml", ".yml"}:
@@ -129,6 +132,24 @@ def extract_text(path: Path) -> dict[str, Any]:
 
 def preview_data(path: Path) -> dict[str, Any]:
     suffix = path.suffix.lower()
+    if suffix == ".docx":
+        from docx import Document
+        document = Document(str(path));lines = [p.text for p in document.paragraphs if p.text.strip()]
+        for table in document.tables:
+            lines.extend(" | ".join(cell.text.strip() for cell in row.cells) for row in table.rows)
+        text = "\n\n".join(lines);return {"type": "file_text", "filename": path.name, "text": text[:MAX_TEXT_CHARS], "truncated": len(text) > MAX_TEXT_CHARS}
+    if suffix == ".xlsx":
+        from openpyxl import load_workbook
+        workbook = load_workbook(path, read_only=True, data_only=True);sheet = workbook.active
+        rows = [["" if value is None else str(value) for value in row] for row in sheet.iter_rows(max_row=40, values_only=True)]
+        return {"type": "data_preview", "filename": path.name, "format": "xlsx", "sheet": sheet.title, "rows": rows}
+    if suffix == ".pptx":
+        from pptx import Presentation
+        presentation = Presentation(str(path));slides = []
+        for index, slide in enumerate(presentation.slides[:30], 1):
+            text = [shape.text.strip() for shape in slide.shapes if hasattr(shape, "text") and shape.text.strip()]
+            if text:slides.append(f"Slide {index}\n" + "\n".join(text))
+        body = "\n\n".join(slides);return {"type": "file_text", "filename": path.name, "text": body[:MAX_TEXT_CHARS], "truncated": len(body) > MAX_TEXT_CHARS}
     if suffix == ".csv":
         with path.open("r", encoding="utf-8-sig", errors="replace", newline="") as handle:
             reader = csv.reader(handle); rows = []
@@ -138,7 +159,7 @@ def preview_data(path: Path) -> dict[str, Any]:
         data = json.loads(path.read_text(encoding="utf-8"));return {"type": "data_preview", "filename": path.name, "format": "json", "text": json.dumps(data, indent=2, ensure_ascii=False)[:MAX_TEXT_CHARS]}
     if suffix in {".yaml", ".yml"}:
         data = yaml.safe_load(path.read_text(encoding="utf-8"));return {"type": "data_preview", "filename": path.name, "format": "yaml", "text": yaml.safe_dump(data, sort_keys=False, allow_unicode=True)[:MAX_TEXT_CHARS]}
-    raise ValueError("Preview is only available for CSV, JSON, and YAML files.")
+    raise ValueError("A chat preview is not available for this file type.")
 
 
 def run_action(name: str, action: str) -> tuple[str, dict[str, Any]]:

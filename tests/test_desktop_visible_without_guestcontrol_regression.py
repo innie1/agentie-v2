@@ -4,7 +4,7 @@ from agentie.core import desktop_runtime
 
 
 def test_show_desktop_uses_healthy_display_when_guestcontrol_is_temporarily_unavailable():
-    ready = {"running": True, "display_ready": True, "browser_ready": False, "backend": "virtualbox"}
+    ready = {"running": True, "display_ready": True, "browser_ready": False, "backend": "qemu"}
     with (
         patch.object(desktop_runtime, "start_computer", return_value=ready),
         patch.object(desktop_runtime, "ensure_guest_runtime") as repair,
@@ -18,7 +18,7 @@ def test_show_desktop_uses_healthy_display_when_guestcontrol_is_temporarily_unav
 
 def test_show_desktop_repairs_when_display_is_not_ready():
     starting = {"running": True, "display_ready": False, "browser_ready": False}
-    ready = {"running": True, "display_ready": True, "browser_ready": True, "backend": "virtualbox"}
+    ready = {"running": True, "display_ready": True, "browser_ready": True, "backend": "qemu"}
     with (
         patch.object(desktop_runtime, "start_computer", return_value=starting),
         patch.object(desktop_runtime, "ensure_guest_runtime") as repair,
@@ -35,7 +35,7 @@ def test_show_desktop_never_claims_ready_when_display_is_unavailable():
         "running": True,
         "display_ready": False,
         "browser_ready": False,
-        "backend": "virtualbox",
+        "backend": "qemu",
         "last_error": "Display bridge is unavailable.",
     }
     with (

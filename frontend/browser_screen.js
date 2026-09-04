@@ -33,7 +33,7 @@ if(typeof ServiceWorkerGlobalScope!=='undefined'&&self instanceof ServiceWorkerG
   `;document.head.appendChild(style);
 
   const computerIntent=t=>/^\s*use\s+computer\s+for\s*:/i.test(t)||/https?:\/\//i.test(t)&&/\b(open|visit|check|inspect|view|screenshot|capture|monitor|watch|click|type|fill|search|scroll|press|browse|navigate)\b/i.test(t)||/^\s*(click|type|fill|scroll|press|go back|back|forward|new tab|close tab|search for)\b/i.test(t)||/\b(show desktop|start (?:the )?computer|open (?:the )?terminal|file manager|computer files|computer tasks|computer notes)\b/i.test(t);
-  const computerMode=card=>['qemu','virtualbox'].includes(card?.mode||card?.backend);
+  const computerMode=card=>(card?.mode||card?.backend)==='qemu';
   let row=null,root=null,starting=null,stopped=false,frameObserver=null,lastDesktopUrl='',ownerKey=null,currentComputerState='STOPPED',readyRetry=null;
 
   function activeAgent(){const active=document.querySelector('#persistentAgentList .agent-row.active');if(!active)return null;const name=active.querySelector('.agent-copy strong')?.childNodes?.[0]?.textContent?.trim()||active.querySelector('.agent-copy strong')?.textContent?.trim();return (window.__agentieAgents||[]).find(a=>a.name===name)||null}

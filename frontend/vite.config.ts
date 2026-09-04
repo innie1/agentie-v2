@@ -12,7 +12,7 @@ export default defineConfig({
       theme_color: '#f6f7f9', background_color: '#f6f7f9',
       display: 'standalone', orientation: 'any', start_url: '/', scope: '/'
     },
-    workbox: { navigateFallback: null, globPatterns: ['**/*.{js,css,html,ico,png,svg,webmanifest}'] }
+    workbox: { navigateFallback: null, globPatterns: ['**/*.{js,css,html,ico,png,webmanifest}'] }
   })],
   build: { outDir: '../dist', emptyOutDir: true },
   server: { proxy: { '/agent': 'http://127.0.0.1:8000', '/plugins': 'http://127.0.0.1:8000' } }

@@ -117,7 +117,7 @@ def _ensure_full_graphics_kernel(timeout: int) -> None:
                 "set -eu; export DEBIAN_FRONTEND=noninteractive; "
                 "for i in $(seq 1 150); do "
                 "if ! pgrep -x apt-get >/dev/null 2>&1 && ! pgrep -x apt >/dev/null 2>&1 && ! pgrep -x dpkg >/dev/null 2>&1; then break; fi; sleep 2; done; "
-                "dpkg --configure -a; apt-get update; "
+                "apt-get update; apt-get -f install -y || apt-get install --reinstall -y libmpc3; dpkg --configure -a; "
                 "apt-get install -y --no-install-recommends linux-image-amd64; "
                 "test -e /boot/vmlinuz-$(readlink /vmlinuz | sed 's#boot/vmlinuz-##') || test -L /vmlinuz || ls /boot/vmlinuz-* >/dev/null",
             ],
@@ -167,6 +167,25 @@ def _repair_script() -> str:
 set -eu
 export DEBIAN_FRONTEND=noninteractive
 
+mkdir -p /etc/systemd/resolved.conf.d
+cat >/etc/systemd/resolved.conf.d/agentie-qemu.conf <<'EOF'
+[Resolve]
+DNS=10.0.2.3
+FallbackDNS=1.1.1.1 8.8.8.8
+Domains=~.
+EOF
+systemctl restart systemd-resolved >/dev/null 2>&1 || true
+
+apt_retry() {
+  _attempt=0
+  while [ "$_attempt" -lt 5 ]; do
+    if apt-get -o Acquire::Retries=2 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 "$@"; then return 0; fi
+    _attempt=$((_attempt + 1))
+    sleep 2
+  done
+  return 1
+}
+
 for _i in $(seq 1 150); do
   if ! pgrep -x apt-get >/dev/null 2>&1 && ! pgrep -x apt >/dev/null 2>&1 && ! pgrep -x dpkg >/dev/null 2>&1; then
     break
@@ -174,21 +193,34 @@ for _i in $(seq 1 150); do
   sleep 2
 done
 
-dpkg --configure -a
-apt-get update
-apt-get install -y --no-install-recommends \
-  xserver-xorg xserver-xorg-core xserver-xorg-video-all xserver-xorg-legacy \
-  openbox dbus dbus-x11 pcmanfm xterm chromium qemu-guest-agent xdotool \
-  curl ca-certificates unzip fonts-dejavu-core
+cached_mpc="$(find /var/cache/apt/archives -maxdepth 1 -name 'libmpc3_*.deb' -print -quit 2>/dev/null || true)"
+if [ -n "$cached_mpc" ]; then dpkg -i "$cached_mpc" >/dev/null 2>&1 || true; fi
+dpkg --configure -a >/dev/null 2>&1 || true
 
-if [ "$(uname -m)" = "x86_64" ] && ! command -v google-chrome-stable >/dev/null 2>&1; then
-  curl -fsSL https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb -o /tmp/google-chrome.deb
-  apt-get install -y /tmp/google-chrome.deb
+# Interrupted first boots can leave a registered but truncated Chromium binary.
+# Repair it from APT's persistent package cache before attempting any download.
+if dpkg -V chromium 2>/dev/null | grep -q '/usr/lib/chromium/chromium'; then
+  cached_chromium="$(find /var/cache/apt/archives -maxdepth 1 -name 'chromium_*.deb' -print -quit 2>/dev/null || true)"
+  cached_common="$(find /var/cache/apt/archives -maxdepth 1 -name 'chromium-common_*.deb' -print -quit 2>/dev/null || true)"
+  cached_sandbox="$(find /var/cache/apt/archives -maxdepth 1 -name 'chromium-sandbox_*.deb' -print -quit 2>/dev/null || true)"
+  if [ -n "$cached_chromium" ] && [ -n "$cached_common" ] && [ -n "$cached_sandbox" ]; then
+    dpkg -i "$cached_common" "$cached_sandbox" "$cached_chromium" >/dev/null 2>&1 || true
+    dpkg --configure -a >/dev/null 2>&1 || true
+  fi
 fi
-if command -v google-chrome-stable >/dev/null 2>&1; then
-  update-alternatives --set x-www-browser /usr/bin/google-chrome-stable || true
-  update-alternatives --set gnome-www-browser /usr/bin/google-chrome-stable || true
-  runuser -u agentie -- env HOME=/home/agentie xdg-settings set default-web-browser google-chrome.desktop || true
+
+need_packages=0
+for package in xserver-xorg openbox pcmanfm xterm chromium qemu-guest-agent xdotool curl unzip; do
+  [ "$(dpkg-query -W -f='${db:Status-Abbrev}' "$package" 2>/dev/null || true)" = "ii " ] || need_packages=1
+done
+if [ "$need_packages" -eq 1 ]; then
+  apt_retry update
+  apt_retry -f install -y || apt_retry install --reinstall -y libmpc3
+  dpkg --configure -a
+  apt_retry install -y --no-install-recommends \
+    xserver-xorg xserver-xorg-core xserver-xorg-video-all xserver-xorg-legacy \
+    openbox dbus dbus-x11 pcmanfm xterm chromium qemu-guest-agent xdotool \
+    curl ca-certificates unzip fonts-dejavu-core
 fi
 
 mkdir -p /etc/X11 /var/lib/agentie /tmp/runtime-agentie /home/agentie/Downloads /home/agentie/Desktop
@@ -219,8 +251,7 @@ done
 DISPLAY=:0 /usr/bin/xdotool getdisplaygeometry >/dev/null 2>&1 || exit 1
 exec /usr/bin/dbus-run-session -- /bin/sh -lc '
   pcmanfm --desktop --profile LXDE >/tmp/pcmanfm.log 2>&1 &
-  BROWSER=/usr/bin/google-chrome-stable; [ -x "$BROWSER" ] || BROWSER=/usr/bin/chromium
-  "$BROWSER" --user-data-dir=/home/agentie/.config/chromium-agentie --password-store=basic --disable-gpu --remote-debugging-port=9222 --remote-debugging-address=0.0.0.0 --remote-allow-origins=* --no-first-run --no-default-browser-check --restore-last-session about:blank >/tmp/chromium.log 2>&1 &
+  /usr/bin/chromium --user-data-dir=/home/agentie/.config/chromium-agentie --password-store=basic --disable-gpu --remote-debugging-port=9222 --remote-debugging-address=0.0.0.0 --remote-allow-origins=* --no-first-run --no-default-browser-check --restore-last-session about:blank >/tmp/chromium.log 2>&1 &
   exec /usr/bin/openbox --sm-disable >/tmp/openbox.log 2>&1
 '
 EOF

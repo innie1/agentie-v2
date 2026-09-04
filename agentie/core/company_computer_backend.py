@@ -1,14 +1,9 @@
 from __future__ import annotations
 
-"""Stable Company Computer backend facade.
-
-Windows defaults to VirtualBox. macOS/Linux keep the existing QEMU backend.
-Callers import this module instead of binding themselves to one hypervisor.
-"""
+"""Stable facade for Agentie's single QEMU Company Computer runtime."""
 
 import base64
 import os
-import platform
 from pathlib import Path
 from types import ModuleType
 from typing import Any
@@ -19,33 +14,13 @@ from agentie.core.company_computer import IDLE_SECONDS as IDLE_SECONDS
 
 def backend_name(system: str | None = None) -> str:
     override = os.getenv("AGENTIE_COMPUTER_BACKEND", "").strip().lower()
-    aliases = {
-        "virtualbox": "virtualbox", "vbox": "virtualbox",
-        "qemu": "qemu", "qemu_hvf": "qemu", "qemu_kvm": "qemu", "qemu_whpx": "qemu",
-    }
-    if override:
-        if override not in aliases:
-            raise ComputerError("AGENTIE_COMPUTER_BACKEND must be virtualbox or qemu.")
-        return aliases[override]
-    current = str(system or platform.system()).strip().lower()
-    return "virtualbox" if current == "windows" else "qemu"
+    if override and override not in {"qemu", "qemu_hvf", "qemu_kvm", "qemu_whpx"}:
+        raise ComputerError("Agentie Company Computer uses QEMU on Windows, macOS, and Linux.")
+    return "qemu"
 
 
 def _backend() -> ModuleType:
-    if backend_name() == "virtualbox":
-        from agentie.core import company_computer_virtualbox as backend
-        from agentie.core import company_computer_virtualbox_provisioning as _vbox_provisioning  # noqa: F401
-        from agentie.core import company_computer_virtualbox_guestcontrol as _vbox_guestcontrol  # noqa: F401
-        from agentie.core import company_computer_virtualbox_recovery as _vbox_recovery  # noqa: F401
-        return backend
     from agentie.core import company_computer as backend
-    # Register Windows-specific acceleration detection and safe QEMU arguments
-    # before invoking the backend. These modules intentionally patch the
-    # shared QEMU implementation at import time.
-    from agentie.core import company_computer_windows_accel as _windows_accel  # noqa: F401
-    from agentie.core import company_computer_whpx as _windows_qemu_args  # noqa: F401
-    # QGA methods are registered on the QEMU module by this compatibility module.
-    from agentie.core import company_computer_guest_agent as _guest_agent  # noqa: F401
     return backend
 
 

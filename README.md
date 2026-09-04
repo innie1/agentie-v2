@@ -101,7 +101,7 @@ Agentie's Computer is one persistent user-scoped Linux computer shared by the us
 
 - QEMU virtual machine
 - persistent `QCOW2` disk at `workspace/company_computer/company-computer.qcow2`
-- minimal Debian cloud guest
+- normal Debian `generic` image with the standard kernel for broad device compatibility
 - Openbox lightweight window manager
 - Chromium with a persistent profile
 - PCManFM file manager

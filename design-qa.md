@@ -1,46 +1,54 @@
-# Agentie reference-layout design QA
+# Agentie Layout Design QA
 
-- Source visual truth: `C:\Users\user\AppData\Local\Temp\codex-clipboard-6209d927-3cb1-4069-884b-3d726ab1b441.png`
-- Implementation screenshot: `C:\Users\user\Documents\Codex\2026-08-24\referenced-chatgpt-conversation-this-is-an-4\agentie-v2\implementation-reference-layout.png`
-- Combined comparison: `C:\Users\user\Documents\Codex\2026-08-24\referenced-chatgpt-conversation-this-is-an-4\agentie-v2\design-qa-comparison.png`
-- Viewport: 1917 × 1011 CSS px at device scale factor 1
-- Source pixels: 1917 × 1011
-- Implementation pixels: 1917 × 1011
-- State: dark desktop app, Computer panel open, real Computer error/retry state
+- Source visual truth: the five user-supplied desktop, plugin, avatar, and mobile screenshots.
+- Prototype captures: `work/layout-after-desktop-final.png`, `work/layout-computer-final.png`, `work/plugins-after-final.png`, `work/avatar-picker-final.png`, and `work/layout-after-mobile.png`.
+- Tested states: expanded desktop navigation, collapsed navigation rail, computer panel open, plugin marketplace open, agent creation, empty composer, typed composer, and 390 × 844 mobile.
 
-## Full-view comparison evidence
+## Visual comparison
 
-The implementation follows the source's three-column hierarchy: a dark conversation/agent rail at left, a large restrained chat workspace in the center, and a persistent Computer surface at right. The column proportions, thin separators, compact top bars, bottom-anchored rounded composer, low-chrome black palette, and geometric avatar treatment are materially aligned. Agentie-specific labels and real runtime states replace the source product's names, subscription banner, and placeholder errors as requested.
+The implementation follows the supplied three-part desktop composition: a dark agent navigation surface, a flexible central conversation, and an independently sliding computer panel. The collapsed state retains only the character rail. The plugin surface is a large centered overlay with search, category filters, and a two-column list. The mobile layout removes the persistent rail, keeps a compact agent header, and anchors the reduced-height composer to the bottom.
 
-## Focused comparison evidence
+## Findings and fixes
 
-Focused review covered the left agent rail, center composer, and right Computer panel. Typography uses the existing Agentie system stack with comparable weight and hierarchy. Spacing is intentionally slightly roomier in the Agentie composer for accessibility. The right panel embeds the existing interactive noVNC Computer rather than a raster or simulated screen. No source imagery or proprietary logo was copied.
-
-## Required fidelity surfaces
-
-- Fonts and typography: passed; system sans-serif hierarchy, weights, truncation, and contrast are consistent with the reference while retaining Agentie copy.
-- Spacing and layout rhythm: passed; 19.2% / flexible center / 25% desktop structure, compact bars, separators, and bottom composer match the reference hierarchy.
-- Colors and visual tokens: passed; near-black surfaces, charcoal selected states, subtle borders, white primary text, and muted secondary text are aligned.
-- Image quality and asset fidelity: passed; no source images were required. The real live Computer iframe is preserved. Avatars use Agentie's generated colors with the requested geometric mask.
-- Copy and content: passed; copied subscription, error, and bot placeholder text was excluded. Visible errors are genuine runtime errors.
+- [P1] Legacy quick-launch controls crowded the sidebar. Fixed by keeping agent search/list plus Plugins and Profile as the primary navigation.
+- [P1] The old plugin access injector rendered twice and pushed the marketplace below the fold. Fixed by exposing the connected marketplace directly while retaining real add, inspect, refresh, search, and filter actions.
+- [P1] The composer runtime was coupled to the previous layout script. Fixed with a dedicated runtime; empty state is a white microphone and typed state is a blue upward send arrow.
+- [P1] Legacy avatar color styles overrode generated assets. Fixed with persistent generated character assignments and an Auto/random fallback.
+- [P2] Agent creation initially bypassed avatar selection. Fixed by placing five choices directly in the actual guided creation card.
+- [P2] Mobile retained a permanent 64 px rail. Fixed with an off-canvas drawer and full-width chat/composer.
+- [P2] Computer identity was static. Fixed so the title and caption follow the active agent, with `New Agentie` as the no-agent fallback.
 
 ## Interaction verification
 
-- Company Computer panel opens from the top-bar control.
-- Company Computer panel closes immediately with `×` and chat expands into the released space.
-- Starting state recovers by retrying the real display connection after a stuck-ready response.
-- A failed runtime now shows the real failure and retry action instead of claiming the Computer is ready.
-- Browser console: no warnings or errors from the rebuilt UI.
+- Sidebar expands/collapses and the mobile drawer leaves the chat full width when closed.
+- Computer panel opens/closes and reports the active agent name (`timer's Computer` in the test state).
+- Plugin marketplace loaded 13 active skills, the Telegram channel, MCP presets, and working category controls from live endpoints.
+- Agent creation displayed Auto plus four generated shape avatars; explicit selection is persisted, and Auto assigns one randomly.
+- Composer accessible state changed from `Voice input` to `Send message` after typing and the `has-text` class activated.
+- Production TypeScript/Vite build completed successfully.
 
-## Comparison history
+## Remaining P3 polish
 
-1. P1: the original Computer close action waited on shutdown and left the card visible. Fixed by making `×` dismiss the view immediately; browser evidence confirms the panel is removed and chat expands.
-2. P1: the Computer could remain on `Starting Computer` after a ready response. Fixed with a guarded display reconnect and by preventing the backend from reporting ready without a reachable display.
-3. P2: the existing Agentie layout did not preserve the source's persistent right Computer region. Fixed with the 19.2% / flexible / 25% desktop grid and docking of the real Computer component.
+- The current workspace contains an existing agent error (`No space left on device`) supplied by application data; it is not a layout regression.
+- Generated characters intentionally have a softly rendered 3D finish while preserving the reference's simple shape-and-two-eyes language.
 
-## Follow-up polish
+## Computer and icon follow-up
 
-- P3: replace remaining legacy emoji tool glyphs with the project's eventual production icon set when that dependency is selected.
-- P3: populate agent rows in the isolated QA server to compare dense-list wrapping; the user's normal workspace already supplies these real rows.
+- The computer panel now uses a responsive 380–480 px quarter-width desktop column, matching the supplied desktop composition more closely.
+- The live per-agent routines endpoint renders directly below the computer viewport, including its connected empty and create states.
+- A persistent caret is present in the left rail; it reverses direction and updates its accessible label between Expand and Collapse.
+- Plugin and profile navigation now use installed Phosphor icons. Marketplace rows use locally bundled Simple Icons brand marks for Telegram, WhatsApp, GitHub, and Google, with distinct Phosphor semantic icons for all generic capabilities.
+- Follow-up production build passed and 27 visible marketplace rows received mapped icons during browser verification.
+
+## Compact marketplace and profile follow-up
+
+- The marketplace now uses three-column icon-first tiles on desktop, two columns on medium widths, and one column on mobile. Long descriptions and capability strings are hidden from the browsing surface.
+- The collapsed rail shows unframed avatars only; option dots and active-row backgrounds are suppressed.
+- The opening line is positioned as `Chatting with <agent> · <role>` and updates with the active agent.
+- Clicking the header avatar opens a four-choice focus card after the opening line. The X cancels it, selecting an answer persists the choice and dismisses the card, and custom text submits with Enter.
+- The routine empty state now matches the supplied centered reference with concise schedule guidance and a single Create Routine action.
+- Final production build and live browser checks passed.
+- Plugin search now overrides the grid display rules correctly, filters across names and hidden capability metadata, respects the active category, supports Escape/native search clearing, and shows a no-results state. Browser verification returned only `Telegram` for the query `telegram`.
+- Agent face status overlays are now suppressed everywhere. Each generated assistant reply is visually owned by the active agent avatar, and the live working row pairs that avatar with three dots plus a four-direction look animation. Production build passed; live verification found the correct avatar asset beside the reply and zero visible status-dot overlays.
 
 final result: passed

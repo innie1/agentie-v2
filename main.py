@@ -1,4 +1,4 @@
-import json,os,re
+import json,mimetypes,os,re
 from types import SimpleNamespace
 from datetime import datetime,timedelta
 from pathlib import Path
@@ -313,6 +313,13 @@ async def file_upload(file:UploadFile=File(...)):
 @app.get("/files/{filename}/download")
 async def file_download(filename:str):
     try:path=resolve_upload(filename);return FileResponse(path=str(path),filename=path.name,media_type="application/octet-stream")
+    except FileNotFoundError as exc:raise HTTPException(404,"File not found.") from exc
+    except ValueError as exc:raise HTTPException(400,str(exc)) from exc
+@app.get("/files/{filename}/view")
+async def file_view(filename:str):
+    try:
+        path=resolve_upload(filename);mime=mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+        return FileResponse(path=str(path),media_type=mime,headers={"Content-Disposition":f'inline; filename="{path.name}"',"Cache-Control":"no-store"})
     except FileNotFoundError as exc:raise HTTPException(404,"File not found.") from exc
     except ValueError as exc:raise HTTPException(400,str(exc)) from exc
 @app.post("/files/{filename}/action")

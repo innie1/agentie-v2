@@ -47,7 +47,7 @@ class AgentUIRegressionTests(unittest.TestCase):
         browser = Path("frontend/browser_screen.js").read_text(encoding="utf-8")
         self.assertIn("desktop_view", browser)
         self.assertIn("browser_approval", browser)
-        self.assertIn("['qemu','virtualbox']", browser)
+        self.assertIn("==='qemu'", browser)
         self.assertIn("Continue Agent", browser)
         self.assertNotIn("KasmVNC", browser)
 
