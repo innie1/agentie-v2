@@ -53,8 +53,12 @@ def acquire_for_session(session_id: str | None = None, job_id: str | None = None
 def handoff_agent(from_agent_id: str, to_agent_id: str, job_id: str | None = None) -> dict[str, Any]: return _state_result(_call("handoff_agent", from_agent_id, to_agent_id, job_id))
 def request_user_takeover(agent_id: str, reason: str) -> dict[str, Any]: return _state_result(_call("request_user_takeover", agent_id, reason))
 def request_user_takeover_for_session(session_id: str | None, reason: str) -> dict[str, Any]: return _state_result(_call("request_user_takeover_for_session", session_id, reason))
-def acquire_user() -> dict[str, Any]: return _state_result(_call("acquire_user"))
-def continue_agent() -> dict[str, Any]: return _state_result(_call("continue_agent"))
+def acquire_user() -> dict[str, Any]:
+    _call("acquire_user")
+    return status()
+def continue_agent() -> dict[str, Any]:
+    _call("continue_agent")
+    return status()
 def release_control(agent_id: str | None = None) -> dict[str, Any]: return _state_result(_call("release_control", agent_id))
 def touch_activity(browser_state: dict[str, Any] | None = None) -> dict[str, Any]: return _state_result(_call("touch_activity", browser_state))
 def display_url(*, view_only: bool = False) -> str: return _call("display_url", view_only=view_only)

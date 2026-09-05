@@ -9,6 +9,16 @@ from agentie.core import company_computer_backend as backend
 
 
 class CompanyComputerSingleRuntimeRegressionTests(unittest.TestCase):
+    def test_user_takeover_and_return_include_live_display_status(self):
+        for action in ("acquire_user", "continue_agent"):
+            with self.subTest(action=action), patch.object(backend, "_call") as call:
+                call.side_effect = [{"state": "USER_CONTROL"}, {"state": "USER_CONTROL", "running": True, "display_ready": True, "display_url": "http://localhost:6088/vnc.html"}]
+                result = getattr(backend, action)()
+                self.assertTrue(result["display_ready"])
+                self.assertTrue(result["running"])
+                self.assertIn("vnc.html", result["display_url"])
+                self.assertEqual(call.call_args_list[-1].args, ("status",))
+
     def test_qemu_is_the_only_backend_on_every_host(self):
         with patch.dict(os.environ, {"AGENTIE_COMPUTER_BACKEND": ""}):
             for system in ("Windows", "Darwin", "Linux"):
